@@ -290,6 +290,27 @@ Contributions are welcome! Please:
 
 ## Troubleshooting
 
+### Docker Build Issues with pip/wheel
+
+If you encounter errors like "Failed to build installable wheels for some pyproject.toml based projects":
+
+**Solution 1: Use the updated Dockerfile**
+The Dockerfile now includes build tools and upgraded pip/setuptools:
+```bash
+docker build -t rvc-real-time:latest .
+```
+
+**Solution 2: Build with more resources**
+```bash
+docker build --memory=4g --memory-swap=8g -t rvc-real-time:latest .
+```
+
+**Solution 3: Use pre-built images**
+Consider using the CPU-only PyTorch version which has better pre-built wheels:
+```bash
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+```
+
 ### PyAudio Installation Issues
 
 On Linux:
@@ -303,6 +324,31 @@ On macOS:
 brew install portaudio
 pip install pyaudio
 ```
+
+### Installation from requirements.txt fails
+
+If `pip install -r requirements.txt` fails, try:
+
+1. **Upgrade pip and setuptools first:**
+```bash
+pip install --upgrade pip setuptools wheel
+```
+
+2. **Install packages one by one:**
+```bash
+pip install numpy
+pip install torch torchaudio
+pip install librosa soundfile
+pip install websockets aiohttp python-dotenv
+pip install pyaudio  # May need system dependencies
+```
+
+3. **Use the minimal requirements:**
+```bash
+pip install -r requirements-minimal.txt
+```
+
+Then install heavy dependencies separately as needed.
 
 ### CUDA/GPU Issues
 
