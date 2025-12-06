@@ -1,0 +1,14 @@
+# Minimal requirements for testing without heavy dependencies
+# This is useful for CI/CD or lightweight environments
+
+numpy>=1.21.0,<2.0.0
+websockets>=11.0,<12.0
+aiohttp>=3.8.0,<4.0.0
+python-dotenv>=1.0.0
+
+# These can be installed separately if needed:
+# torch>=2.0.0,<2.2.0
+# torchaudio>=2.0.0,<2.2.0
+# pyaudio>=0.2.11
+# librosa>=0.10.0,<0.11.0
+# soundfile>=0.12.1
