@@ -12,6 +12,8 @@ import argparse
 import logging
 import sys
 import asyncio
+import time
+import numpy as np
 from pathlib import Path
 
 # Add app directory to path
@@ -23,6 +25,14 @@ from app.feature_extraction import FeatureExtractor
 from app.model_manager import ModelManager
 from app.chunk_processor import StreamProcessor
 from app.streaming_api import WebSocketServer, SocketServer
+
+# Import librosa and soundfile for local mode
+try:
+    import librosa
+    import soundfile as sf
+    LIBROSA_AVAILABLE = True
+except ImportError:
+    LIBROSA_AVAILABLE = False
 
 
 def setup_logging(log_level: str = "INFO"):
@@ -85,7 +95,6 @@ def run_streaming_mode(config: AppConfig):
     
     try:
         # Keep running
-        import time
         while True:
             time.sleep(0.1)
     except KeyboardInterrupt:
@@ -166,8 +175,9 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
     logger = logging.getLogger(__name__)
     logger.info(f"Processing {input_file} -> {output_file}")
     
-    import librosa
-    import soundfile as sf
+    if not LIBROSA_AVAILABLE:
+        logger.error("librosa and soundfile are required for local mode")
+        sys.exit(1)
     
     # Load audio
     audio, sr = librosa.load(input_file, sr=config.audio.sample_rate)
@@ -207,7 +217,6 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
             output_chunks.append(processed)
     
     # Concatenate output
-    import numpy as np
     output_audio = np.concatenate(output_chunks) if output_chunks else audio
     
     # Save output

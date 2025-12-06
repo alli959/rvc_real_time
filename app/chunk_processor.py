@@ -84,7 +84,8 @@ class ChunkProcessor:
         if self.overlap > 0 and self.fade_window is not None:
             output = self._apply_crossfade(processed)
         else:
-            output = processed[self.overlap:]
+            # No overlap, return the full processed chunk
+            output = processed
         
         # Remove processed samples from buffer (minus overlap)
         for _ in range(self.chunk_size - self.overlap):

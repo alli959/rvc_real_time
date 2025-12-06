@@ -34,9 +34,9 @@ ENV SOCKET_PORT=9876
 # Expose ports
 EXPOSE 8765 9876
 
-# Health check
+# Health check - uses TCP socket server port instead of WebSocket
 HEALTHCHECK --interval=30s --timeout=10s --start-period=5s --retries=3 \
-    CMD python -c "import socket; s=socket.socket(); s.connect(('localhost', 8765)); s.close()"
+    CMD python -c "import socket; s=socket.socket(); s.connect(('localhost', 9876)); s.close()"
 
 # Run the application
 CMD ["python", "main.py", "--mode", "api"]
