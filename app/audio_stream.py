@@ -113,7 +113,9 @@ class AudioStream:
             chunk = self.get_input_chunk(timeout=0.1)
             if chunk is not None:
                 processed = process_func(chunk)
-                self.put_output_chunk(processed)
+                # Only put output if processing returned valid data
+                if processed is not None:
+                    self.put_output_chunk(processed)
     
     def stop(self):
         """Stop all streams and cleanup"""
