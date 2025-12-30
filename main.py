@@ -14,25 +14,29 @@ import sys
 import asyncio
 import time
 import numpy as np
+from math import gcd
+from scipy import signal
 from pathlib import Path
+import librosa
 
 # Add app directory to path
 sys.path.insert(0, str(Path(__file__).parent))
 
+# Load .env if present
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except Exception:
+    pass
+
 from app.config import AppConfig
 from app.audio_stream import AudioStream
-from app.feature_extraction import FeatureExtractor
-from app.model_manager import ModelManager
+from app.model_manager import ModelManager, RVCInferParams
 from app.chunk_processor import StreamProcessor
 from app.streaming_api import WebSocketServer, SocketServer
 
-# Import librosa and soundfile for local mode
-try:
-    import librosa
-    import soundfile as sf
-    LIBROSA_AVAILABLE = True
-except ImportError:
-    LIBROSA_AVAILABLE = False
+import soundfile as sf
+
 
 
 def setup_logging(log_level: str = "INFO"):
@@ -44,6 +48,17 @@ def setup_logging(log_level: str = "INFO"):
             logging.StreamHandler(sys.stdout)
         ]
     )
+
+def _resample_poly(y: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
+    """Resample 1D float waveform using polyphase filtering."""
+    y = np.asarray(y, dtype=np.float32).flatten()
+    if orig_sr == target_sr or y.size == 0:
+        return y
+    g = gcd(orig_sr, target_sr)
+    up = target_sr // g
+    down = orig_sr // g
+    return signal.resample_poly(y.astype(np.float64), up, down).astype(np.float32)
+
 
 
 def run_streaming_mode(config: AppConfig):
@@ -63,24 +78,37 @@ def run_streaming_mode(config: AppConfig):
         channels=config.audio.channels
     )
     
-    feature_extractor = FeatureExtractor(
-        sample_rate=config.audio.sample_rate
-    )
-    
     model_manager = ModelManager(
-        model_dir=config.model.model_dir
+        model_dir=config.model.model_dir,
+        index_dir=config.model.index_dir,
+        hubert_path=config.model.hubert_path,
+        rmvpe_dir=config.model.rmvpe_dir,
+        input_sample_rate=config.audio.sample_rate,
+        device=config.model.device,
     )
+
+    infer_params = RVCInferParams(
+        sid=0,
+        f0_up_key=config.model.f0_up_key,
+        f0_method=config.model.f0_method,
+        index_rate=config.model.index_rate,
+        filter_radius=config.model.filter_radius,
+        rms_mix_rate=config.model.rms_mix_rate,
+        protect=config.model.protect,
+        resample_sr=config.model.resample_sr,
+    )
+
     
     # Load default model if specified
     if config.model.default_model:
-        model_manager.load_model(config.model.default_model)
+        model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
     
     # Create stream processor
     stream_processor = StreamProcessor(
         model_manager=model_manager,
-        feature_extractor=feature_extractor,
         chunk_size=config.audio.chunk_size,
-        overlap=config.audio.overlap
+        output_gain=getattr(config.model, "output_gain", 1.0),
+        infer_params=infer_params,
     )
     
     # Start audio streams
@@ -115,24 +143,38 @@ def run_api_mode(config: AppConfig):
     logger.info("Starting API mode...")
     
     # Initialize components
-    feature_extractor = FeatureExtractor(
-        sample_rate=config.audio.sample_rate
-    )
     
     model_manager = ModelManager(
-        model_dir=config.model.model_dir
+        model_dir=config.model.model_dir,
+        index_dir=config.model.index_dir,
+        hubert_path=config.model.hubert_path,
+        rmvpe_dir=config.model.rmvpe_dir,
+        input_sample_rate=config.audio.sample_rate,
+        device=config.model.device,
     )
+
+    infer_params = RVCInferParams(
+        sid=0,
+        f0_up_key=config.model.f0_up_key,
+        f0_method=config.model.f0_method,
+        index_rate=config.model.index_rate,
+        filter_radius=config.model.filter_radius,
+        rms_mix_rate=config.model.rms_mix_rate,
+        protect=config.model.protect,
+        resample_sr=config.model.resample_sr,
+    )
+
     
     # Load default model if specified
     if config.model.default_model:
-        model_manager.load_model(config.model.default_model)
+        model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
     
     # Create stream processor
     stream_processor = StreamProcessor(
         model_manager=model_manager,
-        feature_extractor=feature_extractor,
         chunk_size=config.audio.chunk_size,
-        overlap=config.audio.overlap
+        output_gain=getattr(config.model, "output_gain", 1.0),
+        infer_params=infer_params,
     )
     
     # Create servers
@@ -175,32 +217,50 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
     logger = logging.getLogger(__name__)
     logger.info(f"Processing {input_file} -> {output_file}")
     
-    if not LIBROSA_AVAILABLE:
-        logger.error("librosa and soundfile are required for local mode")
+    # Load audio (preserve original sample rate)
+    audio, sr = sf.read(input_file, dtype='float32', always_2d=False)
+    if audio is None:
+        logger.error('Failed to load input audio')
         sys.exit(1)
-    
-    # Load audio
-    audio, sr = librosa.load(input_file, sr=config.audio.sample_rate)
+    if isinstance(audio, np.ndarray) and audio.ndim == 2:
+        # stereo -> mono
+        audio = np.mean(audio, axis=1).astype(np.float32)
+    audio = np.asarray(audio, dtype=np.float32).flatten()
     
     # Initialize components
-    feature_extractor = FeatureExtractor(
-        sample_rate=config.audio.sample_rate
-    )
     
     model_manager = ModelManager(
-        model_dir=config.model.model_dir
+        model_dir=config.model.model_dir,
+        index_dir=config.model.index_dir,
+        hubert_path=config.model.hubert_path,
+        rmvpe_dir=config.model.rmvpe_dir,
+        input_sample_rate=sr,
+        device=config.model.device,
     )
+
+    infer_params = RVCInferParams(
+        sid=0,
+        f0_up_key=config.model.f0_up_key,
+        f0_method=config.model.f0_method,
+        index_rate=config.model.index_rate,
+        filter_radius=config.model.filter_radius,
+        rms_mix_rate=config.model.rms_mix_rate,
+        protect=config.model.protect,
+        resample_sr=config.model.resample_sr,
+    )
+    infer_params.resample_sr = int(sr)  # keep file sample rate
+
     
     # Load default model if specified
     if config.model.default_model:
-        model_manager.load_model(config.model.default_model)
+        model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
     
     # Create stream processor
     stream_processor = StreamProcessor(
         model_manager=model_manager,
-        feature_extractor=feature_extractor,
         chunk_size=config.audio.chunk_size,
-        overlap=config.audio.overlap
+        output_gain=getattr(config.model, "output_gain", 1.0),
+        infer_params=infer_params,
     )
     
     # Process in chunks
@@ -220,7 +280,7 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
     output_audio = np.concatenate(output_chunks) if output_chunks else audio
     
     # Save output
-    sf.write(output_file, output_audio, config.audio.sample_rate)
+    sf.write(output_file, output_audio, int(sr))
     logger.info(f"Saved processed audio to {output_file}")
 
 
@@ -241,6 +301,12 @@ def main():
         '--model',
         type=str,
         help='Model file to load'
+    )
+
+    parser.add_argument(
+        '--index',
+        type=str,
+        help='Optional .index file to use for retrieval enhancement'
     )
     
     parser.add_argument(
@@ -276,6 +342,16 @@ def main():
         help='Socket server port (default: 9876)'
     )
     
+    parser.add_argument("--f0-method", type=str, default=None, help="F0 method (e.g. rmvpe, dio, harvest)")
+    parser.add_argument("--f0-up-key", type=int, default=None, help="Pitch shift in semitones (e.g. -12..+12)")
+    parser.add_argument("--index-rate", type=float, default=None, help="Index blend (0..1)")
+    parser.add_argument("--protect", type=float, default=None, help="Protect (0..1)")
+    parser.add_argument("--rms-mix-rate", type=float, default=None, help="RMS mix rate (0..1)")
+    parser.add_argument("--filter-radius", type=int, default=None, help="Filter radius")
+    parser.add_argument("--resample-sr", type=int, default=None, help="Output resample sr (0=auto)")
+    parser.add_argument("--chunk-size", type=int, default=None, help="Chunk size for processing")
+    parser.add_argument("--output-gain", type=float, default=None, help="Output gain multiplier")
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -288,6 +364,28 @@ def main():
     # Override with command line arguments
     if args.model:
         config.model.default_model = args.model
+    if args.index:
+        config.model.default_index = args.index
+        
+    if args.f0_method is not None:
+        config.model.f0_method = args.f0_method
+    if args.f0_up_key is not None:
+        config.model.f0_up_key = args.f0_up_key
+    if args.index_rate is not None:
+        config.model.index_rate = args.index_rate
+    if args.protect is not None:
+        config.model.protect = args.protect
+    if args.rms_mix_rate is not None:
+        config.model.rms_mix_rate = args.rms_mix_rate
+    if args.filter_radius is not None:
+        config.model.filter_radius = args.filter_radius
+    if args.resample_sr is not None:
+        config.model.resample_sr = args.resample_sr
+
+    if args.chunk_size is not None:
+        config.audio.chunk_size = args.chunk_size
+    if args.output_gain is not None:
+        config.model.output_gain = args.output_gain
     
     config.mode = args.mode
     config.log_level = args.log_level
