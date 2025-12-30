@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # Core dependencies
 numpy>=1.21.0,<2.0.0
 
@@ -16,3 +17,28 @@ aiohttp>=3.8.0,<4.0.0
 
 # Utilities
 python-dotenv>=1.0.0
+=======
+# Core
+numpy>=1.23.0
+scipy>=1.10.0
+
+# Audio I/O
+soundfile>=0.12.0
+pyaudio>=0.2.11
+
+# Web / streaming
+websockets>=10.0
+python-dotenv>=1.0.0
+
+# RVC dependencies
+fairseq>=0.12.2
+faiss-cpu>=1.7.4
+
+# NOTE: PyTorch is required but is NOT pinned here (install the correct build for your system):
+#   https://pytorch.org/get-started/locally/
+#
+# Optional (file formats / extra f0 methods):
+#   av (PyAV)  -> enables reading more formats via ffmpeg in some RVC utilities
+#   pyworld    -> enables f0_method=harvest
+#   torchcrepe -> enables f0_method=crepe
+>>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
