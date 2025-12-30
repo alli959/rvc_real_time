@@ -1,6 +1,7 @@
 import logging
 import os
 import traceback
+import json
 from collections import OrderedDict
 from io import BytesIO
 from pathlib import Path
@@ -15,6 +16,7 @@ try:
 except Exception:  # pragma: no cover
     load_audio = None  # type: ignore
     wav2 = None  # type: ignore
+
 from rvc.lib.infer_pack.models import (
     SynthesizerTrnMs256NSFsid,
     SynthesizerTrnMs256NSFsid_nono,
@@ -36,27 +38,125 @@ class VC:
         self.cpt: OrderedDict | None = None
         self.version: str | None = None
         self.if_f0: int | None = None
-        self.version: str | None = None
         self.hubert_model: any = None
-
         self.config = Config()
 
     def get_vc(self, sid: str, *to_return_protect: int):
         logger.info("Get sid: " + sid)
+
+        person = sid if os.path.exists(sid) else f'{os.getenv("weight_root")}/{sid}'
+        logger.info(f"Loading: {person}")
+
+        # load checkpoint
+        self.cpt = torch.load(person, map_location="cpu")
+
+        # normalize checkpoint formats (WebUI vs other forks)
+        if isinstance(self.cpt, dict) and "weight" not in self.cpt:
+            if "model" in self.cpt and isinstance(self.cpt["model"], dict):
+                self.cpt["weight"] = self.cpt["model"]
+            elif "state_dict" in self.cpt and isinstance(self.cpt["state_dict"], dict):
+                self.cpt["weight"] = self.cpt["state_dict"]
+            elif "net_g" in self.cpt and isinstance(self.cpt["net_g"], dict):
+                self.cpt["weight"] = self.cpt["net_g"]
+
+        if not isinstance(self.cpt, dict):
+            self.cpt = {"weight": self.cpt}
+
+        # ✅ safe to read after load/normalize
+        self.if_f0 = int(self.cpt.get("f0", 1) or 1)
 
         return_protect = [
             to_return_protect[0] if self.if_f0 != 0 and to_return_protect else 0.5,
             to_return_protect[1] if self.if_f0 != 0 and to_return_protect else 0.33,
         ]
 
-        person = sid if os.path.exists(sid) else f'{os.getenv("weight_root")}/{sid}'
-        logger.info(f"Loading: {person}")
+        w = self.cpt["weight"]
 
-        self.cpt = torch.load(person, map_location="cpu")
-        self.tgt_sr = self.cpt["config"][-1]
-        self.cpt["config"][-3] = self.cpt["weight"]["emb_g.weight"].shape[0]  # n_spk
-        self.if_f0 = self.cpt.get("f0", 1)
-        self.version = self.cpt.get("version", "v1")
+        emb_key = "emb_g.weight"
+        if emb_key not in w:
+            emb_key = "module.emb_g.weight"
+        n_spk = w[emb_key].shape[0]
+
+        model_dir = Path(person).resolve().parent
+        cfg_json = model_dir / "config.json"
+        tgt_sr = None
+
+        if cfg_json.exists():
+            j = json.loads(cfg_json.read_text(encoding="utf-8"))
+
+            data = j.get("data", {}) if isinstance(j, dict) else {}
+            tgt_sr = data.get("sampling_rate") or data.get("sr") or data.get("sample_rate")
+
+            m = j.get("model", {}) if isinstance(j, dict) else {}
+            if isinstance(m, dict):
+                k = "enc_p.emb_phone.weight"
+                if k not in w:
+                    k = "module.enc_p.emb_phone.weight"
+                if k in w:
+                    feat_dim = w[k].shape[1]  # 256 (v1) or 768 (v2)
+                    self.version = "v2" if feat_dim == 768 else "v1"
+                else:
+                    self.version = self.cpt.get("version", "v1")
+
+                spec_channels = 80
+                segment_size = 0
+                inter_channels = int(m.get("inter_channels", 192))
+                hidden_channels = int(m.get("hidden_channels", 192))
+                filter_channels = int(m.get("filter_channels", 768))
+                n_heads = int(m.get("n_heads", 2))
+                n_layers = int(m.get("n_layers", 6))
+                kernel_size = int(m.get("kernel_size", 3))
+                p_dropout = float(m.get("p_dropout", 0.0) or 0.0)
+
+                resblock = str(m.get("resblock", "1"))
+                resblock_kernel_sizes = m.get("resblock_kernel_sizes", [3, 7, 11])
+                resblock_dilation_sizes = m.get(
+                    "resblock_dilation_sizes",
+                    [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                )
+
+                upsample_rates = m.get("upsample_rates", [8, 8, 2, 2])
+                upsample_initial_channel = int(m.get("upsample_initial_channel", 512))
+                upsample_kernel_sizes = m.get("upsample_kernel_sizes", [16, 16, 4, 4])
+
+                gin_channels = int(m.get("gin_channels", 256))
+                sr = int(tgt_sr or 48000)
+
+                self.cpt["config"] = [
+                    spec_channels,
+                    segment_size,
+                    inter_channels,
+                    hidden_channels,
+                    filter_channels,
+                    n_heads,
+                    n_layers,
+                    kernel_size,
+                    p_dropout,
+                    resblock,
+                    resblock_kernel_sizes,
+                    resblock_dilation_sizes,
+                    upsample_rates,
+                    upsample_initial_channel,
+                    upsample_kernel_sizes,
+                    n_spk,
+                    gin_channels,
+                    sr,
+                ]
+
+                logger.info(
+                    f"Built config from config.json (sr={sr}, n_spk={n_spk}, version={self.version})"
+                )
+
+        if "config" not in self.cpt or not isinstance(self.cpt["config"], list):
+            raise KeyError(
+                f"Missing synthesizer config. Could not build from config.json. "
+                f"Checkpoint keys={list(self.cpt.keys())}"
+            )
+
+        self.tgt_sr = int(self.cpt["config"][-1])
+
+        if not self.version:
+            self.version = self.cpt.get("version", "v1")
 
         synthesizer_class = {
             ("v1", 1): SynthesizerTrnMs256NSFsid,
@@ -75,20 +175,18 @@ class VC:
             logger.info("Clean model cache")
             del (self.hubert_model, self.tgt_sr, self.net_g)
             (self.net_g) = self.n_spk = index = None
-
         else:
             self.net_g.load_state_dict(self.cpt["weight"], strict=False)
             self.net_g.eval().to(self.config.device)
-            self.net_g = (
-                self.net_g.half() if self.config.is_half else self.net_g.float()
-            )
-
+            self.net_g = self.net_g.half() if self.config.is_half else self.net_g.float()
             self.pipeline = Pipeline(self.tgt_sr, self.config)
-            self.n_spk = self.cpt["config"][-3]
+            self.n_spk = n_spk
             index = get_index_path_from_model(sid)
             logger.info("Select index: " + index)
 
         return self.n_spk, return_protect, index
+
+        
 
     def vc_single(
         self,
