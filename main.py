@@ -17,6 +17,7 @@ import numpy as np
 from math import gcd
 from scipy import signal
 from pathlib import Path
+import librosa
 
 # Add app directory to path
 sys.path.insert(0, str(Path(__file__).parent))
@@ -106,7 +107,7 @@ def run_streaming_mode(config: AppConfig):
     stream_processor = StreamProcessor(
         model_manager=model_manager,
         chunk_size=config.audio.chunk_size,
-        output_gain=config.model.output_gain,
+        output_gain=getattr(config.model, "output_gain", 1.0),
         infer_params=infer_params,
     )
     
@@ -172,7 +173,7 @@ def run_api_mode(config: AppConfig):
     stream_processor = StreamProcessor(
         model_manager=model_manager,
         chunk_size=config.audio.chunk_size,
-        output_gain=config.model.output_gain,
+        output_gain=getattr(config.model, "output_gain", 1.0),
         infer_params=infer_params,
     )
     
@@ -258,7 +259,7 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
     stream_processor = StreamProcessor(
         model_manager=model_manager,
         chunk_size=config.audio.chunk_size,
-        output_gain=config.model.output_gain,
+        output_gain=getattr(config.model, "output_gain", 1.0),
         infer_params=infer_params,
     )
     
@@ -341,6 +342,16 @@ def main():
         help='Socket server port (default: 9876)'
     )
     
+    parser.add_argument("--f0-method", type=str, default=None, help="F0 method (e.g. rmvpe, dio, harvest)")
+    parser.add_argument("--f0-up-key", type=int, default=None, help="Pitch shift in semitones (e.g. -12..+12)")
+    parser.add_argument("--index-rate", type=float, default=None, help="Index blend (0..1)")
+    parser.add_argument("--protect", type=float, default=None, help="Protect (0..1)")
+    parser.add_argument("--rms-mix-rate", type=float, default=None, help="RMS mix rate (0..1)")
+    parser.add_argument("--filter-radius", type=int, default=None, help="Filter radius")
+    parser.add_argument("--resample-sr", type=int, default=None, help="Output resample sr (0=auto)")
+    parser.add_argument("--chunk-size", type=int, default=None, help="Chunk size for processing")
+    parser.add_argument("--output-gain", type=float, default=None, help="Output gain multiplier")
+    
     args = parser.parse_args()
     
     # Setup logging
@@ -355,6 +366,26 @@ def main():
         config.model.default_model = args.model
     if args.index:
         config.model.default_index = args.index
+        
+    if args.f0_method is not None:
+        config.model.f0_method = args.f0_method
+    if args.f0_up_key is not None:
+        config.model.f0_up_key = args.f0_up_key
+    if args.index_rate is not None:
+        config.model.index_rate = args.index_rate
+    if args.protect is not None:
+        config.model.protect = args.protect
+    if args.rms_mix_rate is not None:
+        config.model.rms_mix_rate = args.rms_mix_rate
+    if args.filter_radius is not None:
+        config.model.filter_radius = args.filter_radius
+    if args.resample_sr is not None:
+        config.model.resample_sr = args.resample_sr
+
+    if args.chunk_size is not None:
+        config.audio.chunk_size = args.chunk_size
+    if args.output_gain is not None:
+        config.model.output_gain = args.output_gain
     
     config.mode = args.mode
     config.log_level = args.log_level
