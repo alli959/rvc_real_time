@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  rvc-server:
+    build: .
+    container_name: rvc-real-time
+    ports:
+      - "8765:8765"  # WebSocket
+      - "9876:9876"  # TCP Socket
+    volumes:
+      - ./assets/models:/app/assets/models
+    environment:
+      - APP_MODE=api
+      - LOG_LEVEL=INFO
+      - WEBSOCKET_PORT=8765
+      - SOCKET_PORT=9876
+      - AUDIO_SAMPLE_RATE=16000
+      - AUDIO_CHUNK_SIZE=1024
+      - AUDIO_OVERLAP=256
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(); s.connect(('localhost', 9876)); s.close()"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 5s
