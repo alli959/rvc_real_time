@@ -1,23 +1,3 @@
-<<<<<<< HEAD
-# Core dependencies
-numpy>=1.21.0,<2.0.0
-
-# PyTorch - CPU version for smaller size and better compatibility
-torch>=2.0.0,<2.2.0
-torchaudio>=2.0.0,<2.2.0
-
-# Audio processing
-pyaudio>=0.2.11
-librosa>=0.10.0,<0.11.0
-soundfile>=0.12.1
-
-# Streaming API
-websockets>=11.0,<12.0
-aiohttp>=3.8.0,<4.0.0
-
-# Utilities
-python-dotenv>=1.0.0
-=======
 # Core
 numpy>=1.23.0
 scipy>=1.10.0
@@ -41,4 +21,3 @@ faiss-cpu>=1.7.4
 #   av (PyAV)  -> enables reading more formats via ffmpeg in some RVC utilities
 #   pyworld    -> enables f0_method=harvest
 #   torchcrepe -> enables f0_method=crepe
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)

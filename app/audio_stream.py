@@ -77,12 +77,6 @@ class AudioStream:
         """Callback for audio output stream"""
         try:
             audio_data = self.output_queue.get_nowait()
-<<<<<<< HEAD
-            return (audio_data.tobytes(), pyaudio.paContinue)
-        except queue.Empty:
-            # Return silence if no data available
-            return (np.zeros(frame_count, dtype=np.float32).tobytes(), pyaudio.paContinue)
-=======
             audio_data = np.asarray(audio_data, dtype=np.float32).flatten()
 
             # PyAudio expects exactly frame_count frames. Pad/trim as needed.
@@ -96,7 +90,6 @@ class AudioStream:
         except queue.Empty:
             # Return silence if no data available
             return (np.zeros(frame_count * self.channels, dtype=np.float32).tobytes(), pyaudio.paContinue)
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
     
     def get_input_chunk(self, timeout: float = 1.0) -> Optional[np.ndarray]:
         """Get an audio chunk from the input queue"""

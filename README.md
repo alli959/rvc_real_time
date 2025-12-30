@@ -49,8 +49,6 @@ pip install -r requirements.txt
 
 3. (Optional) Place your RVC models in `assets/models/`
 
-<<<<<<< HEAD
-=======
 To run inference with WebUI-trained models you also need these assets:
 
 - **HuBERT**: place `hubert_base.pt` at `assets/hubert/hubert_base.pt`
@@ -59,7 +57,6 @@ To run inference with WebUI-trained models you also need these assets:
 
 You can configure these paths in `.env` (see `.env.example`).
 
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
 ### Docker Installation
 
 1. Build the Docker image:
@@ -90,11 +87,7 @@ python main.py --mode api
 Real-time audio I/O with local processing:
 
 ```bash
-<<<<<<< HEAD
-python main.py --mode streaming --model your_model.pth
-=======
 python main.py --mode streaming --model your_model.pth --index assets/index/your_model.index
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
 ```
 
 ### Local File Processing
@@ -110,10 +103,7 @@ python main.py --mode local --input input.wav --output output.wav --model your_m
 ```
 --mode {streaming,api,local}  Application mode (default: api)
 --model MODEL                 Model file to load
-<<<<<<< HEAD
-=======
 --index INDEX                 Optional .index file
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
 --input INPUT                 Input audio file (local mode)
 --output OUTPUT               Output audio file (local mode)
 --log-level LEVEL            Logging level (DEBUG, INFO, WARNING, ERROR)
@@ -131,14 +121,6 @@ Configuration can be set via environment variables or command line arguments:
 # Audio Configuration
 AUDIO_SAMPLE_RATE=16000
 AUDIO_CHUNK_SIZE=1024
-<<<<<<< HEAD
-AUDIO_OVERLAP=256
-AUDIO_CHANNELS=1
-
-# Model Configuration
-MODEL_DIR=assets/models
-DEFAULT_MODEL=your_model.pth
-=======
 AUDIO_OVERLAP=0
 AUDIO_CHANNELS=1
 
@@ -162,7 +144,6 @@ PROTECT=0.33
 RESAMPLE_SR=16000
 
 # Device
->>>>>>> 2c01fa3 (feat(rvc): run WebUI-trained RVC models in realtime pipeline)
 DEVICE=auto  # auto, cpu, cuda
 
 # Server Configuration
