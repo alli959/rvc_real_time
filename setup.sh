@@ -41,6 +41,15 @@ else
     echo "You can manually download assets later by running: bash scripts/download_rvc_assets.sh"
 fi
 
+# Download example model (BillCipher)
+echo ""
+echo "Downloading example model (BillCipher)..."
+if [ -f "scripts/download_billcipher_model.sh" ]; then
+    bash scripts/download_billcipher_model.sh || echo "⚠️  Skipped BillCipher model download (configure URLs in scripts/download_billcipher_model.sh)"
+else
+    echo "Warning: scripts/download_billcipher_model.sh not found"
+fi
+
 echo ""
 echo "Setup complete!"
 echo ""

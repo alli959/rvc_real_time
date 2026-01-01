@@ -43,10 +43,30 @@ venv.bak/
 logs/
 
 # Model files (large)
-assets/models/*.pth
-assets/models/*.pt
-assets/models/*.ckpt
-assets/models/*.onnx
+assets/models/**/*.pth
+assets/models/**/*.pt
+assets/models/**/*.ckpt
+assets/models/**/*.onnx
+assets/models/**/*.index
+assets/models/**/*.npy
+assets/hubert/*.pt
+assets/rmvpe/*.pt
+
+# Training artifacts
+assets/models/**/0_gt_wavs/
+assets/models/**/1_16k_wavs/
+assets/models/**/2a_f0/
+assets/models/**/2b-f0nsf/
+assets/models/**/3_feature*/
+assets/models/**/eval/
+assets/models/**/events.out.tfevents.*
+assets/models/**/filelist.txt
+assets/models/**/repack.py
+
+# Keep directory structure but ignore model files
+!assets/models/.gitkeep
+!assets/models/*/README.md
+!assets/models/*/config.json
 
 # Environment variables
 .env
@@ -65,6 +85,10 @@ htmlcov/
 tmp/
 temp/
 *.tmp
+
+# Input/output directories
+input/
+outputs/
 
 infer/
 
