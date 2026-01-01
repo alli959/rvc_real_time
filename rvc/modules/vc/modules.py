@@ -81,76 +81,106 @@ class VC:
         cfg_json = model_dir / "config.json"
         tgt_sr = None
 
+        # Detect version from weights if possible
+        k = "enc_p.emb_phone.weight"
+        if k not in w:
+            k = "module.enc_p.emb_phone.weight"
+        if k in w:
+            feat_dim = w[k].shape[1]  # 256 (v1) or 768 (v2)
+            self.version = "v2" if feat_dim == 768 else "v1"
+        else:
+            self.version = self.cpt.get("version", "v1")
+
+        # Try to load config from config.json or use defaults
         if cfg_json.exists():
             j = json.loads(cfg_json.read_text(encoding="utf-8"))
-
             data = j.get("data", {}) if isinstance(j, dict) else {}
-            tgt_sr = data.get("sampling_rate") or data.get("sr") or data.get("sample_rate")
-
             m = j.get("model", {}) if isinstance(j, dict) else {}
-            if isinstance(m, dict):
-                k = "enc_p.emb_phone.weight"
-                if k not in w:
-                    k = "module.enc_p.emb_phone.weight"
-                if k in w:
-                    feat_dim = w[k].shape[1]  # 256 (v1) or 768 (v2)
-                    self.version = "v2" if feat_dim == 768 else "v1"
-                else:
-                    self.version = self.cpt.get("version", "v1")
+            tgt_sr = data.get("sampling_rate") or data.get("sr") or data.get("sample_rate")
+            logger.info(f"Found config.json, loading model parameters")
+        else:
+            # No config.json - use default RVC parameters
+            m = {}
+            tgt_sr = None
+            logger.info(f"No config.json found, using default {self.version} parameters")
 
-                spec_channels = 80
-                segment_size = 0
-                inter_channels = int(m.get("inter_channels", 192))
-                hidden_channels = int(m.get("hidden_channels", 192))
-                filter_channels = int(m.get("filter_channels", 768))
-                n_heads = int(m.get("n_heads", 2))
-                n_layers = int(m.get("n_layers", 6))
-                kernel_size = int(m.get("kernel_size", 3))
-                p_dropout = float(m.get("p_dropout", 0.0) or 0.0)
+        # Build config - use values from config.json if available, otherwise defaults
+        spec_channels = 80
+        segment_size = 0
+        inter_channels = int(m.get("inter_channels", 192))
+        hidden_channels = int(m.get("hidden_channels", 192))
+        filter_channels = int(m.get("filter_channels", 768))
+        n_heads = int(m.get("n_heads", 2))
+        n_layers = int(m.get("n_layers", 6))
+        kernel_size = int(m.get("kernel_size", 3))
+        p_dropout = float(m.get("p_dropout", 0.0) or 0.0)
 
-                resblock = str(m.get("resblock", "1"))
-                resblock_kernel_sizes = m.get("resblock_kernel_sizes", [3, 7, 11])
-                resblock_dilation_sizes = m.get(
-                    "resblock_dilation_sizes",
-                    [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-                )
+        resblock = str(m.get("resblock", "1"))
+        resblock_kernel_sizes = m.get("resblock_kernel_sizes", [3, 7, 11])
+        resblock_dilation_sizes = m.get(
+            "resblock_dilation_sizes",
+            [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+        )
 
-                upsample_rates = m.get("upsample_rates", [8, 8, 2, 2])
-                upsample_initial_channel = int(m.get("upsample_initial_channel", 512))
-                upsample_kernel_sizes = m.get("upsample_kernel_sizes", [16, 16, 4, 4])
+        # Detect sample rate from upsample rates if possible
+        # v1/v2 32k: [10, 4, 2, 2, 2] -> 320 hop -> 32000
+        # v1/v2 40k: [10, 5, 2, 2, 2] -> 400 hop -> 40000  (or [10, 8, 2, 2])
+        # v1/v2 48k: [10, 6, 2, 2, 2] -> 480 hop -> 48000  (or [12, 10, 2, 2])
+        default_upsample_rates = m.get("upsample_rates", [10, 6, 2, 2, 2])
+        upsample_rates = default_upsample_rates
+        upsample_initial_channel = int(m.get("upsample_initial_channel", 512))
+        
+        # Try to infer sample rate from upsample configuration
+        if not tgt_sr:
+            hop_length = 1
+            for r in upsample_rates:
+                hop_length *= r
+            # Common RVC sample rates: 32000, 40000, 48000
+            tgt_sr = hop_length * 100  # hop_length * 100 gives approximate sr
+            # Clamp to known valid rates
+            if tgt_sr <= 32000:
+                tgt_sr = 32000
+            elif tgt_sr <= 40000:
+                tgt_sr = 40000
+            else:
+                tgt_sr = 48000
 
-                gin_channels = int(m.get("gin_channels", 256))
-                sr = int(tgt_sr or 48000)
+        # Adjust upsample kernel sizes based on rates
+        default_upsample_kernel_sizes = m.get("upsample_kernel_sizes")
+        if default_upsample_kernel_sizes:
+            upsample_kernel_sizes = default_upsample_kernel_sizes
+        else:
+            # Default kernel sizes are typically 2x the upsample rate
+            upsample_kernel_sizes = [r * 2 for r in upsample_rates]
 
-                self.cpt["config"] = [
-                    spec_channels,
-                    segment_size,
-                    inter_channels,
-                    hidden_channels,
-                    filter_channels,
-                    n_heads,
-                    n_layers,
-                    kernel_size,
-                    p_dropout,
-                    resblock,
-                    resblock_kernel_sizes,
-                    resblock_dilation_sizes,
-                    upsample_rates,
-                    upsample_initial_channel,
-                    upsample_kernel_sizes,
-                    n_spk,
-                    gin_channels,
-                    sr,
-                ]
+        gin_channels = int(m.get("gin_channels", 256))
+        sr = int(tgt_sr)
 
-                logger.info(
-                    f"Built config from config.json (sr={sr}, n_spk={n_spk}, version={self.version})"
-                )
-
+        # Only build config if not already present in checkpoint
         if "config" not in self.cpt or not isinstance(self.cpt["config"], list):
-            raise KeyError(
-                f"Missing synthesizer config. Could not build from config.json. "
-                f"Checkpoint keys={list(self.cpt.keys())}"
+            self.cpt["config"] = [
+                spec_channels,
+                segment_size,
+                inter_channels,
+                hidden_channels,
+                filter_channels,
+                n_heads,
+                n_layers,
+                kernel_size,
+                p_dropout,
+                resblock,
+                resblock_kernel_sizes,
+                resblock_dilation_sizes,
+                upsample_rates,
+                upsample_initial_channel,
+                upsample_kernel_sizes,
+                n_spk,
+                gin_channels,
+                sr,
+            ]
+
+            logger.info(
+                f"Built config (sr={sr}, n_spk={n_spk}, version={self.version})"
             )
 
         self.tgt_sr = int(self.cpt["config"][-1])

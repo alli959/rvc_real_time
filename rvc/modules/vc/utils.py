@@ -1,4 +1,5 @@
 import os
+import torch
 
 from fairseq import checkpoint_utils
 
@@ -20,6 +21,7 @@ def get_index_path_from_model(sid):
 
 
 def load_hubert(config, hubert_path: str):
+    """Load HuBERT model from checkpoint."""
     models, _, _ = checkpoint_utils.load_model_ensemble_and_task(
         [hubert_path],
         suffix="",

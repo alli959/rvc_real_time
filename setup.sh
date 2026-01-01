@@ -31,6 +31,16 @@ pip install -r requirements.txt
 # Create necessary directories
 mkdir -p assets/models
 
+# Download required model assets
+echo ""
+echo "Downloading required model assets (HuBERT and RMVPE)..."
+if [ -f "scripts/download_rvc_assets.sh" ]; then
+    bash scripts/download_rvc_assets.sh
+else
+    echo "Warning: scripts/download_rvc_assets.sh not found, skipping asset download"
+    echo "You can manually download assets later by running: bash scripts/download_rvc_assets.sh"
+fi
+
 echo ""
 echo "Setup complete!"
 echo ""

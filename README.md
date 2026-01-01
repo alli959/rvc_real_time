@@ -1,392 +1,318 @@
 # RVC Real-Time Voice Conversion
 
-Real-time voice conversion application using RVC (Retrieval-based Voice Conversion) models. This modular Python codebase supports streaming audio input/output, efficient feature extraction, and dynamic model selection. Refactored for chunk-based processing with a streaming API (WebSocket/socket server). Containerized for easy deployment.
+Real-time voice conversion application using **RVC (Retrieval-based Voice Conversion)** models, compatible with **WebUI-trained `.pth` models** (v1/v2) + optional **retrieval `.index`**. Supports:
+
+- **local**: process audio files
+- **api**: WebSocket + TCP socket servers for remote clients
+- **streaming**: real microphone/speaker loopback via PyAudio (requires a working system audio device)
+
+> **Important:** `streaming` mode requires a real, working audio input/output device. In WSL/headless/Docker without audio passthrough, it will fail with ALSA/PyAudio errors.
+
+---
 
 ## Features
 
-- 🎤 **Real-time Audio Processing**: Stream audio input/output with minimal latency
-- 🔄 **Chunk-based Processing**: Efficient processing with configurable chunk size and overlap
-- 🎯 **Dynamic Model Selection**: Load and switch between RVC models on the fly
-- 🌐 **Streaming API**: WebSocket and TCP socket servers for remote clients
-- 🐳 **Containerized**: Docker support for easy deployment
-- ⚡ **Fast & Extensible**: Modular architecture for future development
-- 🎛️ **Multiple Modes**: Streaming, API server, and local file processing
+- 🎤 **Real-time Audio Processing** (PyAudio I/O in `streaming`)
+- 🔄 **Chunk-based Processing** with configurable chunk size
+- 🎯 **WebUI model compatibility** (`.pth` + `config.json`, v1/v2)
+- 🧠 **HuBERT feature extraction** (required)
+- 🎼 **RMVPE pitch extraction** (recommended; required if `F0_METHOD=rmvpe`)
+- 🧲 **Retrieval index support** (`.index`) with blend control (`INDEX_RATE`)
+- 🌐 **Remote conversion** via WebSocket or raw TCP socket server
+- ⚡ **GPU support** (CUDA auto-detect; inference runs on GPU when available)
+
+---
 
 ## Directory Structure
 
 ```
+
 rvc_real_time/
-├── app/                        # Core application modules
-│   ├── __init__.py
-│   ├── audio_stream.py        # Audio I/O streaming
-│   ├── feature_extraction.py  # Feature extraction for RVC
-│   ├── model_manager.py       # Model loading and inference
-│   ├── chunk_processor.py     # Chunk-based processing
-│   ├── streaming_api.py       # WebSocket/Socket servers
-│   └── config.py              # Configuration management
-├── assets/                     # Asset files
-│   └── models/                # RVC model files (.pth, .pt, .ckpt)
-├── requirements.txt           # Python dependencies
-├── Dockerfile                 # Container configuration
-├── main.py                    # Application entry point
-└── README.md                  # This file
+├── app/
+│   ├── audio_stream.py
+│   ├── model_manager.py
+│   ├── chunk_processor.py
+│   ├── streaming_api.py
+│   └── config.py
+├── rvc/                        # vendored RVC pipeline + models
+├── assets/
+│   ├── models/                 # .pth model folders (often include config.json, optional .index)
+│   ├── hubert/                 # hubert_base.pt
+│   └── rmvpe/                  # rmvpe.pt
+├── requirements.txt
+├── Dockerfile
+├── main.py
+└── README.md
 ```
+---
 
 ## Installation
 
 ### Local Installation
 
-1. Clone the repository:
+1) Clone:
+
 ```bash
 git clone https://github.com/alli959/rvc_real_time.git
 cd rvc_real_time
-```
+````
 
-2. Install dependencies:
+2. Create venv + install deps:
+
 ```bash
+python -m venv venv
+source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. (Optional) Place your RVC models in `assets/models/`
+3. Provide required assets:
 
-To run inference with WebUI-trained models you also need these assets:
+#### Required: HuBERT
 
-- **HuBERT**: place `hubert_base.pt` at `assets/hubert/hubert_base.pt`
-- **RMVPE** (for f0/pitch): place `rmvpe.pt` at `assets/rmvpe/rmvpe.pt`
-- **Index** (optional but recommended): place the model's `.index` file in `assets/index/`
+Place:
 
-You can configure these paths in `.env` (see `.env.example`).
-
-### Docker Installation
-
-1. Build the Docker image:
-```bash
-docker build -t rvc-real-time .
+```
+assets/hubert/hubert_base.pt
 ```
 
-2. Run the container:
-```bash
-docker run -p 8765:8765 -p 9876:9876 rvc-real-time
+or set `HUBERT_PATH` to a file path.
+
+#### Required for RMVPE pitch (`rmvpe`)
+
+Place:
+
+```
+assets/rmvpe/rmvpe.pt
 ```
 
-## Usage
+or set `RMVPE_DIR` to the directory containing `rmvpe.pt`.
 
-### API Mode (Default)
+#### Model files
 
-Start WebSocket and Socket servers for remote clients:
+Put your model folder under `assets/models/`, for example:
 
-```bash
-python main.py --mode api
+```
+assets/models/BillCipher/BillCipher.pth
+assets/models/BillCipher/config.json
+assets/models/BillCipher/BillCipher.index
 ```
 
-**WebSocket Server**: `ws://localhost:8765`
-**Socket Server**: `tcp://localhost:9876`
+> Tip: If your model folder includes `config.json`, the repo can auto-build the synthesizer config from it.
 
-### Streaming Mode
+---
 
-Real-time audio I/O with local processing:
+## Quick Start
 
-```bash
-python main.py --mode streaming --model your_model.pth --index assets/index/your_model.index
-```
-
-### Local File Processing
-
-Process audio files:
+### Local mode (recommended for first run)
 
 ```bash
-python main.py --mode local --input input.wav --output output.wav --model your_model.pth
+python main.py --mode local \
+  --model ./assets/models/BillCipher/BillCipher.pth \
+  --index ./assets/models/BillCipher/BillCipher.index \
+  --input ./input/input.flac \
+  --output ./outputs/output.wav \
+  --f0-method rmvpe \
+  --f0-up-key 0 \
+  --index-rate 0.75 \
+  --chunk-size 65536
 ```
 
-### Command Line Options
-
-```
---mode {streaming,api,local}  Application mode (default: api)
---model MODEL                 Model file to load
---index INDEX                 Optional .index file
---input INPUT                 Input audio file (local mode)
---output OUTPUT               Output audio file (local mode)
---log-level LEVEL            Logging level (DEBUG, INFO, WARNING, ERROR)
---websocket-port PORT        WebSocket server port (default: 8765)
---socket-port PORT           Socket server port (default: 9876)
-```
-
-## Configuration
-
-Configuration can be set via environment variables or command line arguments:
-
-### Environment Variables
+### API mode (WebSocket + TCP socket)
 
 ```bash
-# Audio Configuration
+python main.py --mode api \
+  --model ./assets/models/BillCipher/BillCipher.pth \
+  --index ./assets/models/BillCipher/BillCipher.index
+```
+
+* WebSocket: `ws://localhost:8765`
+* TCP socket: `tcp://localhost:9876`
+
+> If you see `426 Upgrade Required` / `invalid Connection header: keep-alive`, something is making a normal HTTP request to the WebSocket port. Use a real WebSocket client (JS WebSocket, websocat, etc.).
+
+### Streaming mode (real mic/speaker loopback)
+
+```bash
+python main.py --mode streaming \
+  --model ./assets/models/BillCipher/BillCipher.pth \
+  --index ./assets/models/BillCipher/BillCipher.index \
+  --f0-method rmvpe \
+  --index-rate 0.75 \
+  --chunk-size 65536
+```
+
+> **WSL/headless warning:** If you get ALSA errors like `cannot find card '0'` or PyAudio `Wait timed out`, your environment doesn’t expose a usable audio device. Run streaming mode on a machine with real audio I/O (native Linux/Windows/macOS), or configure audio passthrough.
+
+---
+
+## Command Line Options
+
+```
+--mode {streaming,api,local}     Application mode (default: api)
+
+--model MODEL                    Model file to load (.pth)
+--index INDEX                    Optional retrieval .index file
+
+--input INPUT                    Input audio file (local mode only)
+--output OUTPUT                  Output audio file (local mode only)
+
+--f0-method METHOD               F0 method (e.g. rmvpe, dio, harvest)
+--f0-up-key N                    Pitch shift in semitones
+--index-rate R                   Index blend (0..1)
+--protect P                      Protect (0..1)
+--rms-mix-rate R                 RMS mix rate (0..1)
+--filter-radius N                Filter radius
+--resample-sr SR                 Output resample SR (0=auto/keep)
+
+--chunk-size N                   Chunk size for processing
+--output-gain G                  Output gain multiplier
+
+--log-level {DEBUG,INFO,WARNING,ERROR}
+--websocket-port PORT            WebSocket server port (default: 8765)
+--socket-port PORT               Socket server port (default: 9876)
+```
+
+---
+
+## Configuration (.env)
+
+You can configure defaults via environment variables (see `.env.example`):
+
+```bash
+# Audio
 AUDIO_SAMPLE_RATE=16000
 AUDIO_CHUNK_SIZE=1024
 AUDIO_OVERLAP=0
 AUDIO_CHANNELS=1
 
-# Model/asset paths
+# Assets
 MODEL_DIR=assets/models
 INDEX_DIR=assets/index
 HUBERT_PATH=assets/hubert/hubert_base.pt
 RMVPE_DIR=assets/rmvpe
 
 # Defaults
-DEFAULT_MODEL=your_model.pth
-# DEFAULT_INDEX=assets/index/your_model.index
+DEFAULT_MODEL=
+DEFAULT_INDEX=
 
-# RVC inference defaults
+# Inference defaults
 F0_METHOD=rmvpe
 F0_UP_KEY=0
 INDEX_RATE=0.75
 FILTER_RADIUS=3
 RMS_MIX_RATE=0.25
 PROTECT=0.33
-RESAMPLE_SR=16000
+RESAMPLE_SR=0
 
 # Device
-DEVICE=auto  # auto, cpu, cuda
+DEVICE=auto   # auto, cpu, cuda
 
-# Server Configuration
+# Server
 WEBSOCKET_HOST=0.0.0.0
 WEBSOCKET_PORT=8765
 SOCKET_HOST=0.0.0.0
 SOCKET_PORT=9876
 
-# Application
+# App
 APP_MODE=api
 LOG_LEVEL=INFO
 ```
 
-## API Documentation
+---
 
-### WebSocket API
+## API Notes
 
-Connect to `ws://host:8765` and send/receive JSON messages:
+### WebSocket
 
-**Audio Processing Request**:
-```json
-{
-  "type": "audio",
-  "data": "<base64-encoded-float32-audio>"
-}
-```
+The WebSocket server expects a **real WebSocket handshake**. If you hit it with curl/browser HTTP directly, you’ll see handshake errors.
 
-**Audio Processing Response**:
-```json
-{
-  "type": "audio",
-  "data": "<base64-encoded-float32-audio>"
-}
-```
+### TCP Socket
 
-**Configuration Update**:
-```json
-{
-  "type": "config",
-  "sample_rate": 16000,
-  "chunk_size": 1024
-}
-```
+TCP is a stream (not message framed). Clients must send audio in a consistent format and chunking strategy. If you see:
 
-**Ping/Pong**:
-```json
-{
-  "type": "ping"
-}
-```
+* `buffer size must be a multiple of element size`
 
-### Socket API
+…it means the server is trying to decode bytes into `float32` / `int16` but the received byte length is not aligned (TCP packet split). Clients should either:
 
-Connect to `tcp://host:9876` and send/receive raw audio data:
+* frame messages (length-prefix), or
+* buffer until full frames are received before decoding.
 
-1. Send 4 bytes (big-endian) with chunk size
-2. Send audio data as float32 bytes
-3. Receive 4 bytes with processed chunk size
-4. Receive processed audio as float32 bytes
+---
 
-## Architecture
+## GPU vs CPU
 
-### Core Modules
-
-- **audio_stream.py**: Manages real-time audio I/O using PyAudio with queue-based buffering
-- **feature_extraction.py**: Extracts mel spectrograms, pitch (F0), and MFCCs for RVC models
-- **model_manager.py**: Handles model loading, inference, and GPU/CPU management
-- **chunk_processor.py**: Processes audio in chunks with overlap and crossfading
-- **streaming_api.py**: WebSocket and TCP socket servers for network streaming
-- **config.py**: Configuration management with environment variable support
-
-### Processing Pipeline
+If CUDA is available, the model should run on GPU for speed. Logs like:
 
 ```
-Input Audio → AudioStream → ChunkProcessor → FeatureExtractor → ModelManager → Output Audio
+Found GPU ... is_half:True, device:cuda:0
 ```
 
-## Development
+mean inference is configured for GPU. Some checkpoints are loaded with `map_location="cpu"` and then moved to GPU after weights are loaded; that’s normal.
 
-### Adding New Features
-
-The modular architecture makes it easy to extend:
-
-1. Add new feature extractors in `feature_extraction.py`
-2. Add new model types in `model_manager.py`
-3. Add new streaming protocols in `streaming_api.py`
-4. Add new processing modes in `main.py`
-
-### Testing
-
-Run the application in different modes to test:
-
-```bash
-# Test API mode
-python main.py --mode api --log-level DEBUG
-
-# Test with a model
-python main.py --mode streaming --model test_model.pth
-```
-
-## Docker Deployment
-
-### Build and Run
-
-```bash
-# Build
-docker build -t rvc-real-time:latest .
-
-# Run with volume mount for models
-docker run -d \
-  -p 8765:8765 \
-  -p 9876:9876 \
-  -v $(pwd)/assets/models:/app/assets/models \
-  --name rvc-server \
-  rvc-real-time:latest
-
-# View logs
-docker logs -f rvc-server
-```
-
-### Docker Compose (Optional)
-
-Create `docker-compose.yml`:
-
-```yaml
-version: '3.8'
-services:
-  rvc-server:
-    build: .
-    ports:
-      - "8765:8765"
-      - "9876:9876"
-    volumes:
-      - ./assets/models:/app/assets/models
-    environment:
-      - LOG_LEVEL=INFO
-      - DEFAULT_MODEL=your_model.pth
-```
-
-Run with: `docker-compose up`
-
-## Performance
-
-- **Latency**: Configurable based on chunk size (default ~64ms)
-- **Throughput**: Optimized for real-time processing
-- **GPU Support**: Automatic CUDA detection and usage
-- **Memory**: Efficient chunk-based processing minimizes memory usage
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Make your changes
-4. Submit a pull request
-
-## Future Development
-
-- [ ] Support for additional RVC model architectures
-- [ ] Web UI for model management
-- [ ] Multiple concurrent client support
-- [ ] Audio effects and post-processing
-- [ ] Performance metrics and monitoring
-- [ ] Model fine-tuning interface
+---
 
 ## Troubleshooting
 
-### Docker Build Issues with pip/wheel
+### Streaming mode fails with ALSA / PyAudio errors
 
-If you encounter errors like "Failed to build installable wheels for some pyproject.toml based projects":
+Examples:
 
-**Solution 1: Use the updated Dockerfile**
-The Dockerfile now includes build tools and upgraded pip/setuptools:
+* `ALSA ... cannot find card '0'`
+* `OSError: [Errno -9987] Wait timed out`
+
+Cause: no accessible audio device (common in WSL, Docker, headless servers).
+
+Fix:
+
+* run streaming mode on a system with real audio I/O, or
+* configure audio passthrough (PulseAudio/PipeWire/WSLg), or
+* use `--mode local` / `--mode api` instead.
+
+### WebSocket `426 Upgrade Required` / `invalid Connection header`
+
+Cause: non-WebSocket HTTP client hitting the WS port.
+Fix: use a WebSocket client (JS WebSocket, websocat).
+
+### Output quality is bad
+
+Common causes:
+
+* wrong sample rate expectations / resampling issues
+* chunk size too small/large for your use case
+* retrieval index mismatch (wrong `.index`)
+* wrong f0 method or protect/rms settings
+
+Try:
+
+* `--f0-method rmvpe`
+* tune `--index-rate` (e.g. 0.5–0.8)
+* tune `--protect` (0.2–0.5)
+* ensure your `.index` actually matches the `.pth` model
+
+---
+
+## Docker
+
+Docker can run `api` or `local` mode easily, but `streaming` mode typically needs audio passthrough.
+
+Build:
+
 ```bash
 docker build -t rvc-real-time:latest .
 ```
 
-**Solution 2: Build with more resources**
+Run API:
+
 ```bash
-docker build --memory=4g --memory-swap=8g -t rvc-real-time:latest .
+docker run -p 8765:8765 -p 9876:9876 rvc-real-time:latest
 ```
 
-**Solution 3: Use pre-built images**
-Consider using the CPU-only PyTorch version which has better pre-built wheels:
-```bash
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+---
+
+## License
+
+MIT
+
 ```
-
-### PyAudio Installation Issues
-
-On Linux:
-```bash
-sudo apt-get install portaudio19-dev
-pip install pyaudio
+::contentReference[oaicite:0]{index=0}
 ```
-
-On macOS:
-```bash
-brew install portaudio
-pip install pyaudio
-```
-
-### Installation from requirements.txt fails
-
-If `pip install -r requirements.txt` fails, try:
-
-1. **Upgrade pip and setuptools first:**
-```bash
-pip install --upgrade pip setuptools wheel
-```
-
-2. **Install packages one by one:**
-```bash
-pip install numpy
-pip install torch torchaudio
-pip install librosa soundfile
-pip install websockets aiohttp python-dotenv
-pip install pyaudio  # May need system dependencies
-```
-
-3. **Use the minimal requirements:**
-```bash
-pip install -r requirements-minimal.txt
-```
-
-Then install heavy dependencies separately as needed.
-
-### CUDA/GPU Issues
-
-Ensure you have the correct PyTorch version for your CUDA version:
-```bash
-# Check CUDA version
-nvidia-smi
-
-# Install PyTorch with CUDA support
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
-```
-
-## Contact
-
-For issues and questions, please use the GitHub issue tracker.
