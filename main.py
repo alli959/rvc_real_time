@@ -181,7 +181,9 @@ def run_api_mode(config: AppConfig):
     websocket_server = WebSocketServer(
         host=config.server.websocket_host,
         port=config.server.websocket_port,
-        stream_processor=stream_processor
+        stream_processor=stream_processor,
+        model_manager=model_manager,
+        infer_params=infer_params  # For batch processing mode (better quality)
     )
     
     socket_server = SocketServer(

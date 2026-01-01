@@ -20,7 +20,9 @@ class WebSocketServer:
         self,
         host: str = "0.0.0.0",
         port: int = 8765,
-        stream_processor = None
+        stream_processor = None,
+        model_manager = None,
+        infer_params = None
     ):
         """
         Initialize WebSocket server
@@ -28,14 +30,21 @@ class WebSocketServer:
         Args:
             host: Server host address
             port: Server port
-            stream_processor: StreamProcessor instance for audio processing
+            stream_processor: StreamProcessor instance for audio processing (for real-time streaming)
+            model_manager: ModelManager instance for batch processing (better quality)
+            infer_params: RVCInferParams for voice conversion settings
         """
         self.host = host
         self.port = port
         self.stream_processor = stream_processor
+        self.model_manager = model_manager
+        self.infer_params = infer_params
         
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.server = None
+        
+        # Audio buffer for accumulating chunks (per-client)
+        self.client_buffers = {}  # client_id -> list of audio chunks
     
     async def handle_client(self, websocket, path):
         """
@@ -49,9 +58,12 @@ class WebSocketServer:
         client_id = id(websocket)
         logger.info(f"Client {client_id} connected from {websocket.remote_address}")
         
+        # Initialize buffer for this client
+        self.client_buffers[client_id] = []
+        
         try:
             async for message in websocket:
-                await self.process_message(websocket, message)
+                await self.process_message(websocket, message, client_id)
         
         except websockets.exceptions.ConnectionClosed:
             logger.info(f"Client {client_id} disconnected")
@@ -61,14 +73,18 @@ class WebSocketServer:
         
         finally:
             self.clients.remove(websocket)
+            # Clean up buffer
+            if client_id in self.client_buffers:
+                del self.client_buffers[client_id]
     
-    async def process_message(self, websocket, message):
+    async def process_message(self, websocket, message, client_id):
         """
         Process incoming WebSocket message
         
         Args:
             websocket: WebSocket connection
             message: Incoming message
+            client_id: Client identifier for buffer management
         """
         try:
             # Parse message
@@ -78,18 +94,68 @@ class WebSocketServer:
             if msg_type == 'audio':
                 # Process audio data
                 audio_data = self.decode_audio(data.get('data'))
+                is_final = data.get('final', False)  # Check if this is the final chunk
                 
-                if audio_data is not None and self.stream_processor:
-                    # Process through RVC pipeline
-                    processed = self.stream_processor.process_audio_chunk(audio_data)
+                if audio_data is not None:
+                    # Use batch processing mode if model_manager available (better quality)
+                    # This processes entire utterances instead of tiny chunks
+                    if self.model_manager and is_final:
+                        # Accumulate this chunk
+                        self.client_buffers[client_id].append(audio_data)
+                        
+                        # Concatenate all buffered audio
+                        full_audio = np.concatenate(self.client_buffers[client_id])
+                        
+                        # Clear buffer for next utterance
+                        self.client_buffers[client_id] = []
+                        
+                        # Process entire audio at once (better quality)
+                        logger.info(f"Processing complete utterance: {len(full_audio)} samples ({len(full_audio)/16000:.2f}s)")
+                        
+                        # Normalize input
+                        max_val = np.max(np.abs(full_audio))
+                        if max_val > 1.0:
+                            full_audio = full_audio / max_val
+                        
+                        # Process entire audio in one pass with proper params
+                        processed = self.model_manager.infer(full_audio, params=self.infer_params)
+                        
+                        # Apply gain and clip
+                        output_gain = 1.0
+                        if processed is not None and len(processed) > 0:
+                            processed = np.clip(processed * output_gain, -1.0, 1.0)
+                            logger.info(f"Sending processed audio: {len(processed)} samples ({len(processed)/16000:.2f}s)")
+                            
+                            # Send processed audio back
+                            response = {
+                                'type': 'audio',
+                                'data': self.encode_audio(processed),
+                                'final': True
+                            }
+                            await websocket.send(json.dumps(response))
+                        else:
+                            logger.error(f"Processing returned None or empty result")
                     
-                    if processed is not None:
-                        # Send processed audio back
+                    elif self.model_manager and not is_final:
+                        # Buffer chunk and send acknowledgment
+                        self.client_buffers[client_id].append(audio_data)
                         response = {
-                            'type': 'audio',
-                            'data': self.encode_audio(processed)
+                            'type': 'ack',
+                            'buffered': len(self.client_buffers[client_id])
                         }
                         await websocket.send(json.dumps(response))
+                    
+                    elif self.stream_processor:
+                        # Fallback to real-time streaming mode (lower quality but immediate)
+                        processed = self.stream_processor.process_audio_chunk(audio_data)
+                        
+                        if processed is not None:
+                            # Send processed audio back
+                            response = {
+                                'type': 'audio',
+                                'data': self.encode_audio(processed)
+                            }
+                            await websocket.send(json.dumps(response))
             
             elif msg_type == 'config':
                 # Handle configuration updates
