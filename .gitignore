@@ -91,8 +91,10 @@ temp/
 *.tmp
 
 # Input/output directories
-input/
-outputs/
+input/*
+!input/README.md
+outputs/*
+!outputs/README.md
 
 infer/
 
