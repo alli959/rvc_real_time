@@ -83,9 +83,18 @@ def cache_harvest_f0(input_audio_path, fs, f0max, f0min, frame_period):
 
 def change_rms(data1, sr1, data2, sr2, rate):  # 1是输入音频，2是输出音频,rate是2的占比
     # print(data1.max(),data2.max())
+    # Guard against zero-length audio
+    if data2.shape[0] == 0 or data1.shape[0] == 0:
+        return data2
+    
     rms1 = frame_rms(data1, frame_length=sr1 // 2 * 2, hop_length=sr1 // 2, center=True)
     # 每半秒一个点
     rms2 = frame_rms(data2, frame_length=sr2 // 2 * 2, hop_length=sr2 // 2, center=True)
+    
+    # Guard against empty RMS arrays
+    if rms1.size == 0 or rms2.size == 0:
+        return data2
+    
     rms1 = torch.from_numpy(rms1)
     rms1 = F.interpolate(
         rms1.unsqueeze(0), size=data2.shape[0], mode="linear"
@@ -504,13 +513,18 @@ class Pipeline(object):
                 )[self.t_pad_tgt : -self.t_pad_tgt]
             )
         audio_opt = np.concatenate(audio_opt)
+        
+        # Guard against empty audio output
+        if audio_opt.size == 0:
+            return np.array([], dtype=np.int16)
+        
         if rms_mix_rate != 1:
             audio_opt = change_rms(audio, 16000, audio_opt, tgt_sr, rms_mix_rate)
         if tgt_sr != resample_sr >= 16000:
             audio_opt = resample_audio(
                 audio_opt, orig_sr=tgt_sr, target_sr=resample_sr
             )
-        audio_max = np.abs(audio_opt).max() / 0.99
+        audio_max = np.abs(audio_opt).max() / 0.99 if audio_opt.size > 0 else 1.0
         max_int16 = 32768
         if audio_max > 1:
             max_int16 /= audio_max
