@@ -255,29 +255,21 @@ def run_local_mode(config: AppConfig, input_file: str, output_file: str):
     if config.model.default_model:
         model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
     
-    # Create stream processor
-    stream_processor = StreamProcessor(
-        model_manager=model_manager,
-        chunk_size=config.audio.chunk_size,
-        output_gain=getattr(config.model, "output_gain", 1.0),
-        infer_params=infer_params,
-    )
+    # For local file processing, process the ENTIRE audio at once (not chunked)
+    # Chunked processing is only needed for real-time streaming
+    # The RVC pipeline needs large audio segments for proper pitch/feature extraction
+    output_gain = getattr(config.model, "output_gain", 1.0)
     
-    # Process in chunks
-    output_chunks = []
-    for i in range(0, len(audio), config.audio.chunk_size):
-        chunk = audio[i:i + config.audio.chunk_size]
-        
-        # Pad last chunk if needed
-        if len(chunk) < config.audio.chunk_size:
-            chunk = librosa.util.fix_length(chunk, size=config.audio.chunk_size)
-        
-        processed = stream_processor.process_audio_chunk(chunk)
-        if processed is not None:
-            output_chunks.append(processed)
+    # Normalize input
+    max_val = np.max(np.abs(audio))
+    if max_val > 1.0:
+        audio = audio / max_val
     
-    # Concatenate output
-    output_audio = np.concatenate(output_chunks) if output_chunks else audio
+    # Process entire audio in one pass
+    output_audio = model_manager.infer(audio, params=infer_params)
+    
+    # Apply output gain and clip
+    output_audio = np.clip(output_audio * output_gain, -1.0, 1.0)
     
     # Save output
     sf.write(output_file, output_audio, int(sr))
