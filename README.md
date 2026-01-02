@@ -130,6 +130,25 @@ python main.py --mode api \
 
 > If you see `426 Upgrade Required` / `invalid Connection header: keep-alive`, something is making a normal HTTP request to the WebSocket port. Use a real WebSocket client (JS WebSocket, websocat, etc.).
 
+### 🎤 Virtual Microphone (Use with Discord/Zoom)
+
+Change your voice in real-time for Discord, Zoom, or any other application:
+
+```bash
+# 1. Setup virtual audio (Linux - run once after reboot)
+./examples/setup_virtual_mic.sh
+
+# 2. Start RVC server
+python3 main.py --mode api --model ./assets/models/BillCipher/BillCipher.pth --index ./assets/models/BillCipher/BillCipher.index
+
+# 3. Start virtual mic client (in another terminal)
+python3 examples/virtual_mic_client.py --output-device RVC_Sink
+
+# 4. In Discord: Settings → Voice → Input Device → Select "RVC_Mic"
+```
+
+See [examples/README.md](examples/README.md) for Windows/macOS setup instructions.
+
 ### Streaming mode (real mic/speaker loopback)
 
 ```bash

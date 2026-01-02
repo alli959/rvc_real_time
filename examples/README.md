@@ -4,40 +4,114 @@ This directory contains example scripts demonstrating how to use the RVC Real-ti
 
 ## Available Examples
 
-### 1. WebSocket Client (`websocket_client.py`)
+### 1. Virtual Microphone Client (`virtual_mic_client.py`) ⭐ Recommended
 
-Demonstrates how to connect to the WebSocket server and process audio:
+Routes your real microphone through RVC and outputs to a **virtual microphone** that Discord, Zoom, or any other app can use as input.
 
-```bash
-# Start the server first
-python main.py --mode api
-
-# In another terminal, run the example
-python examples/websocket_client.py
+```
+Your Voice → RVC Processing → Virtual Mic → Discord/Zoom/etc.
 ```
 
-### 2. Socket Client (`socket_client.py`)
+**Linux Setup (PulseAudio/PipeWire):**
+```bash
+# Create virtual audio devices (run once after each reboot)
+./examples/setup_virtual_mic.sh
 
-Demonstrates how to connect to the TCP socket server and process audio:
+# Start RVC server
+python3 main.py --mode api --model ./assets/models/BillCipher/BillCipher.pth --index ./assets/models/BillCipher/BillCipher.index
+
+# Start virtual mic (in another terminal)
+python3 examples/virtual_mic_client.py --output-device RVC_Sink
+
+# In Discord: Settings → Voice → Input Device → Select "RVC_Mic"
+```
+
+**Windows Setup (VB-Cable):**
+```bash
+# 1. Install VB-Cable from https://vb-audio.com/Cable/
+
+# 2. Start RVC server
+python main.py --mode api --model ./assets/models/BillCipher/BillCipher.pth
+
+# 3. Start virtual mic
+python examples/virtual_mic_client.py --output-device "CABLE Input"
+
+# 4. In Discord: Settings → Voice → Input Device → Select "CABLE Output"
+```
+
+**List available devices:**
+```bash
+python3 examples/virtual_mic_client.py --list-devices
+```
+
+### 2. File Client (`file_client.py`)
+
+Convert audio files through the API:
 
 ```bash
-# Start the server first
-python main.py --mode api
+# Start the server
+python3 main.py --mode api --model ./assets/models/BillCipher/BillCipher.pth
 
-# In another terminal, run the example
-python examples/socket_client.py
+# Convert a file
+python3 examples/file_client.py input.wav output.wav
+```
+
+### 3. Real-time Microphone Client (`realtime_mic_client.py`)
+
+Captures mic audio, processes through RVC, and plays back through speakers (for testing):
+
+```bash
+python3 main.py --mode api --model ./assets/models/BillCipher/BillCipher.pth
+python3 examples/realtime_mic_client.py
+```
+
+### 4. WebSocket Client (`websocket_client.py`)
+
+Low-level WebSocket client example:
+
+```bash
+python3 main.py --mode api
+python3 examples/websocket_client.py
+```
+
+### 5. Socket Client (`socket_client.py`)
+
+TCP socket client example:
+
+```bash
+python3 main.py --mode api
+python3 examples/socket_client.py
 ```
 
 ## Requirements
 
-The examples require the same dependencies as the main application:
-- numpy
-- websockets (for WebSocket client)
+```bash
+pip install sounddevice numpy websockets
+```
 
-## Customization
+## Virtual Microphone Setup
 
-You can modify these examples to:
-- Process real audio from files or microphone
-- Adjust audio parameters (sample rate, chunk size)
-- Handle continuous streaming
-- Add error handling and reconnection logic
+### Linux (PulseAudio/PipeWire)
+
+Run the setup script to create virtual audio devices:
+```bash
+./examples/setup_virtual_mic.sh
+```
+
+Or manually:
+```bash
+pactl load-module module-null-sink sink_name=RVC_Sink sink_properties=device.description="RVC_Output"
+pactl load-module module-virtual-source source_name=RVC_Mic master=RVC_Sink.monitor source_properties=device.description="RVC_Microphone"
+```
+
+### Windows
+
+1. Download and install [VB-Cable](https://vb-audio.com/Cable/)
+2. Use `--output-device "CABLE Input"` in the client
+3. Select "CABLE Output" as your microphone in Discord/Zoom
+
+### macOS
+
+1. Install [BlackHole](https://existential.audio/blackhole/) or [Soundflower](https://github.com/mattingalls/Soundflower)
+2. Use `--output-device "BlackHole"` in the client
+3. Select "BlackHole" as your microphone in Discord/Zoom

@@ -222,7 +222,10 @@ class WebSocketServer:
         self.server = await websockets.serve(
             self.handle_client,
             self.host,
-            self.port
+            self.port,
+            ping_interval=None,  # Disable ping to avoid timeout during long processing
+            ping_timeout=None,
+            close_timeout=60
         )
         logger.info(f"WebSocket server started on ws://{self.host}:{self.port}")
         
