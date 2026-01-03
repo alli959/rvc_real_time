@@ -10,7 +10,6 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
 lib64/
 parts/
 sdist/
@@ -46,35 +45,88 @@ requirements-full.txt.bak
 *.log
 logs/
 
-# Model files (large)
-assets/models/**/*.pth
-assets/models/**/*.pt
-assets/models/**/*.ckpt
-assets/models/**/*.onnx
-assets/models/**/*.index
-assets/models/**/*.npy
-assets/hubert/*.pt
-assets/rmvpe/*.pt
+# ============================================
+# Voice Engine - Model files (large binaries)
+# ============================================
 
-# Training artifacts
-assets/models/**/0_gt_wavs/
-assets/models/**/1_16k_wavs/
-assets/models/**/2a_f0/
-assets/models/**/2b-f0nsf/
-assets/models/**/3_feature*/
-assets/models/**/eval/
-assets/models/**/events.out.tfevents.*
-assets/models/**/filelist.txt
-assets/models/**/repack.py
+# Hubert and RMVPE models (downloaded on setup)
+services/voice-engine/assets/hubert/*.pt
+services/voice-engine/assets/rmvpe/*.pt
 
-# Keep directory structure but ignore model files
-!assets/models/.gitkeep
-!assets/models/*/README.md
-!assets/models/*/config.json
+# ALL model .pth, .index, .npy files (too large for GitHub)
+# These are downloaded on setup via scripts/download_billcipher_model.sh
+services/voice-engine/assets/models/**/*.pth
+services/voice-engine/assets/models/**/*.index
+services/voice-engine/assets/models/**/*.npy
+services/voice-engine/assets/models/**/*.pt
+services/voice-engine/assets/models/**/*.ckpt
+services/voice-engine/assets/models/**/*.onnx
+
+# Ignore symlinks to external model directories
+services/voice-engine/assets/models/*-model
+services/voice-engine/assets/models/*-*-model
+
+# Ignore all model directories except keep READMEs and config files
+services/voice-engine/assets/models/*/
+!services/voice-engine/assets/models/BillCipher/
+services/voice-engine/assets/models/BillCipher/*.pth
+services/voice-engine/assets/models/BillCipher/*.index
+
+# Training artifacts in model directories
+services/voice-engine/assets/models/**/0_gt_wavs/
+services/voice-engine/assets/models/**/1_16k_wavs/
+services/voice-engine/assets/models/**/2a_f0/
+services/voice-engine/assets/models/**/2b-f0nsf/
+services/voice-engine/assets/models/**/3_feature*/
+services/voice-engine/assets/models/**/eval/
+services/voice-engine/assets/models/**/events.out.tfevents.*
+services/voice-engine/assets/models/**/filelist.txt
+services/voice-engine/assets/models/**/total_fea.npy
+
+# Keep directory structure
+!services/voice-engine/assets/hubert/.gitkeep
+!services/voice-engine/assets/rmvpe/.gitkeep
+!services/voice-engine/assets/index/.gitkeep
+!services/voice-engine/assets/models/.gitkeep
+!services/voice-engine/assets/models/README.md
+
+# Voice engine input/output directories
+services/voice-engine/input/*
+!services/voice-engine/input/.gitkeep
+!services/voice-engine/input/README.md
+services/voice-engine/outputs/*
+!services/voice-engine/outputs/.gitkeep
+!services/voice-engine/outputs/README.md
+
+# ============================================
+# Laravel API
+# ============================================
+apps/api/.env
+apps/api/vendor/
+apps/api/storage/framework/cache/*
+apps/api/storage/framework/sessions/*
+apps/api/storage/framework/views/*
+apps/api/storage/logs/*
+apps/api/bootstrap/cache/*.php
+!apps/api/bootstrap/cache/.gitkeep
+
+# ============================================
+# Next.js Web
+# ============================================
+apps/web/.env
+apps/web/.env.local
+apps/web/.next/
+apps/web/node_modules/
+apps/web/out/
+
+# ============================================
+# General
+# ============================================
 
 # Environment variables
 .env
 .env.local
+.env.*.local
 
 # Testing
 .pytest_cache/
@@ -90,11 +142,6 @@ tmp/
 temp/
 *.tmp
 
-# Input/output directories
-input/*
-!input/README.md
-outputs/*
-!outputs/README.md
-
-infer/
-
+# Dependencies
+vendor/
+node_modules/

@@ -1,0 +1,294 @@
+version: '3.8'
+
+# =============================================================================
+# VoxMorph Platform - Development Stack
+# =============================================================================
+# This compose file sets up the complete development environment including:
+# - PostgreSQL database
+# - Redis for caching and queues
+# - MinIO for S3-compatible object storage
+# - Laravel API backend
+# - Next.js WebUI frontend
+# - Python Voice Engine service
+# =============================================================================
+
+services:
+  # ===========================================================================
+  # Database Layer
+  # ===========================================================================
+  
+  db:
+    image: postgres:16-alpine
+    container_name: voxmorph-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${DB_DATABASE:-voxmorph}
+      POSTGRES_USER: ${DB_USERNAME:-voxmorph}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-voxmorph} -d ${DB_DATABASE:-voxmorph}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voiceforge
+
+  # ===========================================================================
+  # Cache & Queue Layer
+  # ===========================================================================
+  
+  redis:
+    image: redis:7-alpine
+    container_name: voxmorph-redis
+    restart: unless-stopped
+    command: redis-server --appendonly yes
+    volumes:
+      - redis_data:/data
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voiceforge
+
+  # ===========================================================================
+  # Object Storage (S3-compatible)
+  # ===========================================================================
+  
+  minio:
+    image: minio/minio:latest
+    container_name: voxmorph-minio
+    restart: unless-stopped
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    ports:
+      - "9000:9000"   # API
+      - "9001:9001"   # Console
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - voiceforge
+
+  # MinIO bucket initialization
+  minio-init:
+    image: minio/mc:latest
+    container_name: voxmorph-minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+      mc alias set myminio http://minio:9000 ${MINIO_ACCESS_KEY:-minioadmin} ${MINIO_SECRET_KEY:-minioadmin};
+      mc mb myminio/${AWS_BUCKET:-voxmorph} --ignore-existing;
+      mc anonymous set download myminio/${AWS_BUCKET:-voxmorph}/public;
+      exit 0;
+      "
+    networks:
+      - voiceforge
+
+  # ===========================================================================
+  # Laravel API Backend
+  # ===========================================================================
+  
+  api:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: voxmorph-api
+    restart: unless-stopped
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_healthy
+    environment:
+      APP_NAME: VoxMorph
+      APP_ENV: ${APP_ENV:-local}
+      APP_DEBUG: ${APP_DEBUG:-true}
+      APP_KEY: ${APP_KEY:-}
+      APP_URL: ${APP_URL:-http://localhost:8000}
+      
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-voiceforge}
+      DB_USERNAME: ${DB_USERNAME:-voiceforge}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      
+      REDIS_HOST: redis
+      REDIS_PORT: 6379
+      
+      CACHE_DRIVER: redis
+      QUEUE_CONNECTION: redis
+      SESSION_DRIVER: redis
+      
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      AWS_DEFAULT_REGION: us-east-1
+      AWS_BUCKET: ${AWS_BUCKET:-voxmorph}
+      AWS_ENDPOINT: http://minio:9000
+      AWS_USE_PATH_STYLE_ENDPOINT: true
+      
+      VOICE_ENGINE_URL: http://voice-engine:8000
+      VOICE_ENGINE_WS_URL: ws://voice-engine:8765
+      VOICE_ENGINE_STORAGE_ENDPOINT: http://minio:9000
+    volumes:
+      - ../../apps/api:/var/www/html
+      - api_vendor:/var/www/html/vendor
+    ports:
+      - "8080:80"
+    networks:
+      - voiceforge
+
+  # Laravel Queue Worker
+  api-worker:
+    build:
+      context: ../../apps/api
+      dockerfile: Dockerfile
+    container_name: voxmorph-api-worker
+    restart: unless-stopped
+    depends_on:
+      - api
+    command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
+    environment:
+      APP_ENV: ${APP_ENV:-local}
+      DB_CONNECTION: pgsql
+      DB_HOST: db
+      DB_PORT: 5432
+      DB_DATABASE: ${DB_DATABASE:-voiceforge}
+      DB_USERNAME: ${DB_USERNAME:-voiceforge}
+      DB_PASSWORD: ${DB_PASSWORD:-secret}
+      REDIS_HOST: redis
+      QUEUE_CONNECTION: redis
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      AWS_BUCKET: ${AWS_BUCKET:-voxmorph}
+      AWS_ENDPOINT: http://minio:9000
+      VOICE_ENGINE_URL: http://voice-engine:8000
+    volumes:
+      - ../../apps/api:/var/www/html
+      - api_vendor:/var/www/html/vendor
+    networks:
+      - voiceforge
+
+  # ===========================================================================
+  # Next.js WebUI Frontend
+  # ===========================================================================
+  
+  web:
+    build:
+      context: ../../apps/web
+      dockerfile: Dockerfile
+      target: development
+    container_name: voxmorph-web
+    restart: unless-stopped
+    depends_on:
+      - api
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000/api}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8765}
+    volumes:
+      - ../../apps/web:/app
+      - web_node_modules:/app/node_modules
+      - web_next:/app/.next
+    ports:
+      - "3000:3000"
+    networks:
+      - voiceforge
+
+  # ===========================================================================
+  # Python Voice Engine Service
+  # ===========================================================================
+  
+  voice-engine:
+    build:
+      context: ../../services/voice-engine
+      dockerfile: Dockerfile
+    container_name: voxmorph-voice-engine
+    restart: unless-stopped
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      # Storage configuration
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${AWS_BUCKET:-voxmorph}
+      
+      # Model paths (can be local or S3)
+      MODEL_PATH: /app/assets/models
+      HUBERT_PATH: /app/assets/hubert
+      RMVPE_PATH: /app/assets/rmvpe
+      
+      # Server settings
+      HTTP_PORT: 8000
+      WS_PORT: 8765
+      
+      # Device settings
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cpu}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ../../services/voice-engine:/app
+      - voice_engine_cache:/app/.cache
+      - voice_engine_models:/app/assets/models
+    ports:
+      - "8000:8000"   # HTTP API
+      - "8765:8765"   # WebSocket
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - voiceforge
+
+# =============================================================================
+# Networks
+# =============================================================================
+
+networks:
+  voxmorph:
+    driver: bridge
+
+# =============================================================================
+# Volumes
+# =============================================================================
+
+volumes:
+  postgres_data:
+    driver: local
+  redis_data:
+    driver: local
+  minio_data:
+    driver: local
+  api_vendor:
+    driver: local
+  web_node_modules:
+    driver: local
+  web_next:
+    driver: local
+  voice_engine_cache:
+    driver: local
+  voice_engine_models:
+    driver: local

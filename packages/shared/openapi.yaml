@@ -1,0 +1,681 @@
+openapi: 3.0.3
+info:
+  title: VoxMorph API
+  description: |
+    API for the VoxMorph voice conversion platform.
+    
+    ## Authentication
+    Most endpoints require authentication via Bearer token (Laravel Sanctum).
+    
+    ## Rate Limiting
+    - Public endpoints: 60 requests/minute
+    - Authenticated: 120 requests/minute
+    - Premium: 300 requests/minute
+  version: 1.0.0
+  contact:
+    name: VoxMorph Support
+    email: support@voxmorph.dev
+
+servers:
+  - url: http://localhost:8000/api
+    description: Local development
+  - url: https://api.voxmorph.dev
+    description: Production
+
+tags:
+  - name: Auth
+    description: Authentication endpoints
+  - name: Models
+    description: Voice model management
+  - name: Jobs
+    description: Conversion job management
+
+paths:
+  # ==========================================================================
+  # Auth
+  # ==========================================================================
+  /auth/register:
+    post:
+      tags: [Auth]
+      summary: Register a new user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterRequest'
+      responses:
+        '201':
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '422':
+          $ref: '#/components/responses/ValidationError'
+
+  /auth/login:
+    post:
+      tags: [Auth]
+      summary: Login with email and password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LoginRequest'
+      responses:
+        '200':
+          description: Login successful
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuthResponse'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+
+  /auth/logout:
+    post:
+      tags: [Auth]
+      summary: Logout current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Logout successful
+
+  /auth/me:
+    get:
+      tags: [Auth]
+      summary: Get current user
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/User'
+
+  # ==========================================================================
+  # Models
+  # ==========================================================================
+  /models:
+    get:
+      tags: [Models]
+      summary: List public voice models
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            default: 1
+        - name: search
+          in: query
+          schema:
+            type: string
+        - name: sort
+          in: query
+          schema:
+            type: string
+            enum: [popular, recent, name]
+      responses:
+        '200':
+          description: Paginated list of models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsListResponse'
+    
+    post:
+      tags: [Models]
+      summary: Create a new voice model
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateModelRequest'
+      responses:
+        '201':
+          description: Model created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+
+  /models/{id}:
+    get:
+      tags: [Models]
+      summary: Get a specific model
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Model details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+        '404':
+          $ref: '#/components/responses/NotFound'
+    
+    put:
+      tags: [Models]
+      summary: Update a model
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/UpdateModelRequest'
+      responses:
+        '200':
+          description: Model updated
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+    
+    delete:
+      tags: [Models]
+      summary: Delete a model
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '204':
+          description: Model deleted
+
+  /models/{id}/upload-urls:
+    post:
+      tags: [Models]
+      summary: Get pre-signed URLs for uploading model files
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Upload URLs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/UploadUrlsResponse'
+
+  /models/{id}/confirm-upload:
+    post:
+      tags: [Models]
+      summary: Confirm model files have been uploaded
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/ModelId'
+      responses:
+        '200':
+          description: Upload confirmed
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelResponse'
+
+  # ==========================================================================
+  # Jobs
+  # ==========================================================================
+  /jobs:
+    get:
+      tags: [Jobs]
+      summary: List user's jobs
+      security:
+        - bearerAuth: []
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+        - name: status
+          in: query
+          schema:
+            $ref: '#/components/schemas/JobStatus'
+      responses:
+        '200':
+          description: Paginated list of jobs
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobsListResponse'
+
+  /jobs/inference:
+    post:
+      tags: [Jobs]
+      summary: Create a voice inference job
+      security:
+        - bearerAuth: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CreateInferenceJobRequest'
+      responses:
+        '201':
+          description: Job created
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /jobs/{id}:
+    get:
+      tags: [Jobs]
+      summary: Get job details
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job details
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /jobs/{id}/upload-url:
+    post:
+      tags: [Jobs]
+      summary: Get pre-signed URL for uploading input audio
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Upload URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SingleUploadUrlResponse'
+
+  /jobs/{id}/start:
+    post:
+      tags: [Jobs]
+      summary: Start job processing
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job started
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /jobs/{id}/cancel:
+    post:
+      tags: [Jobs]
+      summary: Cancel a job
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Job cancelled
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/JobResponse'
+
+  /jobs/{id}/output:
+    get:
+      tags: [Jobs]
+      summary: Get download URL for job output
+      security:
+        - bearerAuth: []
+      parameters:
+        - $ref: '#/components/parameters/JobId'
+      responses:
+        '200':
+          description: Download URL
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/DownloadUrlResponse'
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+
+  parameters:
+    ModelId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+    JobId:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    # Auth
+    RegisterRequest:
+      type: object
+      required: [name, email, password, password_confirmation]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 255
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+        password_confirmation:
+          type: string
+
+    LoginRequest:
+      type: object
+      required: [email, password]
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+
+    AuthResponse:
+      type: object
+      properties:
+        user:
+          $ref: '#/components/schemas/User'
+        token:
+          type: string
+
+    User:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        email:
+          type: string
+          format: email
+        roles:
+          type: array
+          items:
+            type: string
+        permissions:
+          type: array
+          items:
+            type: string
+        created_at:
+          type: string
+          format: date-time
+
+    # Models
+    VoiceModel:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        name:
+          type: string
+        slug:
+          type: string
+        description:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        status:
+          $ref: '#/components/schemas/ModelStatus'
+        engine:
+          type: string
+        tags:
+          type: array
+          items:
+            type: string
+        usage_count:
+          type: integer
+        has_consent:
+          type: boolean
+        user:
+          $ref: '#/components/schemas/User'
+        created_at:
+          type: string
+          format: date-time
+
+    Visibility:
+      type: string
+      enum: [public, private, unlisted]
+
+    ModelStatus:
+      type: string
+      enum: [pending, ready, error]
+
+    CreateModelRequest:
+      type: object
+      required: [name]
+      properties:
+        name:
+          type: string
+          minLength: 2
+          maxLength: 100
+        description:
+          type: string
+          maxLength: 1000
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        tags:
+          type: array
+          items:
+            type: string
+        has_consent:
+          type: boolean
+
+    UpdateModelRequest:
+      type: object
+      properties:
+        name:
+          type: string
+        description:
+          type: string
+        visibility:
+          $ref: '#/components/schemas/Visibility'
+        tags:
+          type: array
+          items:
+            type: string
+
+    ModelResponse:
+      type: object
+      properties:
+        model:
+          $ref: '#/components/schemas/VoiceModel'
+
+    ModelsListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/VoiceModel'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    UploadUrlsResponse:
+      type: object
+      properties:
+        model_url:
+          $ref: '#/components/schemas/PresignedUrl'
+        index_url:
+          $ref: '#/components/schemas/PresignedUrl'
+
+    # Jobs
+    Job:
+      type: object
+      properties:
+        id:
+          type: string
+          format: uuid
+        type:
+          type: string
+          enum: [inference, training, preprocessing]
+        status:
+          $ref: '#/components/schemas/JobStatus'
+        progress:
+          type: integer
+          minimum: 0
+          maximum: 100
+        error_message:
+          type: string
+        parameters:
+          type: object
+        voice_model:
+          $ref: '#/components/schemas/VoiceModel'
+        created_at:
+          type: string
+          format: date-time
+        started_at:
+          type: string
+          format: date-time
+        completed_at:
+          type: string
+          format: date-time
+
+    JobStatus:
+      type: string
+      enum: [pending, queued, processing, completed, failed, cancelled]
+
+    CreateInferenceJobRequest:
+      type: object
+      required: [voice_model_id]
+      properties:
+        voice_model_id:
+          type: string
+          format: uuid
+        parameters:
+          type: object
+          properties:
+            pitch:
+              type: integer
+              minimum: -12
+              maximum: 12
+            index_rate:
+              type: number
+              minimum: 0
+              maximum: 1
+            filter_radius:
+              type: integer
+              minimum: 0
+              maximum: 7
+            f0_method:
+              type: string
+              enum: [rmvpe, pm, harvest, dio]
+
+    JobResponse:
+      type: object
+      properties:
+        job:
+          $ref: '#/components/schemas/Job'
+
+    JobsListResponse:
+      type: object
+      properties:
+        data:
+          type: array
+          items:
+            $ref: '#/components/schemas/Job'
+        meta:
+          $ref: '#/components/schemas/PaginationMeta'
+
+    # Common
+    PresignedUrl:
+      type: object
+      properties:
+        url:
+          type: string
+          format: uri
+        method:
+          type: string
+          enum: [PUT, GET]
+        headers:
+          type: object
+        expires_at:
+          type: string
+          format: date-time
+
+    SingleUploadUrlResponse:
+      type: object
+      properties:
+        upload_url:
+          $ref: '#/components/schemas/PresignedUrl'
+
+    DownloadUrlResponse:
+      type: object
+      properties:
+        download_url:
+          $ref: '#/components/schemas/PresignedUrl'
+
+    PaginationMeta:
+      type: object
+      properties:
+        current_page:
+          type: integer
+        last_page:
+          type: integer
+        per_page:
+          type: integer
+        total:
+          type: integer
+
+    Error:
+      type: object
+      properties:
+        message:
+          type: string
+        errors:
+          type: object
+
+  responses:
+    Unauthorized:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    NotFound:
+      description: Resource not found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
+    ValidationError:
+      description: Validation error
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Error'
