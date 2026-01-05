@@ -10,7 +10,7 @@ export default function Home() {
           <div className="flex items-center justify-between h-16">
             <div className="flex items-center gap-2">
               <Mic2 className="h-8 w-8 text-primary-500" />
-              <span className="text-xl font-bold gradient-text">VoxMorph</span>
+              <span className="text-xl font-bold gradient-text">MorphVox</span>
             </div>
             <div className="flex items-center gap-4">
               <Link 
@@ -83,7 +83,7 @@ export default function Home() {
       <section className="py-20 px-4">
         <div className="max-w-7xl mx-auto">
           <h2 className="text-3xl font-bold text-center mb-12">
-            Why <span className="gradient-text">VoxMorph</span>?
+            Why <span className="gradient-text">MorphVox</span>?
           </h2>
           <div className="grid md:grid-cols-3 gap-8">
             <FeatureCard
@@ -110,7 +110,7 @@ export default function Home() {
         <div className="max-w-4xl mx-auto glass rounded-2xl p-12 text-center">
           <h2 className="text-3xl font-bold mb-4">Ready to Transform?</h2>
           <p className="text-gray-400 mb-8">
-            Join thousands of creators using VoxMorph for content creation, 
+            Join thousands of creators using MorphVox for content creation, 
             entertainment, and accessibility.
           </p>
           <Link 
@@ -127,10 +127,10 @@ export default function Home() {
         <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
           <div className="flex items-center gap-2">
             <Mic2 className="h-6 w-6 text-primary-500" />
-            <span className="font-semibold">VoxMorph</span>
+            <span className="font-semibold">MorphVox</span>
           </div>
           <p className="text-gray-500 text-sm">
-            © {new Date().getFullYear()} VoxMorph. All rights reserved.
+            © {new Date().getFullYear()} MorphVox. All rights reserved.
           </p>
         </div>
       </footer>

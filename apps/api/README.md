@@ -1,6 +1,6 @@
-# VoxMorph API
+# MorphVox API
 
-Laravel 11 backend API for the VoxMorph voice conversion platform.
+Laravel 11 backend API for the MorphVox voice conversion platform.
 
 ## Quick Start
 
@@ -41,7 +41,7 @@ php artisan serve --port=8000
 ### Application
 
 ```bash
-APP_NAME=VoxMorph
+APP_NAME=MorphVox
 APP_ENV=local
 APP_DEBUG=true
 APP_URL=http://localhost:8000
@@ -54,8 +54,8 @@ FRONTEND_URL=http://localhost:3000
 DB_CONNECTION=mysql
 DB_HOST=localhost
 DB_PORT=3306
-DB_DATABASE=voxmorph
-DB_USERNAME=voxmorph
+DB_DATABASE=morphvox
+DB_USERNAME=morphvox
 DB_PASSWORD=master123
 ```
 
@@ -83,7 +83,7 @@ FILESYSTEM_DISK=s3
 AWS_ACCESS_KEY_ID=minioadmin
 AWS_SECRET_ACCESS_KEY=minioadmin
 AWS_DEFAULT_REGION=us-east-1
-AWS_BUCKET=voxmorph
+AWS_BUCKET=morphvox
 AWS_ENDPOINT=http://minio:9000
 AWS_USE_PATH_STYLE_ENDPOINT=true
 ```
@@ -250,8 +250,8 @@ sudo systemctl status mysql
 
 # Create database
 mysql -u root -p
-> CREATE DATABASE voxmorph;
-> GRANT ALL ON voxmorph.* TO 'voxmorph'@'localhost' IDENTIFIED BY 'master123';
+> CREATE DATABASE morphvox;
+> GRANT ALL ON morphvox.* TO 'morphvox'@'localhost' IDENTIFIED BY 'master123';
 > FLUSH PRIVILEGES;
 ```
 

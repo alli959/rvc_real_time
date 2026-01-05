@@ -61,6 +61,10 @@ class TextEncoder(nn.Module):
         if pitch is None:
             x = self.emb_phone(phone)
         else:
+            # Ensure phone and pitch are on the same device as embedding layers
+            device = self.emb_phone.weight.device
+            phone = phone.to(device)
+            pitch = pitch.to(device)
             x = self.emb_phone(phone) + self.emb_pitch(pitch)
         x = x * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = self.lrelu(x)

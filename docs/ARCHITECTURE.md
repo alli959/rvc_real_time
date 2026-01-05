@@ -1,12 +1,12 @@
-# VoxMorph Platform Architecture
+# MorphVox Platform Architecture
 
 ## Overview
 
-VoxMorph is a comprehensive AI voice conversion platform built as a monorepo with the following components:
+MorphVox is a comprehensive AI voice conversion platform built as a monorepo with the following components:
 
 ```
 ┌──────────────────────────────────────────────────────────────────────────┐
-│                              VoxMorph Platform                            │
+│                              MorphVox Platform                            │
 ├──────────────────────────────────────────────────────────────────────────┤
 │                                                                          │
 │  ┌─────────────┐    ┌─────────────┐    ┌──────────────────────────────┐ │
@@ -39,7 +39,7 @@ VoxMorph is a comprehensive AI voice conversion platform built as a monorepo wit
 ## Directory Structure
 
 ```
-voxmorph/
+morphvox/
 ├── apps/
 │   ├── api/                    # Laravel 11 Backend
 │   │   ├── app/
@@ -136,7 +136,7 @@ S3-compatible object storage for:
 
 **Bucket Structure:**
 ```
-voxmorph/
+morphvox/
 ├── models/{user_id}/{model_id}/
 │   ├── model.pth
 │   ├── model.index

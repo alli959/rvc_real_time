@@ -64,7 +64,7 @@ export default function DashboardPage() {
         <div className="p-4 border-b border-gray-800">
           <Link href="/" className="flex items-center gap-2">
             <Mic2 className="h-8 w-8 text-primary-500" />
-            <span className="text-xl font-bold gradient-text">VoxMorph</span>
+            <span className="text-xl font-bold gradient-text">MorphVox</span>
           </Link>
         </div>
 

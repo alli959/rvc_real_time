@@ -57,7 +57,7 @@ export default function RegisterPage() {
         <div className="text-center mb-8">
           <Link href="/" className="inline-flex items-center gap-2">
             <Mic2 className="h-10 w-10 text-primary-500" />
-            <span className="text-2xl font-bold gradient-text">VoxMorph</span>
+            <span className="text-2xl font-bold gradient-text">MorphVox</span>
           </Link>
           <h1 className="mt-6 text-3xl font-bold">Create an account</h1>
           <p className="mt-2 text-gray-400">Start transforming your voice today</p>

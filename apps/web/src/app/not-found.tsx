@@ -9,7 +9,7 @@ export default function NotFound() {
       {/* Logo */}
       <div className="flex items-center gap-2 mb-8">
         <Mic2 className="h-10 w-10 text-primary-500" />
-        <span className="text-2xl font-bold gradient-text">VoxMorph</span>
+        <span className="text-2xl font-bold gradient-text">MorphVox</span>
       </div>
 
       {/* Error Display */}

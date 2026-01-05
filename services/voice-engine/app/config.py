@@ -46,7 +46,7 @@ class ModelConfig:
     default_index: Optional[str] = None
 
     # Device selection for torch
-    device: str = "auto"  # auto, cpu, cuda
+    device: str = "cuda"  # force GPU usage by default
 
     # Inference defaults
     f0_method: str = "rmvpe"
@@ -60,6 +60,8 @@ class ModelConfig:
     @classmethod
     def from_env(cls):
         """Load configuration from environment variables."""
+        # Force device to cuda unless overridden by env
+        device_env = os.getenv("DEVICE", "cuda")
         return cls(
             model_dir=os.getenv("MODEL_DIR", "assets/models"),
             index_dir=os.getenv("INDEX_DIR", "assets/index"),
@@ -67,7 +69,7 @@ class ModelConfig:
             rmvpe_dir=os.getenv("RMVPE_DIR", "assets/rmvpe"),
             default_model=os.getenv("DEFAULT_MODEL"),
             default_index=os.getenv("DEFAULT_INDEX"),
-            device=os.getenv("DEVICE", "auto"),
+            device=device_env,
             f0_method=os.getenv("F0_METHOD", "rmvpe"),
             f0_up_key=int(os.getenv("F0_UP_KEY", 0)),
             index_rate=float(os.getenv("INDEX_RATE", 0.75)),

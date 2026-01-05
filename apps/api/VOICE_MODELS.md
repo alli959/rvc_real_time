@@ -1,6 +1,6 @@
 # Voice Models System
 
-The VoxMorph voice models system provides a unified approach to managing server-side voice models, supporting both local directory storage and cloud storage (S3-compatible).
+The MorphVox voice models system provides a unified approach to managing server-side voice models, supporting both local directory storage and cloud storage (S3-compatible).
 
 ## Architecture
 

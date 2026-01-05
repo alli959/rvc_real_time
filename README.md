@@ -1,10 +1,10 @@
-# VoxMorph Platform
+# MorphVox Platform
 
 > **Note:** This project has been restructured into a full-stack platform. The original RVC real-time voice conversion code is now in `services/voice-engine/`.
 
 ## 🎯 Overview
 
-VoxMorph is a comprehensive AI voice conversion platform featuring:
+MorphVox is a comprehensive AI voice conversion platform featuring:
 
 - **🌐 WebUI** - Modern Next.js frontend for model browsing and voice conversion
 - **🔧 API Backend** - Laravel API for user management, model registry, and job processing
@@ -14,7 +14,7 @@ VoxMorph is a comprehensive AI voice conversion platform featuring:
 ## 📁 Project Structure
 
 ```
-voxmorph/
+morphvox/
 ├── apps/
 │   ├── api/                    # Laravel 11 Backend
 │   └── web/                    # Next.js 14 Frontend

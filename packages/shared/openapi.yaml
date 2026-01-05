@@ -1,8 +1,8 @@
 openapi: 3.0.3
 info:
-  title: VoxMorph API
+  title: MorphVox API
   description: |
-    API for the VoxMorph voice conversion platform.
+    API for the MorphVox voice conversion platform.
     
     ## Authentication
     Most endpoints require authentication via Bearer token (Laravel Sanctum).
@@ -13,13 +13,13 @@ info:
     - Premium: 300 requests/minute
   version: 1.0.0
   contact:
-    name: VoxMorph Support
-    email: support@voxmorph.dev
+    name: MorphVox Support
+    email: support@morphvox.dev
 
 servers:
   - url: http://localhost:8000/api
     description: Local development
-  - url: https://api.voxmorph.dev
+  - url: https://api.morphvox.dev
     description: Production
 
 tags:

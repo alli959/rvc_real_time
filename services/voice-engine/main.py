@@ -99,9 +99,23 @@ def run_streaming_mode(config: AppConfig):
     )
 
     
-    # Load default model if specified
+    # Model warmup: preload HuBERT, RMVPE, and default RVC model (if configured)
+    import time
+    warmup_start = time.time()
+    warmup_success = False
     if config.model.default_model:
-        model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
+        logger.info(f"Warming up model: {config.model.default_model}")
+        warmup_success = model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
+        # Force HuBERT and RMVPE load by running a dummy inference
+        dummy_audio = np.zeros(config.audio.chunk_size, dtype=np.float32)
+        try:
+            _ = model_manager.infer(dummy_audio, params=infer_params)
+            logger.info("Model warmup completed successfully.")
+        except Exception as e:
+            logger.error(f"Model warmup failed: {e}")
+    else:
+        logger.info("No default model configured for warmup.")
+    logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
     
     # Create stream processor
     stream_processor = StreamProcessor(
@@ -165,9 +179,23 @@ def run_api_mode(config: AppConfig):
     )
 
     
-    # Load default model if specified
+    # Model warmup: preload HuBERT, RMVPE, and default RVC model (if configured)
+    import time
+    warmup_start = time.time()
+    warmup_success = False
     if config.model.default_model:
-        model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
+        logger.info(f"Warming up model: {config.model.default_model}")
+        warmup_success = model_manager.load_model(config.model.default_model, index_path=config.model.default_index)
+        # Force HuBERT and RMVPE load by running a dummy inference
+        dummy_audio = np.zeros(config.audio.chunk_size, dtype=np.float32)
+        try:
+            _ = model_manager.infer(dummy_audio, params=infer_params)
+            logger.info("Model warmup completed successfully.")
+        except Exception as e:
+            logger.error(f"Model warmup failed: {e}")
+    else:
+        logger.info("No default model configured for warmup.")
+    logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
     
     # Create stream processor
     stream_processor = StreamProcessor(

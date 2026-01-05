@@ -274,8 +274,15 @@ class Pipeline(object):
         feats = feats.view(1, -1)
         padding_mask = torch.BoolTensor(feats.shape).to(self.device).fill_(False)
 
+        # Ensure model and input are on the same device
+        model_device = next(model.parameters()).device
+        feats = feats.to(model_device)
+        padding_mask = padding_mask.to(model_device)
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.info(f"[DEBUG] HuBERT model device: {model_device}, feats device: {feats.device}, padding_mask device: {padding_mask.device}")
         inputs = {
-            "source": feats.to(self.device),
+            "source": feats,
             "padding_mask": padding_mask,
             "output_layer": 9 if version == "v1" else 12,
         }
@@ -327,6 +334,10 @@ class Pipeline(object):
             pitchff[pitchf > 0] = 1
             pitchff[pitchf < 1] = protect
             pitchff = pitchff.unsqueeze(-1)
+            # Ensure all tensors are on the same device
+            device = feats.device
+            pitchff = pitchff.to(device)
+            feats0 = feats0.to(device)
             feats = feats * pitchff + feats0 * (1 - pitchff)
             feats = feats.to(feats0.dtype)
         p_len = torch.tensor([p_len], device=self.device).long()

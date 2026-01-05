@@ -14,7 +14,7 @@ RUN apk add --no-cache \
     freetype-dev \
     libzip-dev \
     oniguruma-dev \
-    postgresql-dev \
+    mariadb-connector-c-dev \
     icu-dev \
     linux-headers \
     $PHPIZE_DEPS
@@ -23,8 +23,7 @@ RUN apk add --no-cache \
 RUN docker-php-ext-configure gd --with-freetype --with-jpeg \
     && docker-php-ext-install -j$(nproc) \
         pdo \
-        pdo_pgsql \
-        pgsql \
+        pdo_mysql \
         mbstring \
         zip \
         bcmath \
@@ -47,6 +46,7 @@ COPY docker/php.ini /usr/local/etc/php/conf.d/custom.ini
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 
 # Configure supervisor
+RUN mkdir -p /var/log/supervisor
 COPY docker/supervisord.conf /etc/supervisord.conf
 
 WORKDIR /var/www/html
@@ -73,7 +73,9 @@ RUN chown -R www-data:www-data /var/www/html \
 
 EXPOSE 80
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]
 
 # =============================================================================
 # Production Stage

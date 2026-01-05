@@ -68,11 +68,29 @@ class ModelManager:
         os.environ["hubert_path"] = str(self.hubert_path.resolve())
         os.environ["rmvpe_root"] = str(self.rmvpe_dir.resolve())
 
+
         # Import after env vars are set.
         from rvc.modules.vc.modules import VC  # type: ignore
+        from rvc.modules.vc.utils import load_hubert  # type: ignore
+        import rvc.lib.rmvpe as rmvpe_lib
 
         self._VC = VC
         self.vc = VC()
+
+        # Always load HuBERT and RMVPE at startup
+        logger.info("Loading HuBERT model at startup...")
+        self.vc.hubert_model = load_hubert(self.vc.config, str(self.hubert_path))
+        self.vc.hubert_model = self.vc.hubert_model.to(self.vc.config.device)
+        logger.info(f"HuBERT model loaded and moved to device: {self.vc.config.device}")
+
+        logger.info("Loading RMVPE model at startup...")
+        rmvpe_pt = self.rmvpe_dir / "rmvpe.pt"
+        if rmvpe_pt.exists():
+            self.vc.rmvpe_model = rmvpe_lib.RMVPE(str(rmvpe_pt), is_half=getattr(self.vc.config, "is_half", False), device=self.vc.config.device)
+            logger.info("RMVPE model loaded and cached.")
+        else:
+            self.vc.rmvpe_model = None
+            logger.warning(f"RMVPE model not found at {rmvpe_pt}, pitch extraction may fail.")
 
         # Expose loaded model state
         self.model_name: Optional[str] = None
@@ -83,9 +101,15 @@ class ModelManager:
 
         self.default_params = default_params or RVCInferParams()
 
-        if device != "auto":
-            # Override device selection in the underlying config
-            self.vc.config.device = device
+        # Always use CUDA if available, unless explicitly set to CPU
+        import torch
+        if device == "cuda" and torch.cuda.is_available():
+            self.vc.config.device = "cuda"
+        elif device == "cpu":
+            self.vc.config.device = "cpu"
+        else:
+            # Fallback: auto-detect
+            self.vc.config.device = "cuda" if torch.cuda.is_available() else "cpu"
 
     def _resample_poly(self, y: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
         """Fast, high-quality resampling using polyphase filtering."""
@@ -110,12 +134,40 @@ class ModelManager:
         """
         try:
             p = Path(model_path)
-            model_file = p if p.exists() else (self.model_dir / model_path)
-            if not model_file.exists():
-                logger.error(f"Model file not found: {model_file}")
-                return False
+            model_file = None
+            logger.info(f"Attempting to load model: {model_path}")
+            # If path exists as given, use it
+            if p.exists():
+                logger.info(f"Model file exists at given path: {p}")
+                model_file = p
+            else:
+                # If absolute path but doesn't exist, try just the filename in model_dir
+                if p.is_absolute():
+                    candidate = self.model_dir / p.name
+                    logger.info(f"Checking model_dir/name: {candidate}")
+                    if candidate.exists():
+                        logger.info(f"Model file found at model_dir/name: {candidate}")
+                        model_file = candidate
+                # Otherwise, try as relative to model_dir
+                if model_file is None:
+                    candidate = self.model_dir / model_path
+                    logger.info(f"Checking model_dir/model_path: {candidate}")
+                    if candidate.exists():
+                        logger.info(f"Model file found at model_dir/model_path: {candidate}")
+                        model_file = candidate
+            if not model_file or not model_file.exists():
+                logger.info(f"Falling back to rglob search for: {p.name} in {self.model_dir}")
+                matches = list(self.model_dir.rglob(p.name))
+                logger.info(f"rglob matches: {matches}")
+                if matches:
+                    model_file = matches[0]
+                    logger.info(f"Model file found by rglob: {model_file}")
+                else:
+                    logger.error(f"Model file not found: {model_path} (tried: {model_file})")
+                    return False
 
-            # Load model into self.vc.net_g etc.
+            # Load model into self.vc.net_g etc. (force GPU if device is cuda)
+            import torch
             info = self.vc.get_vc(str(model_file))
             self.model_name = model_file.name
 
@@ -230,10 +282,10 @@ class ModelManager:
         return [f.name for f in model_files]
 
     def unload_model(self):
-        """Unload current model and free memory."""
+        """Unload current model and free memory (except HuBERT and RMVPE)."""
         try:
             self.vc.net_g = None
-            self.vc.hubert_model = None
+            # Do NOT unload HuBERT or RMVPE
         except Exception:
             pass
         self.model_name = None
@@ -241,10 +293,9 @@ class ModelManager:
 
         try:
             import torch
-
             if torch.cuda.is_available():
                 torch.cuda.empty_cache()
         except Exception:
             pass
 
-        logger.info("Model unloaded")
+        logger.info("Model unloaded (HuBERT and RMVPE remain cached)")

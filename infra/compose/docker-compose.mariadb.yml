@@ -1,0 +1,32 @@
+# MariaDB (MySQL) for MorphVox Production
+# ---------------------------------------------
+# This service provides a MySQL-compatible database for the Laravel API.
+
+version: '3.8'
+
+services:
+  mariadb:
+    image: mariadb:10.11
+    container_name: morphvox-mariadb
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-morphvox}
+      MYSQL_USER: ${DB_USERNAME:-morphvox}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
+    volumes:
+      - mariadb_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+    networks:
+      - morphvox
+
+networks:
+  morphvox:
+    external: true
+
+volumes:
+  mariadb_data:

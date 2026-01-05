@@ -1,7 +1,7 @@
 {
-  "name": "@voxmorph/shared",
+  "name": "@morphvox/shared",
   "version": "0.1.0",
-  "description": "Shared types and schemas for VoxMorph platform",
+  "description": "Shared types and schemas for MorphVox platform",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "scripts": {

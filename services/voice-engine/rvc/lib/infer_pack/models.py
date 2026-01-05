@@ -61,6 +61,10 @@ class TextEncoder(nn.Module):
         if pitch is None:
             x = self.emb_phone(phone)
         else:
+            # Ensure phone and pitch are on the same device as embedding layers
+            device = self.emb_phone.weight.device
+            phone = phone.to(device)
+            pitch = pitch.to(device)
             x = self.emb_phone(phone) + self.emb_pitch(pitch)
         x = x * math.sqrt(self.hidden_channels)  # [b, t, h]
         x = self.lrelu(x)
@@ -754,6 +758,21 @@ class SynthesizerTrnMs256NSFsid(nn.Module):
         return_length: Optional[torch.Tensor] = None,
         return_length2: Optional[torch.Tensor] = None,
     ):
+        # Ensure all tensors are on the same device as model weights
+        device = self.emb_g.weight.device
+        phone = phone.to(device)
+        phone_lengths = phone_lengths.to(device)
+        sid = sid.to(device)
+        if pitch is not None:
+            pitch = pitch.to(device)
+        if nsff0 is not None:
+            nsff0 = nsff0.to(device)
+        if skip_head is not None:
+            skip_head = skip_head.to(device)
+        if return_length is not None:
+            return_length = return_length.to(device)
+        if return_length2 is not None:
+            return_length2 = return_length2.to(device)
         g = self.emb_g(sid).unsqueeze(-1)
         if skip_head is not None and return_length is not None:
             assert isinstance(skip_head, torch.Tensor)

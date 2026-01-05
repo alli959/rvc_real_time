@@ -262,6 +262,10 @@ class Pipeline(object):
             pitchff[pitchf > 0] = 1
             pitchff[pitchf < 1] = protect
             pitchff = pitchff.unsqueeze(-1)
+            # Ensure all tensors are on the same device
+            device = feats.device
+            pitchff = pitchff.to(device)
+            feats0 = feats0.to(device)
             feats = feats * pitchff + feats0 * (1 - pitchff)
             feats = feats.to(feats0.dtype)
         p_len = torch.tensor([p_len], device=self.device).long()

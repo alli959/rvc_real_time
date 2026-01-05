@@ -59,31 +59,30 @@ class WebSocketServer:
         # Per-client inference params overrides
         self.client_params: Dict[int, Any] = {}
     
-    async def handle_client(self, websocket, path):
+    async def handle_client(self, websocket, path=None):
         """
         Handle individual WebSocket client connection
         
         Args:
             websocket: WebSocket connection
-            path: Connection path
+            path: Connection path (optional, not provided in websockets >= 10.0)
         """
         self.clients.add(websocket)
         client_id = id(websocket)
-        logger.info(f"Client {client_id} connected from {websocket.remote_address}")
+        import datetime
+        logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} connected from {websocket.remote_address}")
         
         # Initialize buffer for this client
         self.client_buffers[client_id] = []
         
         try:
             async for message in websocket:
+                logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Received message from client {client_id}: {message[:100]}")
                 await self.process_message(websocket, message, client_id)
-        
         except websockets.exceptions.ConnectionClosed:
-            logger.info(f"Client {client_id} disconnected")
-        
+            logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} disconnected")
         except Exception as e:
-            logger.error(f"Error handling client {client_id}: {e}")
-        
+            logger.error(f"[{datetime.datetime.utcnow().isoformat()}] Error handling client {client_id}: {e}")
         finally:
             self.clients.remove(websocket)
             # Clean up client state
@@ -107,6 +106,8 @@ class WebSocketServer:
             # Parse message
             data = json.loads(message)
             msg_type = data.get('type')
+            import datetime
+            logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Processing message type '{msg_type}' from client {client_id}")
             
             if msg_type == 'load_model':
                 # Load a specific model for this client
@@ -163,12 +164,26 @@ class WebSocketServer:
                     'index_path': index_path,
                     'model_name': self.model_manager.model_name
                 }
-                
+
+                # Model warmup: run dummy inference to preload HuBERT/RMVPE for this model
+                warmup_start = None
+                warmup_success = False
+                try:
+                    import time
+                    warmup_start = time.time()
+                    dummy_audio = np.zeros(self.stream_processor.chunk_size if self.stream_processor else 1024, dtype=np.float32)
+                    _ = self.model_manager.infer(dummy_audio, params=self.infer_params)
+                    warmup_success = True
+                    logger.info(f"Model warmup completed for {self.model_manager.model_name} (client {client_id}). Time: {time.time() - warmup_start:.2f}s")
+                except Exception as e:
+                    logger.error(f"Model warmup failed for {self.model_manager.model_name} (client {client_id}): {e}")
+
                 response = {
                     'type': 'model_loaded',
                     'model_name': self.model_manager.model_name,
                     'model_path': model_path,
-                    'has_index': self.model_manager.index_path is not None
+                    'has_index': self.model_manager.index_path is not None,
+                    'warmup_success': warmup_success
                 }
                 await websocket.send(json.dumps(response))
             else:
@@ -203,37 +218,42 @@ class WebSocketServer:
             # Clear buffer for next utterance
             self.client_buffers[client_id] = []
             
-            # Process entire audio at once (better quality)
-            logger.info(f"Processing complete utterance: {len(full_audio)} samples ({len(full_audio)/16000:.2f}s)")
-            
+            import datetime
+            logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} queued final audio chunk: {len(full_audio)} samples ({len(full_audio)/16000:.2f}s)")
             # Normalize input
             max_val = np.max(np.abs(full_audio))
             if max_val > 1.0:
                 full_audio = full_audio / max_val
-            
-            # Process entire audio in one pass with proper params
+            start_time = datetime.datetime.utcnow()
+            logger.info(f"[{start_time.isoformat()}] Client {client_id} starting processing")
             processed = self.model_manager.infer(full_audio, params=infer_params)
-            
+            end_time = datetime.datetime.utcnow()
+            logger.info(f"[{end_time.isoformat()}] Client {client_id} finished processing (duration: {(end_time-start_time).total_seconds():.3f}s)")
             # Apply gain and clip
             output_gain = 1.0
             if processed is not None and len(processed) > 0:
                 processed = np.clip(processed * output_gain, -1.0, 1.0)
-                logger.info(f"Sending processed audio: {len(processed)} samples ({len(processed)/16000:.2f}s)")
-                
+                logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} sending processed audio: {len(processed)} samples ({len(processed)/16000:.2f}s)")
                 # Send processed audio back
                 response = {
                     'type': 'audio',
                     'data': self.encode_audio(processed),
                     'final': True
                 }
-                await websocket.send(json.dumps(response))
+                try:
+                    await websocket.send(json.dumps(response))
+                    logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} processed audio sent successfully")
+                except Exception as send_exc:
+                    logger.error(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} failed to send processed audio: {send_exc}")
             else:
-                logger.error("Processing returned None or empty result")
+                logger.error(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} processing returned None or empty result")
                 await self.send_error(websocket, "Processing failed")
         
         elif self.model_manager and not is_final:
             # Buffer chunk and send acknowledgment
             self.client_buffers[client_id].append(audio_data)
+            import datetime
+            logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} buffered audio chunk: {len(audio_data)} samples (buffered: {len(self.client_buffers[client_id])})")
             response = {
                 'type': 'ack',
                 'buffered': len(self.client_buffers[client_id])
@@ -242,9 +262,12 @@ class WebSocketServer:
         
         elif self.stream_processor:
             # Fallback to real-time streaming mode (lower quality but immediate)
+            import datetime
+            logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} processing audio chunk in real-time mode: {len(audio_data)} samples")
             processed = self.stream_processor.process_audio_chunk(audio_data)
             
             if processed is not None:
+                logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} sending real-time processed audio: {len(processed)} samples")
                 response = {
                     'type': 'audio',
                     'data': self.encode_audio(processed)

@@ -541,7 +541,8 @@ class RMVPE:
 
             def get_default_model():
                 model = E2E(4, 1, (2, 2))
-                ckpt = torch.load(model_path, map_location="cpu")
+                map_loc = "cuda" if torch.cuda.is_available() else "cpu"
+                ckpt = torch.load(model_path, map_location=map_loc)
                 model.load_state_dict(ckpt)
                 model.eval()
                 if is_half:

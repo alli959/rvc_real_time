@@ -1,5 +1,5 @@
 # =============================================================================
-# VoxMorph WebUI - Next.js Dockerfile
+# MorphVox WebUI - Next.js Dockerfile
 # =============================================================================
 
 FROM node:20-alpine AS base
@@ -40,6 +40,16 @@ CMD ["npm", "run", "dev"]
 
 FROM base AS builder
 WORKDIR /app
+
+# Build arguments for Next.js public environment variables
+ARG NEXT_PUBLIC_API_URL=http://localhost:8000/api
+ARG NEXT_PUBLIC_WS_URL=ws://localhost:8765
+ARG NEXT_PUBLIC_VOICE_ENGINE_WS_URL=ws://localhost:8765
+
+# Set them as environment variables for the build
+ENV NEXT_PUBLIC_API_URL=$NEXT_PUBLIC_API_URL
+ENV NEXT_PUBLIC_WS_URL=$NEXT_PUBLIC_WS_URL
+ENV NEXT_PUBLIC_VOICE_ENGINE_WS_URL=$NEXT_PUBLIC_VOICE_ENGINE_WS_URL
 
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .

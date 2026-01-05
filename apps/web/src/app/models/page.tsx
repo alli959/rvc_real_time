@@ -27,7 +27,7 @@ export default function ModelsPage() {
           <div className="flex items-center justify-between h-16">
             <Link href="/" className="flex items-center gap-2">
               <Mic2 className="h-8 w-8 text-primary-500" />
-              <span className="text-xl font-bold gradient-text">VoxMorph</span>
+              <span className="text-xl font-bold gradient-text">MorphVox</span>
             </Link>
             <div className="flex items-center gap-4">
               {user ? (

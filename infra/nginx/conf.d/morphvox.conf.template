@@ -1,0 +1,184 @@
+# =============================================================================
+# MorphVox Platform - Site Configuration (HTTPS)
+# =============================================================================
+# Replace YOUR_DOMAIN with your actual domain (e.g., morphvox.example.com)
+# =============================================================================
+
+# Upstream definitions
+upstream api_backend {
+    server api:80;
+    keepalive 32;
+}
+
+upstream web_frontend {
+    server web:3000;
+    keepalive 32;
+}
+
+upstream voice_engine_http {
+    server voice-engine:8000;
+    keepalive 32;
+}
+
+upstream voice_engine_ws {
+    server voice-engine:8765;
+    keepalive 32;
+}
+
+# =============================================================================
+# HTTP -> HTTPS Redirect
+# =============================================================================
+server {
+    listen 80;
+    listen [::]:80;
+    server_name YOUR_DOMAIN;
+
+    # Let's Encrypt challenge
+    location /.well-known/acme-challenge/ {
+        root /var/www/certbot;
+    }
+
+    # Redirect all other traffic to HTTPS
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+# =============================================================================
+# Main HTTPS Server
+# =============================================================================
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name YOUR_DOMAIN;
+
+    # SSL Configuration
+    ssl_certificate /etc/letsencrypt/live/YOUR_DOMAIN/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/YOUR_DOMAIN/privkey.pem;
+    ssl_session_timeout 1d;
+    ssl_session_cache shared:SSL:50m;
+    ssl_session_tickets off;
+
+    # Modern SSL configuration
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384:ECDHE-ECDSA-CHACHA20-POLY1305:ECDHE-RSA-CHACHA20-POLY1305:DHE-RSA-AES128-GCM-SHA256:DHE-RSA-AES256-GCM-SHA384;
+    ssl_prefer_server_ciphers off;
+
+    # HSTS
+    add_header Strict-Transport-Security "max-age=63072000" always;
+
+    # Max upload size for audio files
+    client_max_body_size 100M;
+
+    # ==========================================================================
+    # Frontend (Next.js) - Main site
+    # ==========================================================================
+    location / {
+        proxy_pass http://web_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_cache_bypass $http_upgrade;
+
+        # Rate limiting
+        limit_req zone=general burst=50 nodelay;
+    }
+
+    # Next.js hot reload WebSocket (development only)
+    location /_next/webpack-hmr {
+        proxy_pass http://web_frontend;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_read_timeout 86400;
+    }
+
+    # ==========================================================================
+    # Laravel API
+    # ==========================================================================
+    location /api {
+        proxy_pass http://api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Rate limiting for API
+        limit_req zone=api burst=20 nodelay;
+
+        # Timeouts for long operations
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 300s;
+    }
+
+    # Laravel Sanctum CSRF cookie endpoint
+    location /sanctum {
+        proxy_pass http://api_backend;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # ==========================================================================
+    # Voice Engine HTTP API
+    # ==========================================================================
+    location /voice-api/ {
+        rewrite ^/voice-api/(.*) /$1 break;
+        proxy_pass http://voice_engine_http;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # Extended timeouts for voice processing
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 300s;
+        proxy_read_timeout 300s;
+
+        # Rate limiting
+        limit_req zone=api burst=10 nodelay;
+    }
+
+    # ==========================================================================
+    # Voice Engine WebSocket
+    # ==========================================================================
+    location /ws {
+        proxy_pass http://voice_engine_ws;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_set_header Host $host;
+        proxy_read_timeout 3600;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+
+        # WebSocket timeouts
+        proxy_connect_timeout 7d;
+        proxy_send_timeout 7d;
+        proxy_read_timeout 7d;
+    }
+
+    # ==========================================================================
+    # Health check endpoint
+    # ==========================================================================
+    location /health {
+        access_log off;
+        return 200 "healthy\n";
+        add_header Content-Type text/plain;
+    }
+}

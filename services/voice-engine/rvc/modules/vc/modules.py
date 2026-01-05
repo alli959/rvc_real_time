@@ -4,7 +4,9 @@ import traceback
 import json
 from collections import OrderedDict
 from io import BytesIO
+
 from pathlib import Path
+from typing import Optional
 
 import numpy as np
 import soundfile as sf
@@ -32,12 +34,12 @@ logger: logging.Logger = logging.getLogger(__name__)
 class VC:
     def __init__(self):
         self.n_spk: any = None
-        self.tgt_sr: int | None = None
+        self.tgt_sr: Optional[int] = None
         self.net_g = None
-        self.pipeline: Pipeline | None = None
-        self.cpt: OrderedDict | None = None
-        self.version: str | None = None
-        self.if_f0: int | None = None
+        self.pipeline: Optional[Pipeline] = None
+        self.cpt: Optional[OrderedDict] = None
+        self.version: Optional[str] = None
+        self.if_f0: Optional[int] = None
         self.hubert_model: any = None
         self.config = Config()
 
@@ -237,14 +239,14 @@ class VC:
         input_audio_path: Path,
         f0_up_key: int = 0,
         f0_method: str = "rmvpe",
-        f0_file: Path | None = None,
-        index_file: Path | None = None,
+        f0_file: Optional[Path] = None,
+        index_file: Optional[Path] = None,
         index_rate: float = 0.75,
         filter_radius: int = 3,
         resample_sr: int = 0,
         rms_mix_rate: float = 0.25,
         protect: float = 0.33,
-        hubert_path: str | None = None,
+        hubert_path: Optional[str] = None,
     ):
         hubert_path = os.getenv("hubert_path") if not hubert_path else hubert_path
 
@@ -313,15 +315,15 @@ class VC:
         opt_root: Path,
         f0_up_key: int = 0,
         f0_method: str = "rmvpe",
-        f0_file: Path | None = None,
-        index_file: Path | None = None,
+        f0_file: Optional[Path] = None,
+        index_file: Optional[Path] = None,
         index_rate: float = 0.75,
         filter_radius: int = 3,
         resample_sr: int = 0,
         rms_mix_rate: float = 0.25,
         protect: float = 0.33,
         output_format: str = "wav",
-        hubert_path: str | None = None,
+        hubert_path: Optional[str] = None,
     ):
         try:
             os.makedirs(opt_root, exist_ok=True)

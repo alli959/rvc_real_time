@@ -23,7 +23,7 @@ return [
     */
 
     'local' => [
-        'path' => env('VOICE_MODELS_LOCAL_PATH', '../../services/voice-engine/assets/models'),
+        'path' => env('VOICE_MODELS_PATH', storage_path('models')),
     ],
 
     /*

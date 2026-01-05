@@ -6,7 +6,7 @@ import { Providers } from '@/components/providers';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'VoxMorph - AI Voice Conversion Platform',
+  title: 'MorphVox - AI Voice Conversion Platform',
   description: 'Transform your voice with state-of-the-art AI voice conversion technology',
   icons: {
     icon: '/favicon.ico',
