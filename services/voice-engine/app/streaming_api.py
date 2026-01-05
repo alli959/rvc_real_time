@@ -493,16 +493,17 @@ class WebSocketServer:
     
     async def start(self):
         """Start the WebSocket server"""
+        # Increase max_size to 16 MB (default is 1 MB)
         self.server = await websockets.serve(
             self.handle_client,
             self.host,
             self.port,
             ping_interval=None,  # Disable ping to avoid timeout during long processing
             ping_timeout=None,
-            close_timeout=60
+            close_timeout=60,
+            max_size=16 * 1024 * 1024  # 16 MB
         )
-        logger.info(f"WebSocket server started on ws://{self.host}:{self.port}")
-        
+        logger.info(f"WebSocket server started on ws://{self.host}:{self.port} (max_size=16MB)")
         # Keep server running
         await asyncio.Future()
     

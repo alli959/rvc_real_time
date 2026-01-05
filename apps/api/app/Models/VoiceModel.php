@@ -6,6 +6,7 @@ use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\SoftDeletes;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Database\Eloquent\Relations\BelongsTo;
+use Illuminate\Database\Eloquent\Relations\BelongsToMany;
 use Illuminate\Database\Eloquent\Relations\HasMany;
 use Illuminate\Support\Str;
 
@@ -15,19 +16,33 @@ class VoiceModel extends Model
 
     protected $fillable = [
         'uuid',
-        'user_id',
+        'user_id',      // NULL = system model, otherwise user-uploaded
         'name',
         'slug',
         'description',
         'avatar',
         'engine',
-        'visibility',
-        'model_path',
-        'index_path',
+        'visibility',   // public, private, unlisted
+
+        // Storage paths
+        'model_path',   // path to .pth file
+        'index_path',   // path to .index file
         'config_path',
+        'has_index',
+        'size_bytes',
+        'storage_type', // local, s3
+
+        // Admin flags
+        'is_active',
+        'is_featured',
+        'last_synced_at',
+
+        // Metadata
         'metadata',
         'tags',
-        'status',
+        'status',       // pending, ready, failed
+        'usage_count',
+        'download_count',
         'has_consent',
         'consent_notes',
     ];
@@ -36,6 +51,13 @@ class VoiceModel extends Model
         'metadata' => 'array',
         'tags' => 'array',
         'has_consent' => 'boolean',
+        'has_index' => 'boolean',
+        'is_active' => 'boolean',
+        'is_featured' => 'boolean',
+        'last_synced_at' => 'datetime',
+        'size_bytes' => 'integer',
+        'usage_count' => 'integer',
+        'download_count' => 'integer',
     ];
 
     protected $hidden = [
@@ -43,6 +65,49 @@ class VoiceModel extends Model
         'index_path',
         'config_path',
     ];
+
+    protected $appends = [
+        'model_file',
+        'index_file',
+        'size',
+    ];
+
+    /**
+     * Get the model filename from model_path
+     */
+    public function getModelFileAttribute(): ?string
+    {
+        return $this->model_path ? basename($this->model_path) : null;
+    }
+
+    /**
+     * Get the index filename from index_path
+     */
+    public function getIndexFileAttribute(): ?string
+    {
+        return $this->index_path ? basename($this->index_path) : null;
+    }
+
+    /**
+     * Get human-readable size
+     */
+    public function getSizeAttribute(): string
+    {
+        if (!$this->size_bytes) {
+            return 'Unknown';
+        }
+
+        $bytes = $this->size_bytes;
+        $units = ['B', 'KB', 'MB', 'GB'];
+        $i = 0;
+
+        while ($bytes >= 1024 && $i < count($units) - 1) {
+            $bytes /= 1024;
+            $i++;
+        }
+
+        return round($bytes, 1) . ' ' . $units[$i];
+    }
 
     protected static function boot()
     {
@@ -56,6 +121,14 @@ class VoiceModel extends Model
                 $model->slug = Str::slug($model->name) . '-' . Str::random(6);
             }
         });
+    }
+
+    /**
+     * Check if this is a system model (not user-uploaded)
+     */
+    public function isSystemModel(): bool
+    {
+        return is_null($this->user_id);
     }
 
     // Relationships
@@ -74,10 +147,34 @@ class VoiceModel extends Model
         return $this->hasMany(UsageEvent::class);
     }
 
+    public function permittedUsers(): BelongsToMany
+    {
+        return $this->belongsToMany(User::class, 'voice_model_user_access', 'voice_model_id', 'user_id')
+            ->withPivot(['can_view', 'can_use'])
+            ->withTimestamps();
+    }
+
     // Scopes
     public function scopePublic($query)
     {
-        return $query->where('visibility', 'public')->where('status', 'ready');
+        return $query->where('visibility', 'public')
+            ->where('status', 'ready')
+            ->where('is_active', true);
+    }
+
+    public function scopeSystem($query)
+    {
+        return $query->whereNull('user_id');
+    }
+
+    public function scopeUserUploaded($query)
+    {
+        return $query->whereNotNull('user_id');
+    }
+
+    public function scopeActive($query)
+    {
+        return $query->where('is_active', true);
     }
 
     public function scopeOwnedBy($query, $userId)
@@ -87,10 +184,45 @@ class VoiceModel extends Model
 
     public function scopeAccessibleBy($query, $userId)
     {
-        return $query->where(function ($q) use ($userId) {
-            $q->where('visibility', 'public')
-              ->orWhere('user_id', $userId);
-        })->where('status', 'ready');
+        // Check if user is admin - admins can see all models
+        $user = User::find($userId);
+        if ($user && $user->hasRole('admin')) {
+            return $query->where('status', 'ready');
+        }
+
+        return $query
+            ->where('status', 'ready')
+            ->where('is_active', true)
+            ->where(function ($q) use ($userId) {
+                $q->where('visibility', 'public')
+                    ->orWhere('user_id', $userId)
+                    ->orWhereHas('permittedUsers', function ($sub) use ($userId) {
+                        $sub->where('users.id', $userId)
+                            ->where('voice_model_user_access.can_view', true);
+                    });
+            });
+    }
+
+    public function scopeUsableBy($query, $userId)
+    {
+        // Check if user is admin - admins can use all models
+        $user = User::find($userId);
+        if ($user && $user->hasRole('admin')) {
+            return $query->where('status', 'ready');
+        }
+
+        return $query
+            ->where('status', 'ready')
+            ->where('is_active', true)
+            ->where(function ($q) use ($userId) {
+                // If a model is public, it can be used.
+                $q->where('visibility', 'public')
+                    ->orWhere('user_id', $userId)
+                    ->orWhereHas('permittedUsers', function ($sub) use ($userId) {
+                        $sub->where('users.id', $userId)
+                            ->where('voice_model_user_access.can_use', true);
+                    });
+            });
     }
 
     // Helpers

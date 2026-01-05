@@ -2,19 +2,19 @@
 
 namespace App\Console\Commands;
 
-use App\Models\SystemVoiceModel;
+use App\Models\VoiceModel;
 use App\Services\VoiceModelScanner;
 use Illuminate\Console\Command;
 
 class SyncVoiceModels extends Command
 {
     protected $signature = 'voice-models:sync 
-                            {--storage= : Override storage type (local, s3)}
+                            {--storage= : Override storage type (local, s3). Defaults to VOICE_MODELS_STORAGE env or "local"}
                             {--path= : Override local path (only for local storage)}
                             {--prune : Remove database entries for models no longer in storage}
                             {--force : Force update all models even if unchanged}';
 
-    protected $description = 'Synchronize voice models from configured storage (local directory or S3) to database';
+    protected $description = 'Synchronize system voice models from configured storage (local directory or S3) to database';
 
     public function handle(VoiceModelScanner $scanner): int
     {
@@ -72,11 +72,12 @@ class SyncVoiceModels extends Command
         $bar->finish();
         $this->newLine(2);
 
-        // Prune removed models (only for current storage type)
+        // Prune removed models (only system models with matching storage type)
         if ($this->option('prune')) {
-            $pruned = SystemVoiceModel::where('storage_type', $storageType)
+            $pruned = VoiceModel::system()
+                ->where('storage_type', $storageType)
                 ->whereNotIn('slug', $syncedSlugs)
-                ->delete();
+                ->forceDelete();
             $stats['pruned'] = $pruned;
             if ($pruned > 0) {
                 $this->warn("Pruned {$pruned} models no longer in storage");
@@ -100,21 +101,27 @@ class SyncVoiceModels extends Command
 
     protected function syncModel(array $modelData): string
     {
-        $existing = SystemVoiceModel::where('slug', $modelData['slug'])
+        // Look for existing system model (user_id IS NULL) with same slug and storage type
+        $existing = VoiceModel::system()
+            ->where('slug', $modelData['slug'])
             ->where('storage_type', $modelData['storage_type'])
             ->first();
 
+        // Ensure system model defaults
+        $modelData['user_id'] = null;        // System models have no owner
+        $modelData['visibility'] = 'public'; // System models are always public
+        $modelData['status'] = 'ready';      // System models are ready immediately
+
         if (!$existing) {
-            SystemVoiceModel::create($modelData);
+            VoiceModel::create($modelData);
             return 'created';
         }
 
         // Check if update needed
         $needsUpdate = $this->option('force')
-            || $existing->model_path !== $modelData['model_path']
-            || $existing->size_bytes !== $modelData['size_bytes']
-            || $existing->has_index !== $modelData['has_index']
-            || $existing->storage_path !== $modelData['storage_path'];
+            || $existing->model_path !== ($modelData['model_path'] ?? null)
+            || $existing->size_bytes !== ($modelData['size_bytes'] ?? null)
+            || $existing->has_index !== ($modelData['has_index'] ?? false);
 
         if ($needsUpdate) {
             $existing->update(array_merge($modelData, [

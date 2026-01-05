@@ -275,7 +275,7 @@ services:
       
       HTTP_PORT: 8000
       WS_PORT: 8765
-      DEVICE: ${VOICE_ENGINE_DEVICE:-cpu}
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
       LOG_LEVEL: INFO
     volumes:
       # Mount local models directory directly (bind mount)

@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
-import { Search, Mic2, HardDrive, FileAudio, Check, X, Volume2, Cloud, Server } from 'lucide-react';
+import { Search, Mic2, HardDrive, FileAudio, Check, X, Volume2, Cloud, Server, Lock, Eye } from 'lucide-react';
 import { voiceModelsApi, SystemVoiceModel } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 
@@ -12,9 +12,13 @@ export default function ModelsPage() {
   const [selectedModel, setSelectedModel] = useState<SystemVoiceModel | null>(null);
   const user = useAuthStore((state) => state.user);
 
+  // When logged in, show all accessible models (including private ones user has access to)
+  // When not logged in, only show public models
   const { data, isLoading, error } = useQuery({
-    queryKey: ['voice-models', search],
-    queryFn: () => voiceModelsApi.list({ search }),
+    queryKey: ['voice-models', user?.id, search],
+    queryFn: () => user 
+      ? voiceModelsApi.list({ search })  // Authenticated: show accessible models
+      : voiceModelsApi.listPublic({ search }),  // Guest: only public models
   });
 
   const models: SystemVoiceModel[] = data?.data || [];
@@ -187,19 +191,49 @@ function ModelCard({
             </>
           )}
         </div>
+        {/* Visibility indicator for non-public models */}
+        {model.visibility !== 'public' && (
+          <div className={`absolute bottom-3 left-3 text-xs px-2 py-1 rounded flex items-center gap-1 ${
+            model.visibility === 'private' 
+              ? 'bg-red-900/80 text-red-300' 
+              : 'bg-yellow-900/80 text-yellow-300'
+          }`}>
+            {model.visibility === 'private' ? (
+              <>
+                <Lock className="h-3 w-3" />
+                <span>Private</span>
+              </>
+            ) : (
+              <>
+                <Eye className="h-3 w-3" />
+                <span>Unlisted</span>
+              </>
+            )}
+          </div>
+        )}
+        {/* Featured badge */}
+        {model.is_featured && (
+          <div className="absolute top-3 right-3 bg-yellow-500/90 text-yellow-900 text-xs px-2 py-1 rounded font-medium">
+            Featured
+          </div>
+        )}
       </div>
 
       {/* Content */}
       <div className="p-4">
-        <h3 className="font-semibold text-lg mb-2 group-hover:text-primary-400 transition-colors">
+        <h3 className="font-semibold text-lg mb-1 group-hover:text-primary-400 transition-colors">
           {model.name}
         </h3>
+        
+        {model.description && (
+          <p className="text-sm text-gray-400 mb-3 line-clamp-2">{model.description}</p>
+        )}
 
         <div className="space-y-2 text-sm">
           {/* Model file */}
           <div className="flex items-center gap-2 text-gray-400">
             <FileAudio className="h-4 w-4 flex-shrink-0" />
-            <span className="truncate">{model.model_file}</span>
+            <span className="truncate">{model.model_file || 'Unknown'}</span>
           </div>
 
           {/* Index file */}
@@ -217,12 +251,31 @@ function ModelCard({
             )}
           </div>
 
-          {/* Size */}
-          <div className="flex items-center justify-between text-gray-500">
+          {/* Tags */}
+          {model.tags && model.tags.length > 0 && (
+            <div className="flex flex-wrap gap-1 pt-1">
+              {model.tags.slice(0, 3).map((tag) => (
+                <span key={tag} className="bg-gray-800 text-gray-400 px-2 py-0.5 rounded text-xs">
+                  {tag}
+                </span>
+              ))}
+              {model.tags.length > 3 && (
+                <span className="text-gray-500 text-xs">+{model.tags.length - 3}</span>
+              )}
+            </div>
+          )}
+
+          {/* Size and engine */}
+          <div className="flex items-center justify-between text-gray-500 pt-2 border-t border-gray-800">
             <span>{model.size}</span>
-            <span className="bg-gray-800 px-2 py-0.5 rounded text-xs uppercase">
-              {model.engine}
-            </span>
+            <div className="flex items-center gap-2">
+              {model.usage_count > 0 && (
+                <span className="text-xs text-gray-600">{model.usage_count} uses</span>
+              )}
+              <span className="bg-gray-800 px-2 py-0.5 rounded text-xs uppercase">
+                {model.engine}
+              </span>
+            </div>
           </div>
         </div>
       </div>

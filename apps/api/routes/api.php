@@ -3,7 +3,6 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\VoiceModelController;
-use App\Http\Controllers\Api\SystemVoiceModelController;
 use App\Http\Controllers\Api\JobController;
 
 /*
@@ -24,33 +23,28 @@ use App\Http\Controllers\Api\JobController;
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
+    Route::get('/invitation/{token}', [AuthController::class, 'checkInvitation']);
+    Route::post('/register-with-invite', [AuthController::class, 'registerWithInvitation']);
 });
 
-// Public model browsing (user-uploaded public models)
-Route::get('/models', [VoiceModelController::class, 'index']);
-Route::get('/models/{model}', [VoiceModelController::class, 'show']);
-
-// System voice models (server-side models from local dir or S3)
+// Voice models - unified endpoint for all models (system + user-uploaded)
+// Supports filtering by type=system or type=user
+// These routes support optional authentication - user is resolved from bearer token if provided
 Route::prefix('voice-models')->group(function () {
-    Route::get('/', [SystemVoiceModelController::class, 'index']);
-    Route::get('/stats', [SystemVoiceModelController::class, 'stats']);
-    Route::get('/config', [SystemVoiceModelController::class, 'config']);
-    Route::get('/{slug}', [SystemVoiceModelController::class, 'show']);
+    Route::get('/', [VoiceModelController::class, 'index']);
+    Route::get('/stats', [VoiceModelController::class, 'stats']);
+    Route::get('/{slug}', [VoiceModelController::class, 'show']);
 });
+
+// Alias: /models routes point to the same controller
+Route::get('/models', [VoiceModelController::class, 'index']);
+Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show']);
 
 // ==========================================================================
 // Protected Routes (Authentication Required)
 // ==========================================================================
 
 Route::middleware('auth:sanctum')->group(function () {
-    // ------------------------------------------------------------------
-    // System Voice Models Management (Admin)
-    // ------------------------------------------------------------------
-    Route::prefix('voice-models')->group(function () {
-        Route::post('/sync', [SystemVoiceModelController::class, 'sync']);
-        Route::patch('/{slug}', [SystemVoiceModelController::class, 'update']);
-    });
-
     // ------------------------------------------------------------------
     // Auth Management
     // ------------------------------------------------------------------
@@ -61,23 +55,35 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ------------------------------------------------------------------
-    // Voice Models Management (User-uploaded)
+    // Voice Models Management
     // ------------------------------------------------------------------
-    Route::prefix('models')->group(function () {
-        // My models
+    Route::prefix('voice-models')->group(function () {
+        // My models (user-uploaded)
         Route::get('/my', [VoiceModelController::class, 'myModels']);
         
         // Create new model
         Route::post('/', [VoiceModelController::class, 'store']);
         
         // Model-specific actions
-        Route::put('/{model}', [VoiceModelController::class, 'update']);
-        Route::delete('/{model}', [VoiceModelController::class, 'destroy']);
+        Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
+        Route::patch('/{voiceModel}', [VoiceModelController::class, 'update']);
+        Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
         
         // Pre-signed URLs for direct S3 uploads/downloads
-        Route::post('/{model}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
-        Route::post('/{model}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
-        Route::get('/{model}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
+        Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
+        Route::post('/{voiceModel}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
+        Route::get('/{voiceModel}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
+    });
+
+    // Alias: /models routes
+    Route::prefix('models')->group(function () {
+        Route::get('/my', [VoiceModelController::class, 'myModels']);
+        Route::post('/', [VoiceModelController::class, 'store']);
+        Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
+        Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
+        Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
+        Route::post('/{voiceModel}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
+        Route::get('/{voiceModel}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
     });
 
     // ------------------------------------------------------------------
@@ -112,8 +118,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/users/{user}', [AuthController::class, 'updateUser']);
         Route::delete('/users/{user}', [AuthController::class, 'deleteUser']);
         
-        // All models (including private)
-        Route::get('/models', [VoiceModelController::class, 'adminIndex']);
+        // Voice model admin actions
+        Route::post('/voice-models/sync', [VoiceModelController::class, 'sync']);
+        Route::get('/voice-models/config', [VoiceModelController::class, 'config']);
         
         // All jobs
         Route::get('/jobs', [JobController::class, 'adminIndex']);

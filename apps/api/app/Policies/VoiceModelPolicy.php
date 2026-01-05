@@ -44,6 +44,14 @@ class VoiceModelPolicy
             return true;
         }
 
+        // Explicit per-user access (admin granted)
+        if ($model->permittedUsers()
+            ->where('users.id', $user->id)
+            ->wherePivot('can_view', true)
+            ->exists()) {
+            return true;
+        }
+
         // Unlisted models: anyone with the link can view
         if ($model->visibility === 'unlisted') {
             return true;
@@ -119,6 +127,14 @@ class VoiceModelPolicy
 
         // Admins can use any model
         if ($user->hasRole('admin')) {
+            return true;
+        }
+
+        // Explicit per-user access (admin granted)
+        if ($model->permittedUsers()
+            ->where('users.id', $user->id)
+            ->wherePivot('can_use', true)
+            ->exists()) {
             return true;
         }
 
