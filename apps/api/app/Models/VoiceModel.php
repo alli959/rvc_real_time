@@ -61,8 +61,6 @@ class VoiceModel extends Model
     ];
 
     protected $hidden = [
-        'model_path',
-        'index_path',
         'config_path',
     ];
 

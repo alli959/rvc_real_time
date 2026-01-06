@@ -66,42 +66,45 @@ export interface VoiceModel {
   slug: string;
   name: string;
   description: string | null;
-  
+
   // Ownership
   user_id: number | null; // null = system model
   user?: { id: number; name: string } | null;
-  
+
   // Storage (paths hidden from API)
+  model_path: string | null;
+  index_path: string | null;
+  config_path: string | null;
   has_index: boolean;
   size_bytes: number;
-  storage_type: 'local' | 's3';
-  
+  storage_type: "local" | "s3";
+
   // Computed from paths (appended by API)
   model_file: string | null;
   index_file: string | null;
   size: string; // Human readable size
-  
+
   // Metadata
   engine: string;
-  visibility: 'public' | 'private' | 'unlisted';
-  status: 'pending' | 'ready' | 'failed';
+  visibility: "public" | "private" | "unlisted";
+  status: "pending" | "ready" | "failed";
   tags: string[] | null;
   metadata: Record<string, any> | null;
-  
+
   // Flags
   is_active: boolean;
   is_featured: boolean;
   has_consent: boolean;
   consent_notes: string | null;
-  
+
   // Stats
   usage_count: number;
   download_count: number;
-  
+
   // URLs (optional, may be included by API)
   download_url?: string | null;
   index_download_url?: string | null;
-  
+
   // Timestamps
   last_synced_at: string | null;
   created_at: string;
