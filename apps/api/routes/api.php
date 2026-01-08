@@ -38,12 +38,13 @@ Route::prefix('voice-models')->group(function () {
     Route::get('/', [VoiceModelController::class, 'index']);
     Route::get('/stats', [VoiceModelController::class, 'stats']);
     // Use a regex constraint to prevent matching reserved words like "my"
-    Route::get('/{slug}', [VoiceModelController::class, 'show'])->where('slug', '^(?!my$)[a-zA-Z0-9_-]+$');
+    // Allow dots in slugs (e.g., "anton-0.5-model")
+    Route::get('/{slug}', [VoiceModelController::class, 'show'])->where('slug', '^(?!my$)[a-zA-Z0-9_.-]+$');
 });
 
 // Alias: /models routes point to the same controller
 Route::get('/models', [VoiceModelController::class, 'index']);
-Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show'])->where('voiceModel', '^(?!my$)[a-zA-Z0-9_-]+$');
+Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show'])->where('voiceModel', '^(?!my$)[a-zA-Z0-9_.-]+$');
 
 // TTS voices list (public - no auth required)
 Route::get('/tts/voices', [TTSController::class, 'getVoices']);
