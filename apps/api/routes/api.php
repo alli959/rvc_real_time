@@ -7,6 +7,7 @@ use App\Http\Controllers\Api\ModelUploadController;
 use App\Http\Controllers\Api\TTSController;
 use App\Http\Controllers\Api\JobController;
 use App\Http\Controllers\Api\RoleRequestController;
+use App\Http\Controllers\Api\AudioProcessingController;
 
 /*
 |--------------------------------------------------------------------------
@@ -36,12 +37,13 @@ Route::prefix('auth')->group(function () {
 Route::prefix('voice-models')->group(function () {
     Route::get('/', [VoiceModelController::class, 'index']);
     Route::get('/stats', [VoiceModelController::class, 'stats']);
-    Route::get('/{slug}', [VoiceModelController::class, 'show']);
+    // Use a regex constraint to prevent matching reserved words like "my"
+    Route::get('/{slug}', [VoiceModelController::class, 'show'])->where('slug', '^(?!my$)[a-zA-Z0-9_-]+$');
 });
 
 // Alias: /models routes point to the same controller
 Route::get('/models', [VoiceModelController::class, 'index']);
-Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show']);
+Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show'])->where('voiceModel', '^(?!my$)[a-zA-Z0-9_-]+$');
 
 // TTS voices list (public - no auth required)
 Route::get('/tts/voices', [TTSController::class, 'getVoices']);
@@ -113,6 +115,13 @@ Route::middleware('auth:sanctum')->group(function () {
         // /tts/voices is public - see routes above middleware group
         Route::post('/generate', [TTSController::class, 'generate']);
         Route::post('/stream', [TTSController::class, 'stream']);
+    });
+
+    // ------------------------------------------------------------------
+    // Audio Processing
+    // ------------------------------------------------------------------
+    Route::prefix('audio')->group(function () {
+        Route::post('/process', [AudioProcessingController::class, 'process']);
     });
 
     // ------------------------------------------------------------------

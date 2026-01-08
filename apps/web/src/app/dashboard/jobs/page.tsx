@@ -23,6 +23,20 @@ import {
 
 type JobFilter = 'all' | 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
 
+const getJobTypeLabel = (type: string | undefined): string => {
+  if (!type) return 'Job';
+  const labels: Record<string, string> = {
+    'inference': 'Voice Conversion',
+    'tts': 'Text to Speech',
+    'audio_convert': 'Audio Conversion',
+    'audio_split': 'Vocal Separation',
+    'audio_swap': 'Voice Swap',
+    'training': 'Model Training',
+    'preprocessing': 'Preprocessing',
+  };
+  return labels[type] || type.charAt(0).toUpperCase() + type.slice(1).replace(/_/g, ' ');
+};
+
 export default function JobsPage() {
   const [filter, setFilter] = useState<JobFilter>('all');
   const [page, setPage] = useState(1);
@@ -192,7 +206,7 @@ export default function JobsPage() {
                       </div>
                       
                       <p className="text-sm text-gray-500 mb-2">
-                        {job.type?.charAt(0).toUpperCase() + job.type?.slice(1)} • 
+                        {getJobTypeLabel(job.type)} • 
                         Created {new Date(job.created_at).toLocaleString()}
                       </p>
 
