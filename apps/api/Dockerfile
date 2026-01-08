@@ -58,10 +58,13 @@ WORKDIR /var/www/html
 FROM base AS development
 
 # Install development dependencies
-RUN apk add --no-cache git
+RUN apk add --no-cache git mariadb-client
 
 # Copy application code
 COPY . .
+
+# Remove .env file if it exists - we'll use environment variables
+RUN rm -f .env
 
 # Install dependencies (including dev)
 RUN composer install --no-interaction --no-progress
@@ -83,16 +86,22 @@ ENTRYPOINT ["/entrypoint.sh"]
 
 FROM base AS production
 
+# Install mariadb-client for entrypoint database check
+RUN apk add --no-cache mariadb-client
+
 # Copy application code
 COPY --chown=www-data:www-data . .
+
+# Remove .env file - production uses environment variables from docker-compose
+RUN rm -f .env
 
 # Install production dependencies only
 RUN composer install --no-dev --no-interaction --no-progress --optimize-autoloader
 
-# Cache config and routes
-RUN php artisan config:cache \
-    && php artisan route:cache \
-    && php artisan view:cache
+# Don't cache config in build - we need runtime environment variables
+# RUN php artisan config:cache \
+#     && php artisan route:cache \
+#     && php artisan view:cache
 
 # Set permissions
 RUN chown -R www-data:www-data /var/www/html \
@@ -101,4 +110,6 @@ RUN chown -R www-data:www-data /var/www/html \
 
 EXPOSE 80
 
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisord.conf"]
+COPY docker/entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+ENTRYPOINT ["/entrypoint.sh"]

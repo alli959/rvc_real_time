@@ -13,20 +13,23 @@ import {
   LogOut,
   Plus,
   ChevronRight,
+  Volume2,
+  AudioWaveform,
 } from 'lucide-react';
 import { authApi, modelsApi, jobsApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+import { DashboardLayout } from '@/components/dashboard-layout';
 
 export default function DashboardPage() {
   const router = useRouter();
-  const { isAuthenticated, user, clearAuth } = useAuthStore();
+  const { isAuthenticated, isHydrated, user, clearAuth } = useAuthStore();
 
-  // Redirect if not authenticated
+  // Redirect if not authenticated (only after hydration is complete)
   useEffect(() => {
-    if (!isAuthenticated) {
+    if (isHydrated && !isAuthenticated) {
       router.push('/login');
     }
-  }, [isAuthenticated, router]);
+  }, [isAuthenticated, isHydrated, router]);
 
   const { data: modelsData } = useQuery({
     queryKey: ['my-models'],
@@ -50,77 +53,52 @@ export default function DashboardPage() {
     router.push('/');
   };
 
-  if (!isAuthenticated) {
-    return null;
+  // Show loading while hydrating or checking auth
+  if (!isHydrated || !isAuthenticated) {
+    return (
+      <div className="min-h-screen flex items-center justify-center">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
+      </div>
+    );
   }
 
   const myModels = modelsData?.data || [];
   const recentJobs = jobsData?.data?.slice(0, 5) || [];
 
   return (
+    <DashboardLayout>
     <div className="min-h-screen flex">
-      {/* Sidebar */}
-      <aside className="w-64 bg-gray-900/50 border-r border-gray-800 flex flex-col">
-        <div className="p-4 border-b border-gray-800">
-          <Link href="/" className="flex items-center gap-2">
-            <Mic2 className="h-8 w-8 text-primary-500" />
-            <span className="text-xl font-bold gradient-text">MorphVox</span>
-          </Link>
-        </div>
-
-        <nav className="flex-1 p-4 space-y-1">
-          <NavItem href="/dashboard" icon={LayoutDashboard} active>
-            Dashboard
-          </NavItem>
-          <NavItem href="/dashboard/models" icon={Box}>
-            My Models
-          </NavItem>
-          <NavItem href="/dashboard/jobs" icon={ListMusic}>
-            My Jobs
-          </NavItem>
-          <NavItem href="/dashboard/settings" icon={Settings}>
-            Settings
-          </NavItem>
-        </nav>
-
-        <div className="p-4 border-t border-gray-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center">
-              <span className="font-semibold">{user?.name?.charAt(0).toUpperCase()}</span>
-            </div>
-            <div className="flex-1 min-w-0">
-              <p className="font-medium truncate">{user?.name}</p>
-              <p className="text-sm text-gray-500 truncate">{user?.email}</p>
-            </div>
-          </div>
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors w-full"
-          >
-            <LogOut className="h-4 w-4" />
-            Sign out
-          </button>
-        </div>
-      </aside>
-
       {/* Main Content */}
       <main className="flex-1 p-8">
         <div className="max-w-6xl mx-auto">
           <h1 className="text-2xl font-bold mb-8">Welcome back, {user?.name?.split(' ')[0]}!</h1>
 
           {/* Quick Actions */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
             <Link
-              href="/dashboard/convert"
+              href="/dashboard/tts"
               className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
             >
-              <div className="w-12 h-12 rounded-lg bg-primary-600/20 flex items-center justify-center mb-4">
-                <Mic2 className="h-6 w-6 text-primary-500" />
+              <div className="w-12 h-12 rounded-lg bg-purple-600/20 flex items-center justify-center mb-4">
+                <Volume2 className="h-6 w-6 text-purple-500" />
               </div>
-              <h3 className="font-semibold mb-1 group-hover:text-primary-400 transition-colors">
-                Convert Voice
+              <h3 className="font-semibold mb-1 group-hover:text-purple-400 transition-colors">
+                Text to Speech
               </h3>
-              <p className="text-sm text-gray-400">Upload audio and transform it</p>
+              <p className="text-sm text-gray-400">Generate speech from text</p>
+            </Link>
+
+            <Link
+              href="/dashboard/audio"
+              className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
+            >
+              <div className="w-12 h-12 rounded-lg bg-cyan-600/20 flex items-center justify-center mb-4">
+                <AudioWaveform className="h-6 w-6 text-cyan-500" />
+              </div>
+              <h3 className="font-semibold mb-1 group-hover:text-cyan-400 transition-colors">
+                Audio Processing
+              </h3>
+              <p className="text-sm text-gray-400">Split vocals, convert & more</p>
             </Link>
 
             <Link
@@ -137,7 +115,7 @@ export default function DashboardPage() {
             </Link>
 
             <Link
-              href="/dashboard/models/new"
+              href="/dashboard/models"
               className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
             >
               <div className="w-12 h-12 rounded-lg bg-green-600/20 flex items-center justify-center mb-4">
@@ -195,6 +173,7 @@ export default function DashboardPage() {
         </div>
       </main>
     </div>
+    </DashboardLayout>
   );
 }
 

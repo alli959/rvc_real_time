@@ -20,6 +20,7 @@ class VoiceModel extends Model
         'name',
         'slug',
         'description',
+        'image_path',   // path to model avatar/cover image
         'avatar',
         'engine',
         'visibility',   // public, private, unlisted
@@ -182,10 +183,11 @@ class VoiceModel extends Model
 
     public function scopeAccessibleBy($query, $userId)
     {
-        // Check if user is admin - admins can see all models
+        // Check if user is admin - admins can see ALL models (including inactive)
         $user = User::find($userId);
         if ($user && $user->hasRole('admin')) {
-            return $query->where('status', 'ready');
+            // Admin sees everything - no filters
+            return $query;
         }
 
         return $query

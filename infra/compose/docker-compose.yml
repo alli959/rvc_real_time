@@ -4,7 +4,7 @@ version: '3.8'
 # MorphVox Platform - Development Stack
 # =============================================================================
 # This compose file sets up the complete development environment including:
-# - PostgreSQL database
+# - MariaDB database
 # - Redis for caching and queues
 # - MinIO for S3-compatible object storage
 # - Laravel API backend
@@ -18,24 +18,25 @@ services:
   # ===========================================================================
   
   db:
-    image: postgres:16-alpine
+    image: mariadb:10.11
     container_name: morphvox-db
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${DB_DATABASE:-morphvox}
-      POSTGRES_USER: ${DB_USERNAME:-morphvox}
-      POSTGRES_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_DATABASE: ${DB_DATABASE:-morphvox}
+      MYSQL_USER: ${DB_USERNAME:-morphvox}
+      MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres_data:/var/lib/mysql
     ports:
-      - "5432:5432"
+      - "3306:3306"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-morphvox} -d ${DB_DATABASE:-morphvox}"]
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
       timeout: 5s
       retries: 5
     networks:
-      - voiceforge
+      - morphvox
 
   # ===========================================================================
   # Cache & Queue Layer
@@ -56,7 +57,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - voiceforge
+      - morphvox
 
   # ===========================================================================
   # Object Storage (S3-compatible)
@@ -81,7 +82,7 @@ services:
       timeout: 5s
       retries: 5
     networks:
-      - voiceforge
+      - morphvox
 
   # MinIO bucket initialization
   minio-init:
@@ -98,7 +99,7 @@ services:
       exit 0;
       "
     networks:
-      - voiceforge
+      - morphvox
 
   # ===========================================================================
   # Laravel API Backend
@@ -124,15 +125,16 @@ services:
       APP_KEY: ${APP_KEY:-}
       APP_URL: ${APP_URL:-http://localhost:8000}
       
-      DB_CONNECTION: pgsql
+      DB_CONNECTION: mysql
       DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: ${DB_DATABASE:-voiceforge}
-      DB_USERNAME: ${DB_USERNAME:-voiceforge}
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-morphvox}
+      DB_USERNAME: ${DB_USERNAME:-morphvox}
       DB_PASSWORD: ${DB_PASSWORD:-secret}
       
       REDIS_HOST: redis
       REDIS_PORT: 6379
+      REDIS_PASSWORD: ""
       
       CACHE_DRIVER: redis
       QUEUE_CONNECTION: redis
@@ -145,16 +147,21 @@ services:
       AWS_ENDPOINT: http://minio:9000
       AWS_USE_PATH_STYLE_ENDPOINT: true
       
-      VOICE_ENGINE_URL: http://voice-engine:8000
+      VOICE_ENGINE_URL: http://voice-engine:8001
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
       VOICE_ENGINE_STORAGE_ENDPOINT: http://minio:9000
+      
+      # Local voice models path (shared with voice-engine)
+      VOICE_MODELS_PATH: /var/www/html/storage/models
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
+      # Mount local models directory for scanning
+      - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
     ports:
       - "8080:80"
     networks:
-      - voiceforge
+      - morphvox
 
   # Laravel Queue Worker
   api-worker:
@@ -168,24 +175,25 @@ services:
     command: php artisan queue:work --sleep=3 --tries=3 --max-time=3600
     environment:
       APP_ENV: ${APP_ENV:-local}
-      DB_CONNECTION: pgsql
+      DB_CONNECTION: mysql
       DB_HOST: db
-      DB_PORT: 5432
-      DB_DATABASE: ${DB_DATABASE:-voiceforge}
-      DB_USERNAME: ${DB_USERNAME:-voiceforge}
+      DB_PORT: 3306
+      DB_DATABASE: ${DB_DATABASE:-morphvox}
+      DB_USERNAME: ${DB_USERNAME:-morphvox}
       DB_PASSWORD: ${DB_PASSWORD:-secret}
       REDIS_HOST: redis
+      REDIS_PASSWORD: ""
       QUEUE_CONNECTION: redis
       AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       AWS_BUCKET: ${AWS_BUCKET:-morphvox}
       AWS_ENDPOINT: http://minio:9000
-      VOICE_ENGINE_URL: http://voice-engine:8000
+      VOICE_ENGINE_URL: http://voice-engine:8001
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
     networks:
-      - voiceforge
+      - morphvox
 
   # ===========================================================================
   # Next.js WebUI Frontend
@@ -210,7 +218,7 @@ services:
     ports:
       - "3000:3000"
     networks:
-      - voiceforge
+      - morphvox
 
   # ===========================================================================
   # Python Voice Engine Service
@@ -238,7 +246,7 @@ services:
       RMVPE_PATH: /app/assets/rmvpe
       
       # Server settings
-      HTTP_PORT: 8000
+      HTTP_PORT: 8001
       WS_PORT: 8765
       
       # Device settings
@@ -250,8 +258,12 @@ services:
       - ../../services/voice-engine:/app
       - voice_engine_cache:/app/.cache
       - voice_engine_models:/app/assets/models
+      # Mount UVR5 weights for vocal separation
+      - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
+      # Mount same models path that API uses so model paths match
+      - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
     ports:
-      - "8000:8000"   # HTTP API
+      - "8001:8001"   # HTTP API
       - "8765:8765"   # WebSocket
     deploy:
       resources:
@@ -261,7 +273,7 @@ services:
               count: all
               capabilities: [gpu]
     networks:
-      - voiceforge
+      - morphvox
 
 # =============================================================================
 # Networks

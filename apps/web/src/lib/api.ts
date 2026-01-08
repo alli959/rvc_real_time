@@ -54,6 +54,7 @@ export interface User {
   name: string;
   email: string;
   roles?: string[];
+  permissions?: string[];
 }
 
 /**
@@ -66,6 +67,7 @@ export interface VoiceModel {
   slug: string;
   name: string;
   description: string | null;
+  image_path: string | null;  // Cover image path
 
   // Ownership
   user_id: number | null; // null = system model
@@ -87,7 +89,7 @@ export interface VoiceModel {
   // Metadata
   engine: string;
   visibility: "public" | "private" | "unlisted";
-  status: "pending" | "ready" | "failed";
+  status: "pending" | "processing" | "ready" | "failed";
   tags: string[] | null;
   metadata: Record<string, any> | null;
 
@@ -299,10 +301,134 @@ export const voiceModelsApi = {
     const response = await api.get('/admin/voice-models/config');
     return response.data;
   },
+
+  /**
+   * Upload model files directly (multipart form)
+   */
+  upload: async (data: FormData, onProgress?: (progress: number) => void) => {
+    const response = await api.post('/voice-models/upload', data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+      onUploadProgress: (progressEvent) => {
+        if (onProgress && progressEvent.total) {
+          const progress = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+          onProgress(progress);
+        }
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Upload model image
+   */
+  uploadImage: async (slugOrId: string, imageFile: File) => {
+    const formData = new FormData();
+    formData.append('image', imageFile);
+    
+    const response = await api.post(`/voice-models/${slugOrId}/image`, formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Upload additional files to existing model
+   */
+  uploadFiles: async (slugOrId: string, data: FormData) => {
+    const response = await api.post(`/voice-models/${slugOrId}/files`, data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Replace model file
+   */
+  replaceModel: async (slugOrId: string, data: FormData) => {
+    const response = await api.post(`/voice-models/${slugOrId}/replace`, data, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
 };
 
 // Legacy alias - modelsApi points to the same functionality
 export const modelsApi = voiceModelsApi;
+
+// =============================================================================
+// TTS API
+// =============================================================================
+
+export interface TTSVoice {
+  id: string;
+  name: string;
+  language: string;
+  gender: 'male' | 'female';
+  supports_styles?: boolean;
+}
+
+export interface TTSStyle {
+  id: string;
+  name?: string;
+  description: string;
+}
+
+export interface TTSRequest {
+  text: string;
+  voice?: string;
+  style?: string;
+  rate?: string;
+  pitch?: string;
+  voice_model_id?: number;
+  f0_up_key?: number;
+  index_rate?: number;
+}
+
+export interface TTSResponse {
+  audio: string; // Base64 encoded audio
+  sample_rate: number;
+  format: string;
+  text_length: number;
+  voice: string;
+  style: string;
+  converted: boolean;
+}
+
+export const ttsApi = {
+  /**
+   * Get available TTS voices, styles, and languages
+   */
+  getVoices: async (): Promise<{ voices: TTSVoice[]; styles: TTSStyle[]; languages: string[] }> => {
+    const response = await api.get('/tts/voices');
+    return response.data;
+  },
+
+  /**
+   * Generate TTS audio
+   */
+  generate: async (request: TTSRequest): Promise<TTSResponse> => {
+    const response = await api.post('/tts/generate', request);
+    return response.data;
+  },
+
+  /**
+   * Stream TTS audio (for longer texts)
+   */
+  stream: async (request: TTSRequest) => {
+    const response = await api.post('/tts/stream', request, {
+      responseType: 'stream',
+    });
+    return response.data;
+  },
+};
 
 // =============================================================================
 // Jobs API
@@ -342,5 +468,146 @@ export const jobsApi = {
   getOutput: async (id: string) => {
     const response = await api.get(`/jobs/${id}/output`);
     return response.data;
+  },
+};
+
+// =============================================================================
+// Role Requests API
+// =============================================================================
+
+export interface RoleInfo {
+  name: string;
+  description: string;
+  permissions: string[];
+  has_role: boolean;
+}
+
+export interface RoleRequest {
+  id: number;
+  uuid: string;
+  user_id: number;
+  requested_role: string;
+  message: string;
+  status: 'pending' | 'approved' | 'rejected';
+  admin_response: string | null;
+  reviewed_by: number | null;
+  reviewed_at: string | null;
+  created_at: string;
+  updated_at: string;
+  user?: { id: number; name: string; email: string };
+  reviewer?: { id: number; name: string };
+}
+
+export const roleRequestsApi = {
+  getAvailableRoles: async (): Promise<{ roles: Record<string, RoleInfo> }> => {
+    const response = await api.get('/role-requests/available-roles');
+    return response.data;
+  },
+
+  myRequests: async (): Promise<{ requests: RoleRequest[] }> => {
+    const response = await api.get('/role-requests/my');
+    return response.data;
+  },
+
+  create: async (data: { role: string; message: string }): Promise<{ request: RoleRequest }> => {
+    const response = await api.post('/role-requests', data);
+    return response.data;
+  },
+
+  cancel: async (id: number): Promise<void> => {
+    await api.delete(`/role-requests/${id}`);
+  },
+
+  // Admin endpoints
+  adminList: async (params?: { status?: string; page?: number }) => {
+    const response = await api.get('/admin/role-requests', { params });
+    return response.data;
+  },
+
+  approve: async (id: number, response?: string) => {
+    const res = await api.post(`/admin/role-requests/${id}/approve`, { response });
+    return res.data;
+  },
+
+  reject: async (id: number, response?: string) => {
+    const res = await api.post(`/admin/role-requests/${id}/reject`, { response });
+    return res.data;
+  },
+};
+
+// =============================================================================
+// Audio Processing API
+// =============================================================================
+
+export interface AudioProcessRequest {
+  audio: string; // Base64 encoded audio
+  sample_rate?: number;
+  mode: 'split' | 'convert' | 'swap';
+  model_id?: number;
+  f0_up_key?: number;
+  index_rate?: number;
+  pitch_shift_all?: number; // Pitch shift for both vocals and instrumental (split mode) or just instrumental (swap mode)
+}
+
+export interface AudioProcessResponse {
+  mode: string;
+  vocals?: string; // Base64 encoded
+  instrumental?: string; // Base64 encoded
+  converted?: string; // Base64 encoded
+  sample_rate: number;
+  format: string;
+}
+
+// Voice engine API - in production, goes through nginx at /voice-engine/
+// In development, connects directly to localhost:8001
+const voiceEngineUrl = process.env.NEXT_PUBLIC_VOICE_ENGINE_API_URL || 
+  (typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
+    ? `${window.location.origin}/voice-engine` 
+    : 'http://localhost:8001');
+
+export const audioProcessingApi = {
+  /**
+   * Process audio with various modes
+   */
+  process: async (request: AudioProcessRequest): Promise<AudioProcessResponse> => {
+    // First, get model path from API if model_id provided
+    let modelPath: string | undefined;
+    let indexPath: string | undefined;
+    
+    if (request.model_id && (request.mode === 'convert' || request.mode === 'swap')) {
+      try {
+        const modelData = await voiceModelsApi.get(request.model_id.toString());
+        modelPath = modelData.model?.model_path || undefined;
+        indexPath = modelData.model?.index_path || undefined;
+      } catch (err) {
+        console.error('Failed to get model paths:', err);
+        throw new Error('Failed to load voice model information');
+      }
+    }
+    
+    // Call voice engine directly
+    const response = await fetch(`${voiceEngineUrl}/audio/process`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        audio: request.audio,
+        sample_rate: request.sample_rate || 44100,
+        mode: request.mode,
+        model_path: modelPath,
+        index_path: indexPath,
+        f0_up_key: request.f0_up_key || 0,
+        index_rate: request.index_rate || 0.75,
+        pitch_shift_all: request.pitch_shift_all || 0,
+      }),
+    });
+    
+    if (!response.ok) {
+      const error = await response.json().catch(() => ({ detail: 'Processing failed' }));
+      throw new Error(error.detail || 'Audio processing failed');
+    }
+    
+    return response.json();
   },
 };

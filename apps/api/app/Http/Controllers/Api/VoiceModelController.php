@@ -152,6 +152,14 @@ class VoiceModelController extends Controller
      */
     public function myModels(Request $request)
     {
+        if($request->user()->hasRole('admin')) {
+            // Admins can see all models
+            $query = response()->json(VoiceModel::all());
+        }
+        if(!$request->user()) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
+
         $query = VoiceModel::ownedBy($request->user()->id);
 
         // Include pending models for owner
@@ -165,13 +173,22 @@ class VoiceModelController extends Controller
     }
 
     /**
-     * Get single model by slug or route model binding
+     * Get single model by ID, slug, or route model binding
      */
     public function show(Request $request, $voiceModel)
     {
-        // Support both route model binding and slug lookup
-        if (is_string($voiceModel)) {
-            $model = VoiceModel::where('slug', $voiceModel)->first();
+        // Support route model binding, ID lookup, and slug lookup
+        if (is_string($voiceModel) || is_numeric($voiceModel)) {
+            // Try by ID first (if numeric), then by slug
+            if (is_numeric($voiceModel)) {
+                $model = VoiceModel::find($voiceModel);
+            }
+            
+            // If not found by ID, try by slug
+            if (!isset($model) || !$model) {
+                $model = VoiceModel::where('slug', $voiceModel)->first();
+            }
+            
             if (!$model) {
                 return response()->json(['error' => 'Model not found'], 404);
             }
@@ -260,7 +277,27 @@ class VoiceModelController extends Controller
             'metadata' => 'nullable|array',
             'is_active' => 'sometimes|boolean',
             'is_featured' => 'sometimes|boolean',
+            'image' => 'nullable|image|mimes:jpeg,png,gif,webp|max:5120', // 5MB max
         ]);
+
+        // Handle image upload
+        if ($request->hasFile('image')) {
+            $image = $request->file('image');
+            $prefix = $voiceModel->getStoragePrefix();
+            $imagePath = "{$prefix}/cover." . $image->getClientOriginalExtension();
+            
+            // Store to S3 or local depending on model storage type
+            $disk = $voiceModel->storage_type === 's3' ? 's3' : 'public';
+            Storage::disk($disk)->putFileAs(
+                dirname($imagePath),
+                $image,
+                basename($imagePath),
+                'public'
+            );
+            
+            $validated['image_path'] = $imagePath;
+            unset($validated['image']);
+        }
 
         // Only admins can make models public or set featured
         if (!$user->hasRole('admin')) {
@@ -273,6 +310,51 @@ class VoiceModelController extends Controller
         $voiceModel->update($validated);
 
         return response()->json([
+            'model' => $voiceModel->fresh(),
+        ]);
+    }
+
+    /**
+     * Upload/update model cover image
+     */
+    public function uploadImage(Request $request, VoiceModel $voiceModel)
+    {
+        $user = $request->user();
+
+        // Check permission: owner or admin
+        if (!$voiceModel->isOwnedBy($user) && !$user->hasRole('admin')) {
+            return response()->json(['error' => 'Forbidden'], 403);
+        }
+
+        $request->validate([
+            'image' => 'required|image|mimes:jpeg,png,gif,webp|max:5120', // 5MB max
+        ]);
+
+        $image = $request->file('image');
+        $prefix = $voiceModel->getStoragePrefix();
+        $extension = $image->getClientOriginalExtension();
+        $imagePath = "{$prefix}/cover.{$extension}";
+        
+        // Delete old image if exists
+        if ($voiceModel->image_path) {
+            $disk = $voiceModel->storage_type === 's3' ? 's3' : 'public';
+            Storage::disk($disk)->delete($voiceModel->image_path);
+        }
+        
+        // Store new image
+        $disk = $voiceModel->storage_type === 's3' ? 's3' : 'public';
+        Storage::disk($disk)->putFileAs(
+            dirname($imagePath),
+            $image,
+            basename($imagePath),
+            'public'
+        );
+        
+        $voiceModel->update(['image_path' => $imagePath]);
+
+        return response()->json([
+            'message' => 'Image uploaded successfully',
+            'image_path' => $imagePath,
             'model' => $voiceModel->fresh(),
         ]);
     }

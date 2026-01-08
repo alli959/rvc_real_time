@@ -53,6 +53,10 @@ logs/
 services/voice-engine/assets/hubert/*.pt
 services/voice-engine/assets/rmvpe/*.pt
 
+# UVR5 vocal separation models (downloaded on setup)
+services/voice-engine/assets/uvr5_weights/*.pth
+services/voice-engine/assets/uvr5_weights/**/*.pth
+
 # ALL model .pth, .index, .npy files (too large for GitHub)
 # These are downloaded on setup via scripts/download_billcipher_model.sh
 services/voice-engine/assets/models/**/*.pth
@@ -127,6 +131,7 @@ apps/web/out/
 .env
 .env.local
 .env.*.local
+.env.production
 
 # Testing
 .pytest_cache/

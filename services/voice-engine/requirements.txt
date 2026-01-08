@@ -18,8 +18,8 @@ resampy>=0.4.2
 # fairseq @ git+https://github.com/facebookresearch/fairseq.git@v0.12.2
 
 # Retrieval/Search
-faiss-cpu>=1.7.4; platform_machine != "aarch64"
-faiss-gpu>=1.7.2; platform_machine != "aarch64" and platform_system != "Darwin"
+# Note: faiss-gpu is installed separately in Dockerfile for GPU builds
+# faiss-cpu can be installed manually if needed for CPU-only environments
 
 # Numerical computing
 numpy>=1.21.0,<2.0.0
@@ -44,3 +44,4 @@ pyyaml>=6.0
 # Utilities
 tqdm>=4.65.0
 colorama>=0.4.6
+edge-tts>=6.1.9

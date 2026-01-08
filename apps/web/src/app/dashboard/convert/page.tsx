@@ -21,7 +21,7 @@ import {
   X,
 } from 'lucide-react';
 import Link from 'next/link';
-import { voiceModelsApi, SystemVoiceModel } from '@/lib/api';
+import { voiceModelsApi, SystemVoiceModel, ttsApi, TTSVoice } from '@/lib/api';
 
 // Tab types
 type TabType = 'file' | 'tts' | 'speech';
@@ -64,6 +64,13 @@ function ConvertPageContent() {
 
   // TTS state
   const [ttsText, setTtsText] = useState('');
+  const [ttsVoice, setTtsVoice] = useState('en-US-GuyNeural');
+  const [ttsRate, setTtsRate] = useState(0);
+  const [ttsPitch, setTtsPitch] = useState(0);
+  const [ttsVoices, setTtsVoices] = useState<TTSVoice[]>([]);
+  const [ttsLanguages, setTtsLanguages] = useState<string[]>([]);
+  const [ttsLanguage, setTtsLanguage] = useState('English (US)');
+  const [ttsGender, setTtsGender] = useState<'male' | 'female'>('male');
 
   // Speech-to-speech state
   const [isRecording, setIsRecording] = useState(false);
@@ -74,6 +81,32 @@ function ConvertPageContent() {
 
   // WebSocket ref
   const wsRef = useRef<WebSocket | null>(null);
+
+  // Load TTS voices
+  useEffect(() => {
+    const loadVoices = async () => {
+      try {
+        const data = await ttsApi.getVoices();
+        setTtsVoices(data.voices || []);
+        setTtsLanguages(data.languages || []);
+      } catch (err) {
+        console.error('Failed to load TTS voices:', err);
+      }
+    };
+    loadVoices();
+  }, []);
+
+  // Filter TTS voices by language and gender
+  const filteredTtsVoices = ttsVoices.filter(
+    v => v.language === ttsLanguage && v.gender === ttsGender
+  );
+
+  // Select first voice when filters change
+  useEffect(() => {
+    if (filteredTtsVoices.length > 0 && !filteredTtsVoices.find(v => v.id === ttsVoice)) {
+      setTtsVoice(filteredTtsVoices[0].id);
+    }
+  }, [filteredTtsVoices, ttsVoice]);
 
   // Fetch selected model
   const { data: modelData, isLoading: isLoadingModel, error: modelError } = useQuery({
@@ -269,10 +302,10 @@ function ConvertPageContent() {
     }
   };
 
-  // TTS conversion
+  // TTS conversion - use REST API like the working TTS page
   const handleTtsConvert = async () => {
-    if (!ttsText.trim() || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-      setError('Please enter text and ensure connection to voice engine');
+    if (!ttsText.trim()) {
+      setError('Please enter text to convert');
       return;
     }
 
@@ -281,20 +314,39 @@ function ConvertPageContent() {
     setError(null);
 
     try {
-      wsRef.current.send(JSON.stringify({
-        type: 'tts',
-        text: ttsText,
-        settings: {
-          f0_up_key: settings.pitch,
-          index_rate: settings.indexRate,
-          filter_radius: settings.filterRadius,
-          rms_mix_rate: settings.rmsMixRate,
-          protect: settings.protect,
-        },
-      }));
-    } catch (err) {
+      // Use REST API for TTS generation (same as working /dashboard/tts page)
+      const response = await ttsApi.generate({
+        text: ttsText.trim(),
+        voice: ttsVoice,
+        style: 'default',
+        rate: ttsRate > 0 ? `+${ttsRate}%` : `${ttsRate}%`,
+        pitch: ttsPitch > 0 ? `+${ttsPitch}Hz` : `${ttsPitch}Hz`,
+        // Pass the selected model for voice conversion
+        voice_model_id: selectedModel?.id,
+        f0_up_key: settings.pitch,
+        index_rate: settings.indexRate,
+      });
+
+      // Convert base64 to blob URL (matching working implementation)
+      const base64ToBlob = (base64: string, mimeType: string): Blob => {
+        const byteCharacters = atob(base64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        return new Blob([byteArray], { type: mimeType });
+      };
+
+      const audioBlob = base64ToBlob(response.audio, 'audio/wav');
+      const url = URL.createObjectURL(audioBlob);
+      setOutputUrl(url);
+      setSuccess('Speech generated successfully!');
+      setTimeout(() => setSuccess(null), 3000);
+    } catch (err: any) {
       console.error('TTS error:', err);
-      setError('Failed to generate speech');
+      setError(err.response?.data?.message || err.response?.data?.error || 'Failed to generate speech');
+    } finally {
       setIsProcessing(false);
     }
   };
@@ -543,19 +595,121 @@ function ConvertPageContent() {
 
                 {/* TTS Tab */}
                 {activeTab === 'tts' && (
-                  <section className="glass rounded-xl p-6">
+                  <section className="glass rounded-xl p-6 space-y-6">
                     <h2 className="font-semibold mb-4 flex items-center gap-2">
                       <MessageSquare className="h-5 w-5" />
                       Text to Speech
                     </h2>
-                    <textarea
-                      value={ttsText}
-                      onChange={(e) => setTtsText(e.target.value)}
-                      placeholder="Enter text to convert to speech with the selected voice..."
-                      className="w-full h-40 bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
-                    />
-                    <p className="text-sm text-gray-500 mt-2">
-                      {ttsText.length} characters
+
+                    {/* Voice Selection */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Language</label>
+                        <select
+                          value={ttsLanguage}
+                          onChange={(e) => setTtsLanguage(e.target.value)}
+                          className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        >
+                          {ttsLanguages.map(lang => (
+                            <option key={lang} value={lang}>{lang}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Gender</label>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setTtsGender('male')}
+                            className={`flex-1 py-2 rounded-lg border transition-colors ${
+                              ttsGender === 'male'
+                                ? 'bg-primary-600 border-primary-500 text-white'
+                                : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-600'
+                            }`}
+                          >
+                            Male
+                          </button>
+                          <button
+                            onClick={() => setTtsGender('female')}
+                            className={`flex-1 py-2 rounded-lg border transition-colors ${
+                              ttsGender === 'female'
+                                ? 'bg-primary-600 border-primary-500 text-white'
+                                : 'bg-gray-800/50 border-gray-700 text-gray-400 hover:border-gray-600'
+                            }`}
+                          >
+                            Female
+                          </button>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">Voice</label>
+                        <select
+                          value={ttsVoice}
+                          onChange={(e) => setTtsVoice(e.target.value)}
+                          className="w-full bg-gray-800/50 border border-gray-700 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-primary-500"
+                        >
+                          {filteredTtsVoices.map(v => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Rate and Pitch */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">
+                          Speech Rate: {ttsRate > 0 ? '+' : ''}{ttsRate}%
+                        </label>
+                        <input
+                          type="range"
+                          min="-50"
+                          max="50"
+                          value={ttsRate}
+                          onChange={(e) => setTtsRate(parseInt(e.target.value))}
+                          className="w-full accent-primary-500"
+                        />
+                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                          <span>Slower</span>
+                          <span>Normal</span>
+                          <span>Faster</span>
+                        </div>
+                      </div>
+                      <div>
+                        <label className="block text-sm text-gray-400 mb-2">
+                          Voice Pitch: {ttsPitch > 0 ? '+' : ''}{ttsPitch}Hz
+                        </label>
+                        <input
+                          type="range"
+                          min="-50"
+                          max="50"
+                          value={ttsPitch}
+                          onChange={(e) => setTtsPitch(parseInt(e.target.value))}
+                          className="w-full accent-primary-500"
+                        />
+                        <div className="flex justify-between text-xs text-gray-500 mt-1">
+                          <span>Lower</span>
+                          <span>Normal</span>
+                          <span>Higher</span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Text Input */}
+                    <div>
+                      <label className="block text-sm text-gray-400 mb-2">Text</label>
+                      <textarea
+                        value={ttsText}
+                        onChange={(e) => setTtsText(e.target.value)}
+                        placeholder="Enter text to convert to speech with the selected voice..."
+                        className="w-full h-32 bg-gray-800/50 border border-gray-700 rounded-lg px-4 py-3 focus:outline-none focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
+                      />
+                      <p className="text-sm text-gray-500 mt-2">
+                        {ttsText.length} characters
+                      </p>
+                    </div>
+
+                    <p className="text-xs text-gray-500">
+                      💡 The TTS audio will be converted using the selected voice model above for a unique character voice.
                     </p>
                   </section>
                 )}

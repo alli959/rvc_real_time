@@ -46,7 +46,7 @@ return [
     */
 
     'voice_engine' => [
-        'base_url' => env('VOICE_ENGINE_URL', 'http://voice-engine:8000'),
+        'base_url' => env('VOICE_ENGINE_URL', 'http://voice-engine:8001'),
         'ws_url' => env('VOICE_ENGINE_WS_URL', 'ws://voice-engine:8765'),
         'timeout' => env('VOICE_ENGINE_TIMEOUT', 300),
         'storage_endpoint' => env('VOICE_ENGINE_STORAGE_ENDPOINT', 'http://minio:9000'),

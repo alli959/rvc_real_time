@@ -33,6 +33,7 @@ class UsageEvent extends Model
     const TYPE_TRAINING = 'training';
     const TYPE_DOWNLOAD = 'download';
     const TYPE_API_CALL = 'api_call';
+    const TYPE_TTS = 'tts';
 
     protected static function boot()
     {
@@ -95,6 +96,20 @@ class UsageEvent extends Model
             'user_id' => $userId,
             'voice_model_id' => $modelId,
             'event_type' => self::TYPE_DOWNLOAD,
+        ]);
+    }
+
+    public static function recordTTS(int $userId, ?int $modelId, int $textLength, bool $withConversion = false): self
+    {
+        return static::create([
+            'user_id' => $userId,
+            'voice_model_id' => $modelId,
+            'event_type' => self::TYPE_TTS,
+            'tokens_used' => $textLength,
+            'metadata' => [
+                'text_length' => $textLength,
+                'with_conversion' => $withConversion,
+            ],
         ]);
     }
 }

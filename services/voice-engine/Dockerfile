@@ -47,8 +47,13 @@ RUN pip install --no-cache-dir torch torchvision torchaudio --extra-index-url ht
 # Install Cython before requirements to fix pyworld build
 RUN pip install --no-cache-dir cython
 
-# Install Python dependencies
-RUN pip install --no-cache-dir --prefer-binary -r requirements.txt
+# Install faiss-gpu separately with increased timeout and retries
+RUN pip install --default-timeout=300 --no-cache-dir faiss-gpu>=1.7.2 || \
+    pip install --default-timeout=300 --no-cache-dir faiss-gpu>=1.7.2 || \
+    pip install --default-timeout=300 --no-cache-dir faiss-gpu>=1.7.2
+
+# Install Python dependencies (excluding faiss since we installed it above)
+RUN pip install --default-timeout=300 --no-cache-dir --prefer-binary -r requirements.txt
 
 # Install fairseq from git without dependencies to avoid conflicts
 RUN pip install --no-cache-dir git+https://github.com/facebookresearch/fairseq.git@v0.12.2 --no-deps

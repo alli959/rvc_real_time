@@ -1,8 +1,14 @@
 #!/bin/sh
 set -e
 
-# Wait for MariaDB to be ready
-until mysql -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" -e "SELECT 1;" >/dev/null 2>&1; do
+# Override .env settings with container environment (for Docker compatibility)
+# This ensures Docker Compose environment variables take precedence over .env file
+export DB_HOST="${DB_HOST:-db}"
+export DB_PORT="${DB_PORT:-3306}"
+export REDIS_HOST="${REDIS_HOST:-redis}"
+
+# Wait for MariaDB to be ready (disable SSL for connection check)
+until mysql -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" --skip-ssl -e "SELECT 1;" >/dev/null 2>&1; do
   echo "Waiting for MariaDB..."
   sleep 2
 done

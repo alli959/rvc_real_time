@@ -85,6 +85,22 @@ else
     echo "You can manually download assets later by running: bash scripts/download_rvc_assets.sh"
 fi
 
+# Download UVR5 models for vocal/instrumental separation
+echo ""
+echo "Downloading UVR5 vocal separation models..."
+mkdir -p assets/uvr5_weights
+if [ -f "scripts/download_uvr5_assets.sh" ]; then
+    # Check if main UVR5 model already exists
+    if [ -f "assets/uvr5_weights/HP5_only_main_vocal.pth" ]; then
+        echo "✓ UVR5 models already downloaded"
+    else
+        bash scripts/download_uvr5_assets.sh || echo "⚠️  UVR5 model download failed - vocal split will not work"
+    fi
+else
+    echo "Warning: scripts/download_uvr5_assets.sh not found"
+    echo "Vocal/instrumental separation will not be available"
+fi
+
 # Download example model (BillCipher)
 echo ""
 echo "Downloading example model (BillCipher)..."

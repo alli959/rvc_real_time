@@ -148,7 +148,7 @@ def run_streaming_mode(config: AppConfig):
 
 def run_api_mode(config: AppConfig):
     """
-    Run in API mode with WebSocket and Socket servers
+    Run in API mode with WebSocket, Socket, and HTTP servers
     
     Args:
         config: Application configuration
@@ -220,13 +220,32 @@ def run_api_mode(config: AppConfig):
         stream_processor=stream_processor
     )
     
+    # Initialize HTTP API with model manager
+    from app.http_api import set_model_manager
+    set_model_manager(model_manager, infer_params)
+    
     logger.info("Starting servers...")
     
-    # Run both servers
+    # Run all servers (WebSocket, Socket, and HTTP)
     async def run_servers():
+        import uvicorn
+        from app.http_api import app as http_app
+        
+        # Create uvicorn config for HTTP server
+        http_config = uvicorn.Config(
+            http_app,
+            host=config.server.http_host,
+            port=config.server.http_port,
+            log_level="info"
+        )
+        http_server = uvicorn.Server(http_config)
+        
+        logger.info(f"Starting HTTP server on {config.server.http_host}:{config.server.http_port}")
+        
         await asyncio.gather(
             websocket_server.start(),
-            socket_server.start()
+            socket_server.start(),
+            http_server.serve()
         )
     
     try:

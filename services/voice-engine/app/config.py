@@ -84,6 +84,8 @@ class ModelConfig:
 class ServerConfig:
     """Server configuration."""
 
+    http_host: str = "0.0.0.0"
+    http_port: int = 8001  # Changed from 8000 to avoid conflict with Laravel API
     websocket_host: str = "0.0.0.0"
     websocket_port: int = 8765
     socket_host: str = "0.0.0.0"
@@ -93,6 +95,8 @@ class ServerConfig:
     def from_env(cls):
         """Load configuration from environment variables."""
         return cls(
+            http_host=os.getenv("HTTP_HOST", "0.0.0.0"),
+            http_port=int(os.getenv("HTTP_PORT", 8001)),
             websocket_host=os.getenv("WEBSOCKET_HOST", "0.0.0.0"),
             websocket_port=int(os.getenv("WEBSOCKET_PORT", 8765)),
             socket_host=os.getenv("SOCKET_HOST", "0.0.0.0"),

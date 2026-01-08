@@ -35,7 +35,7 @@ class AuthController extends Controller
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
-            'user' => $user,
+            'user' => $this->formatUserWithRoles($user),
             'token' => $token,
         ], 201);
     }
@@ -64,7 +64,7 @@ class AuthController extends Controller
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
-            'user' => $user->load('roles'),
+            'user' => $this->formatUserWithRoles($user),
             'token' => $token,
         ]);
     }
@@ -75,8 +75,26 @@ class AuthController extends Controller
     public function me(Request $request)
     {
         return response()->json([
-            'user' => $request->user()->load('roles', 'permissions'),
+            'user' => $this->formatUserWithRoles($request->user()),
         ]);
+    }
+
+    /**
+     * Format user with roles and permissions as arrays of names
+     */
+    protected function formatUserWithRoles(User $user): array
+    {
+        return [
+            'id' => $user->id,
+            'name' => $user->name,
+            'email' => $user->email,
+            'avatar' => $user->avatar,
+            'email_verified_at' => $user->email_verified_at,
+            'created_at' => $user->created_at,
+            'updated_at' => $user->updated_at,
+            'roles' => $user->getRoleNames()->toArray(),
+            'permissions' => $user->getAllPermissions()->pluck('name')->toArray(),
+        ];
     }
 
     /**
@@ -190,7 +208,7 @@ class AuthController extends Controller
         $token = $user->createToken('auth-token')->plainTextToken;
 
         return response()->json([
-            'user' => $user->load('roles'),
+            'user' => $this->formatUserWithRoles($user),
             'token' => $token,
         ], 201);
     }

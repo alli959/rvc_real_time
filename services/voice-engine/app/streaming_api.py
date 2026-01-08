@@ -16,6 +16,7 @@ import logging
 from typing import Set, Optional, Dict, Any
 import base64
 import io
+import soundfile as sf
 
 logger = logging.getLogger(__name__)
 
@@ -275,26 +276,92 @@ class WebSocketServer:
                 await websocket.send(json.dumps(response))
     
     async def handle_tts(self, websocket, data: dict, client_id: int):
-        """Handle Text-to-Speech request"""
+        """Handle Text-to-Speech request with Edge TTS and voice conversion"""
         text = data.get('text', '')
         settings = data.get('settings', {})
+        voice = data.get('voice', 'en-US-GuyNeural')
+        rate = data.get('rate', '+0%')
+        pitch_shift = data.get('pitch', '+0Hz')  # TTS pitch
         
         if not text.strip():
             await self.send_error(websocket, "Text is required for TTS")
             return
         
         try:
-            # TTS requires external TTS engine - send placeholder response
-            # In production, integrate with a TTS engine like Coqui TTS, Edge TTS, etc.
             logger.info(f"TTS request from client {client_id}: {text[:50]}...")
             
-            # For now, send an error indicating TTS is not yet implemented
-            await self.send_error(websocket, "TTS functionality requires additional TTS engine integration. Coming soon!")
+            # Step 1: Generate TTS audio using Edge TTS
+            try:
+                import edge_tts
+                import tempfile
+                import os
+                import soundfile as sf
+                
+                # Fix rate format - Edge TTS requires +/- prefix
+                if rate and not rate.startswith(('+', '-')):
+                    rate = f"+{rate}"
+                
+                # Fix pitch format - Edge TTS requires +/- prefix  
+                if pitch_shift and not pitch_shift.startswith(('+', '-')):
+                    pitch_shift = f"+{pitch_shift}"
+                
+                # Generate TTS
+                communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch_shift)
+                
+                # Save to temporary file
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+                    tmp_path = tmp_file.name
+                
+                await communicate.save(tmp_path)
+                
+                # Load the audio
+                import librosa
+                audio, sr = librosa.load(tmp_path, sr=40000, mono=True)  # RVC expects 40kHz
+                
+                # Clean up temp file
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+                
+            except ImportError:
+                await self.send_error(websocket, "edge-tts not installed. Install with: pip install edge-tts")
+                return
+            except Exception as e:
+                logger.error(f"TTS generation failed: {e}")
+                await self.send_error(websocket, f"TTS generation failed: {str(e)}")
+                return
             
-            # When TTS is implemented:
-            # 1. Generate speech from text using TTS engine
-            # 2. Convert the generated speech using RVC model
-            # 3. Return the converted audio
+            # Step 2: Convert the TTS audio using RVC model if loaded
+            if self.model_manager and self.model_manager.model_name:
+                try:
+                    # Get inference params with settings overrides
+                    params = self.get_client_params(client_id, settings)
+                    
+                    # Run voice conversion
+                    converted_audio = self.model_manager.infer(audio, params=params)
+                    
+                    if converted_audio is not None:
+                        audio = converted_audio
+                        logger.info(f"TTS audio converted with model {self.model_manager.model_name}")
+                    
+                except Exception as e:
+                    logger.error(f"Voice conversion failed: {e}")
+                    # Continue with unconverted TTS audio
+            
+            # Step 3: Convert to WAV and encode as base64
+            wav_buffer = io.BytesIO()
+            sf.write(wav_buffer, audio, 40000, format='WAV')
+            wav_buffer.seek(0)
+            audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
+            
+            # Send the audio response
+            response = {
+                'type': 'tts_audio',
+                'data': audio_base64,
+                'sample_rate': 40000,
+                'model_applied': self.model_manager.model_name if self.model_manager and self.model_manager.model_name else None
+            }
+            await websocket.send(json.dumps(response))
+            logger.info(f"TTS audio sent to client {client_id}")
             
         except Exception as e:
             logger.error(f"TTS error: {e}")

@@ -119,7 +119,7 @@ Modern React frontend with:
 ### 3. Voice Engine (`services/voice-engine`)
 
 Python service for RVC inference:
-- **HTTP API** (port 8000): File-based inference
+- **HTTP API** (port 8001): File-based inference
 - **WebSocket** (port 8765): Real-time streaming
 
 Supports:

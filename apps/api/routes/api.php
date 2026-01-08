@@ -3,7 +3,10 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
 use App\Http\Controllers\Api\VoiceModelController;
+use App\Http\Controllers\Api\ModelUploadController;
+use App\Http\Controllers\Api\TTSController;
 use App\Http\Controllers\Api\JobController;
+use App\Http\Controllers\Api\RoleRequestController;
 
 /*
 |--------------------------------------------------------------------------
@@ -40,6 +43,9 @@ Route::prefix('voice-models')->group(function () {
 Route::get('/models', [VoiceModelController::class, 'index']);
 Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show']);
 
+// TTS voices list (public - no auth required)
+Route::get('/tts/voices', [TTSController::class, 'getVoices']);
+
 // ==========================================================================
 // Protected Routes (Authentication Required)
 // ==========================================================================
@@ -61,13 +67,23 @@ Route::middleware('auth:sanctum')->group(function () {
         // My models (user-uploaded)
         Route::get('/my', [VoiceModelController::class, 'myModels']);
         
-        // Create new model
+        // Create new model (metadata only, for presigned upload flow)
         Route::post('/', [VoiceModelController::class, 'store']);
+        
+        // Direct file upload (multipart form)
+        Route::post('/upload', [ModelUploadController::class, 'upload']);
         
         // Model-specific actions
         Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
         Route::patch('/{voiceModel}', [VoiceModelController::class, 'update']);
         Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
+        
+        // Image upload
+        Route::post('/{voiceModel}/image', [VoiceModelController::class, 'uploadImage']);
+        
+        // File management for existing models
+        Route::post('/{voiceModel}/files', [ModelUploadController::class, 'uploadFiles']);
+        Route::post('/{voiceModel}/replace', [ModelUploadController::class, 'replaceModel']);
         
         // Pre-signed URLs for direct S3 uploads/downloads
         Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
@@ -79,11 +95,24 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::prefix('models')->group(function () {
         Route::get('/my', [VoiceModelController::class, 'myModels']);
         Route::post('/', [VoiceModelController::class, 'store']);
+        Route::post('/upload', [ModelUploadController::class, 'upload']);
         Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
         Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
+        Route::post('/{voiceModel}/image', [VoiceModelController::class, 'uploadImage']);
+        Route::post('/{voiceModel}/files', [ModelUploadController::class, 'uploadFiles']);
+        Route::post('/{voiceModel}/replace', [ModelUploadController::class, 'replaceModel']);
         Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
         Route::post('/{voiceModel}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
         Route::get('/{voiceModel}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
+    });
+
+    // ------------------------------------------------------------------
+    // Text-to-Speech (authenticated endpoints)
+    // ------------------------------------------------------------------
+    Route::prefix('tts')->group(function () {
+        // /tts/voices is public - see routes above middleware group
+        Route::post('/generate', [TTSController::class, 'generate']);
+        Route::post('/stream', [TTSController::class, 'stream']);
     });
 
     // ------------------------------------------------------------------
@@ -110,6 +139,16 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ------------------------------------------------------------------
+    // Role Requests
+    // ------------------------------------------------------------------
+    Route::prefix('role-requests')->group(function () {
+        Route::get('/available-roles', [RoleRequestController::class, 'getAvailableRoles']);
+        Route::get('/my', [RoleRequestController::class, 'myRequests']);
+        Route::post('/', [RoleRequestController::class, 'store']);
+        Route::delete('/{roleRequest}', [RoleRequestController::class, 'cancel']);
+    });
+
+    // ------------------------------------------------------------------
     // Admin Routes
     // ------------------------------------------------------------------
     Route::middleware('role:admin')->prefix('admin')->group(function () {
@@ -121,6 +160,11 @@ Route::middleware('auth:sanctum')->group(function () {
         // Voice model admin actions
         Route::post('/voice-models/sync', [VoiceModelController::class, 'sync']);
         Route::get('/voice-models/config', [VoiceModelController::class, 'config']);
+        
+        // Role requests management
+        Route::get('/role-requests', [RoleRequestController::class, 'adminIndex']);
+        Route::post('/role-requests/{roleRequest}/approve', [RoleRequestController::class, 'approve']);
+        Route::post('/role-requests/{roleRequest}/reject', [RoleRequestController::class, 'reject']);
         
         // All jobs
         Route::get('/jobs', [JobController::class, 'adminIndex']);

@@ -2,7 +2,11 @@
 
 > **Note:** This project has been restructured into a full-stack platform. The original RVC real-time voice conversion code is now in `services/voice-engine/`.
 
-## 🎯 Overview
+## � Live Demo
+
+**Production Site:** [https://morphvox.net](https://morphvox.net)
+
+## �🎯 Overview
 
 MorphVox is a comprehensive AI voice conversion platform featuring:
 
@@ -177,6 +181,15 @@ python main.py --mode api
 ## 📄 License
 
 MIT License - See LICENSE file for details.
+
+## 👨‍💻 Creator
+
+**Alexander Guðmundsson**
+
+- 🌐 Website: [morphvox.net](https://morphvox.net)
+- 💬 Discord: [alexanderg](https://discord.com/users/alexanderg)
+- 💼 LinkedIn: [Alexander Guðmundsson](https://linkedin.com/in/alexander-gudmundsson)
+- 🐙 GitHub: [alexanderg](https://github.com/alexanderg)
 
 ---
 

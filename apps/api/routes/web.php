@@ -7,15 +7,6 @@ use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VoiceModelAdminController;
 
 /**
- * IMPORTANT:
- * Laravel's default auth middleware redirects guests to route('login').
- * So we MUST provide a route named "login".
- *
- * We'll make it redirect to the admin login route.
- */
-Route::get('/login', fn() => redirect()->route('admin.login'))->name('login');
-
-/**
  * Define admin routes once so we can mount them on:
  * - /admin/* in local
  * - admin.morphvox.net/* in production
@@ -57,9 +48,19 @@ if (app()->environment('local')) {
 
     // Optional root redirect for local dev:
     Route::get('/', fn() => redirect('/admin'))->name('root');
+    
+    // Global login redirect (only needed in local since admin uses prefix)
+    Route::get('/login', fn() => redirect()->route('admin.login'))->name('login');
 } else {
     // Production: bind to admin subdomain (no prefix)
+    // IMPORTANT: Register admin domain routes FIRST
     Route::domain(config('admin.domain', 'admin.morphvox.net'))
         ->name('admin.')
         ->group($adminRoutes);
+    
+    // Global login redirect for main domain only (to avoid redirect loop on admin subdomain)
+    Route::domain(config('admin.main_domain', 'morphvox.net'))
+        ->group(function () {
+            Route::get('/login', fn() => redirect()->route('admin.login'))->name('login');
+        });
 }

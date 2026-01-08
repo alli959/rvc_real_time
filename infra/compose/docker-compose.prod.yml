@@ -158,6 +158,7 @@ services:
       APP_DEBUG: "false"
       APP_KEY: ${APP_KEY:?APP_KEY is required}
       APP_URL: https://${DOMAIN}
+      ADMIN_DOMAIN: admin.${DOMAIN}
       
       DB_CONNECTION: mysql
       DB_HOST: db
@@ -173,6 +174,13 @@ services:
       CACHE_DRIVER: redis
       QUEUE_CONNECTION: redis
       SESSION_DRIVER: redis
+      SESSION_DOMAIN: .${DOMAIN}
+      
+      # Sanctum stateful domains for production
+      SANCTUM_STATEFUL_DOMAINS: ${DOMAIN},www.${DOMAIN},api.${DOMAIN}
+      
+      # CORS allowed origins for production
+      CORS_ALLOWED_ORIGINS: https://${DOMAIN},https://www.${DOMAIN},https://api.${DOMAIN}
       
       AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
@@ -180,15 +188,17 @@ services:
       AWS_BUCKET: ${AWS_BUCKET:-morphvox}
       AWS_ENDPOINT: http://minio:9000
       AWS_USE_PATH_STYLE_ENDPOINT: "true"
+      FILESYSTEM_DISK: s3
       
-      VOICE_ENGINE_URL: http://voice-engine:8000
+      VOICE_ENGINE_URL: http://voice-engine:8001
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
+      
+      # Voice models configuration
+      VOICE_MODELS_STORAGE: local
+      VOICE_MODELS_PATH: /var/www/html/storage/models
       
       # Trusted proxies for Nginx
       TRUSTED_PROXIES: "*"
-      
-      # Local voice models path (shared with voice-engine)
-      VOICE_MODELS_PATH: /var/www/html/storage/models
     volumes:
       - api_storage:/var/www/html/storage
       # Mount local models directory for scanning
@@ -221,7 +231,7 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
       AWS_BUCKET: ${AWS_BUCKET:-morphvox}
       AWS_ENDPOINT: http://minio:9000
-      VOICE_ENGINE_URL: http://voice-engine:8000
+      VOICE_ENGINE_URL: http://voice-engine:8001
     networks:
       - morphvox
 
@@ -273,7 +283,7 @@ services:
       HUBERT_PATH: /app/assets/hubert/hubert_base.pt
       RMVPE_PATH: /app/assets/rmvpe
       
-      HTTP_PORT: 8000
+      HTTP_PORT: 8001
       WS_PORT: 8765
       DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
       LOG_LEVEL: INFO
@@ -282,6 +292,8 @@ services:
       - ../../services/voice-engine/assets/models:/app/assets/models
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
+      # Mount UVR5 weights for vocal separation
+      - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
     deploy:
       resources:
         reservations:

@@ -13,7 +13,7 @@ class VoiceEngineService
 
     public function __construct()
     {
-        $this->baseUrl = config('services.voice_engine.base_url', 'http://voice-engine:8000');
+        $this->baseUrl = config('services.voice_engine.base_url', 'http://voice-engine:8001');
         $this->wsUrl = config('services.voice_engine.ws_url', 'ws://voice-engine:8765');
         $this->timeout = config('services.voice_engine.timeout', 300);
     }
