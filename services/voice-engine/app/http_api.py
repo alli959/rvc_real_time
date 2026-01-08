@@ -473,6 +473,9 @@ async def process_audio(request: AudioProcessRequest):
     - convert: Apply voice conversion to audio
     - swap: Separate vocals, convert them, and merge back
     """
+    # Log incoming request parameters
+    logger.info(f"Audio processing request: mode={request.mode}, pitch_shift_all={request.pitch_shift_all}, f0_up_key={request.f0_up_key}")
+    
     try:
         import librosa
         
@@ -535,13 +538,15 @@ async def process_audio(request: AudioProcessRequest):
                     agg=10
                 )
                 
-                logger.info(f"Separation complete: vocals={len(vocals)}, instrumental={len(instrumental)}")
+                logger.info(f"Separation complete: vocals shape={vocals.shape}, instrumental shape={instrumental.shape}")
                 
                 # Apply pitch shift to both vocals and instrumental if requested
-                if request.pitch_shift_all and request.pitch_shift_all != 0:
-                    logger.info(f"Applying pitch shift of {request.pitch_shift_all} semitones to both tracks")
-                    vocals = pitch_shift_audio(vocals, 44100, request.pitch_shift_all)
-                    instrumental = pitch_shift_audio(instrumental, 44100, request.pitch_shift_all)
+                pitch_shift = request.pitch_shift_all
+                if pitch_shift != 0:
+                    logger.info(f"Applying pitch shift of {pitch_shift} semitones to both tracks")
+                    vocals = pitch_shift_audio(vocals, 44100, pitch_shift)
+                    instrumental = pitch_shift_audio(instrumental, 44100, pitch_shift)
+                    logger.info(f"Pitch shift applied: vocals shape={vocals.shape}, instrumental shape={instrumental.shape}")
                 
                 return AudioProcessResponse(
                     mode="split",
@@ -663,9 +668,11 @@ async def process_audio(request: AudioProcessRequest):
                 
                 # Apply pitch shift to instrumental if requested (vocals already shifted via f0_up_key)
                 instrumental_final = instrumental
-                if request.pitch_shift_all and request.pitch_shift_all != 0:
-                    logger.info(f"Applying pitch shift of {request.pitch_shift_all} semitones to instrumental")
-                    instrumental_final = pitch_shift_audio(instrumental, 44100, request.pitch_shift_all)
+                instrumental_pitch = request.pitch_shift_all
+                if instrumental_pitch != 0:
+                    logger.info(f"Applying pitch shift of {instrumental_pitch} semitones to instrumental")
+                    instrumental_final = pitch_shift_audio(instrumental, 44100, instrumental_pitch)
+                    logger.info(f"Instrumental pitch shifted: shape={instrumental_final.shape}")
                 
                 # Step 3: Mix converted vocals with instrumental
                 # Ensure same length
