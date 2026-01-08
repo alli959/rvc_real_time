@@ -20,6 +20,7 @@ import {
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { useAuthContext } from './providers';
+import { Footer } from './footer';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -157,9 +158,12 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 lg:p-8 overflow-x-hidden">
-        <div className="max-w-6xl mx-auto">
+      <main className="flex-1 p-4 lg:p-8 overflow-x-hidden flex flex-col">
+        <div className="max-w-6xl mx-auto flex-1">
           {children}
+        </div>
+        <div className="hidden lg:block mt-8">
+          <Footer minimal />
         </div>
       </main>
 

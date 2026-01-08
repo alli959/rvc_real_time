@@ -1,6 +1,7 @@
 import Link from 'next/link';
-import { Sparkles, Zap, Shield, Mic2 } from 'lucide-react';
+import { Sparkles, Zap, Shield } from 'lucide-react';
 import { Navbar } from '@/components/navbar';
+import { Footer } from '@/components/footer';
 
 export default function Home() {
   return (
@@ -95,30 +96,7 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="py-8 px-4 border-t border-gray-800">
-        <div className="max-w-7xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <Mic2 className="h-6 w-6 text-primary-500" />
-            <span className="font-semibold">MorphVox</span>
-          </div>
-          <div className="text-center md:text-right">
-            <p className="text-gray-500 text-sm">
-              © {new Date().getFullYear()} MorphVox. All rights reserved.
-            </p>
-            <p className="text-gray-600 text-xs mt-1">
-              Created by{' '}
-              <a 
-                href="https://linkedin.com/in/alexander-gudmundsson" 
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="text-primary-400 hover:text-primary-300 transition-colors"
-              >
-                Alexander Guðmundsson
-              </a>
-            </p>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </main>
   );
 }

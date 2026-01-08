@@ -2,6 +2,7 @@
 
 import Link from 'next/link';
 import { Mic2, ArrowLeft } from 'lucide-react';
+import { Footer } from '@/components/footer';
 
 export default function PrivacyPolicyPage() {
   return (
@@ -195,15 +196,7 @@ export default function PrivacyPolicyPage() {
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-gray-800 mt-12 py-8">
-        <div className="max-w-4xl mx-auto px-4 text-center text-gray-500 text-sm">
-          <p>&copy; {new Date().getFullYear()} MorphVox. All rights reserved.</p>
-          <div className="flex justify-center gap-4 mt-4">
-            <Link href="/privacy" className="hover:text-white transition-colors">Privacy Policy</Link>
-            <Link href="/terms" className="hover:text-white transition-colors">Terms of Service</Link>
-          </div>
-        </div>
-      </footer>
+      <Footer />
     </div>
   );
 }
