@@ -5,6 +5,7 @@ use App\Http\Controllers\Admin\AdminAuthController;
 use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VoiceModelAdminController;
+use App\Http\Controllers\Admin\JobsAdminController;
 
 /**
  * Define admin routes once so we can mount them on:
@@ -39,6 +40,9 @@ $adminRoutes = function () {
         // Per-user access control for models
         Route::get('/voice-models/{voiceModel}/access', [VoiceModelAdminController::class, 'editAccess'])->name('models.access.edit');
         Route::put('/voice-models/{voiceModel}/access', [VoiceModelAdminController::class, 'updateAccess'])->name('models.access.update');
+
+        // Jobs queue
+        Route::get('/jobs', [JobsAdminController::class, 'index'])->name('jobs.index');
     });
 };
 

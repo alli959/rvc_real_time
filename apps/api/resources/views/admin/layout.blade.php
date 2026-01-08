@@ -72,6 +72,12 @@
           <i data-lucide="audio-waveform" class="w-5 h-5"></i>
           <span>Voice Models</span>
         </a>
+        
+        <a href="{{ route('admin.jobs.index') }}" 
+           class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('admin.jobs.*') ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white' }}">
+          <i data-lucide="list-music" class="w-5 h-5"></i>
+          <span>Jobs Queue</span>
+        </a>
       </nav>
 
       <!-- User Menu -->
