@@ -132,7 +132,131 @@ class TTSController extends Controller
     ];
 
     /**
-     * Get available TTS voices, styles, and languages
+     * Available emotion tags for inline text emotions
+     */
+    protected array $emotions = [
+        'positive' => [
+            'happy' => 'Cheerful, upbeat tone',
+            'excited' => 'Very enthusiastic',
+            'cheerful' => 'Light and positive',
+            'joyful' => 'Full of joy',
+        ],
+        'negative' => [
+            'sad' => 'Melancholic, slow',
+            'melancholy' => 'Deep sadness',
+            'depressed' => 'Very low energy',
+            'disappointed' => 'Let down feeling',
+        ],
+        'angry' => [
+            'angry' => 'Frustrated, intense',
+            'furious' => 'Very angry',
+            'annoyed' => 'Mildly irritated',
+            'frustrated' => 'Exasperated',
+        ],
+        'calm' => [
+            'calm' => 'Relaxed, peaceful',
+            'peaceful' => 'Very serene',
+            'relaxed' => 'At ease',
+            'neutral' => 'Standard tone',
+        ],
+        'surprised' => [
+            'surprised' => 'Caught off guard',
+            'shocked' => 'Very surprised',
+            'amazed' => 'In awe',
+        ],
+        'fear' => [
+            'scared' => 'Frightened',
+            'terrified' => 'Extremely scared',
+            'anxious' => 'Nervous, worried',
+            'nervous' => 'Slightly on edge',
+        ],
+        'special' => [
+            'whisper' => 'Quiet, secretive',
+            'shouting' => 'Loud, emphatic',
+            'sarcastic' => 'Ironic tone',
+            'romantic' => 'Soft, loving',
+            'serious' => 'Grave, important',
+            'playful' => 'Fun, teasing',
+            'dramatic' => 'Theatrical',
+            'mysterious' => 'Enigmatic',
+        ],
+        'voice_effects' => [
+            'robot' => 'Robotic/electronic voice (bitcrush + lowpass)',
+            'spooky' => 'Spooky/haunted voice (reverb + lowpass)',
+            'ethereal' => 'Ethereal/heavenly voice (reverb + highpass)',
+            'phone' => 'Phone call quality (bandpass filter)',
+            'radio' => 'Radio broadcast quality (bandpass + saturation)',
+            'megaphone' => 'Megaphone/PA system (bandpass + distortion)',
+            'echo' => 'Echoey room (reverb)',
+            'underwater' => 'Underwater/muffled (heavy lowpass)',
+        ],
+        'sounds' => [
+            // Laughs
+            'laugh' => 'Laughing (haha)',
+            'giggle' => 'Light giggle (hehe)',
+            'chuckle' => 'Soft laugh (heh)',
+            'snicker' => 'Suppressed laugh',
+            'cackle' => 'Witch-like laugh',
+            // Crying
+            'cry' => 'Crying sound',
+            'sob' => 'Deep sobbing',
+            'sniff' => 'Sniffling',
+            // Surprise/Fear
+            'gasp' => 'Gasp (aah!)',
+            'scream' => 'Screaming',
+            'shriek' => 'High scream',
+            // Pain/Discomfort
+            'groan' => 'Groaning (ugh)',
+            'moan' => 'Moaning',
+            'sigh' => 'Sighing (haaah)',
+            'yawn' => 'Yawning',
+            // Body sounds
+            'cough' => 'Coughing',
+            'sneeze' => 'Sneezing (achoo)',
+            'hiccup' => 'Hiccup',
+            'burp' => 'Burping',
+            'gulp' => 'Swallowing',
+            'slurp' => 'Slurping',
+            // Vocalizations
+            'growl' => 'Growling (grrr)',
+            'hiss' => 'Hissing (ssss)',
+            'hum' => 'Humming',
+            'whistle' => 'Whistling',
+            'shush' => 'Shushing (shhh)',
+            'kiss' => 'Kiss (mwah)',
+            'blow' => 'Blowing air',
+            // Breathing
+            'pant' => 'Heavy panting',
+            'breathe' => 'Deep breath',
+            'inhale' => 'Inhaling',
+            'exhale' => 'Exhaling',
+            // Speech patterns
+            'stutter' => 'Stuttering',
+            'mumble' => 'Mumbling',
+            'stammer' => 'Stammering',
+            // Thinking
+            'hmm' => 'Thinking (hmm)',
+            'uhh' => 'Hesitation (uhh)',
+            'umm' => 'Filler (umm)',
+            // Reactions
+            'wow' => 'Amazement (wow)',
+            'ooh' => 'Interest (ooh)',
+            'ahh' => 'Realization (ahh)',
+            'ugh' => 'Disgust (ugh)',
+            'eww' => 'Grossed out',
+            'yay' => 'Celebration (yay!)',
+            'boo' => 'Disapproval',
+            'woohoo' => 'Excitement (woohoo!)',
+            'ow' => 'Pain (ow)',
+            'ouch' => 'Pain (ouch)',
+            'phew' => 'Relief (phew)',
+            'tsk' => 'Disapproval (tsk tsk)',
+            'psst' => 'Getting attention (psst)',
+        ],
+    ];
+
+    /**
+     * Get available TTS voices, styles, languages, and emotions
      */
     public function getVoices()
     {
@@ -157,6 +281,21 @@ class TTSController extends Controller
             'voices' => $voices,
             'styles' => $styles,
             'languages' => $languages,
+            'emotions' => $this->emotions,
+            'emotionUsage' => [
+                'tagged' => '[emotion]Your text here[/emotion]',
+                'soundBracket' => '[laugh]',
+                'soundAsterisk' => '*laugh*',
+                'soundParen' => '(sigh)',
+            ],
+            'emotionExamples' => [
+                '[happy]I am so excited to see you![/happy]',
+                '[sad]I miss you so much[/sad]',
+                'Hello! *laugh* That was funny!',
+                '[whisper]This is a secret[/whisper]',
+                'Oh no! (gasp) What happened?',
+                '[excited]We won the game![/excited] [laugh]',
+            ],
         ]);
     }
 
@@ -164,13 +303,18 @@ class TTSController extends Controller
      * Generate TTS audio, optionally with voice conversion
      * 
      * Request body:
-     * - text: The text to convert to speech (required)
+     * - text: The text to convert to speech (required, supports emotion tags)
      * - voice: Edge TTS voice ID (default: en-US-GuyNeural)
      * - style: Speaking style/emotion (default: default)
      * - rate: Speech rate adjustment (-50% to +50%, default: 0%)
      * - pitch: Pitch adjustment (-50Hz to +50Hz, default: 0Hz)
      * - voice_model_id: Optional voice model ID for RVC conversion
      * - f0_up_key: Pitch shift for RVC (-12 to 12, default: 0)
+     * 
+     * Emotion tags in text:
+     * - [happy]Hello![/happy] - Tagged sections with emotions
+     * - [laugh] or *laugh* or (laugh) - Sound effects
+     * - [whisper]Secret[/whisper] - Special effects
      */
     public function generate(Request $request)
     {
@@ -185,6 +329,7 @@ class TTSController extends Controller
             'voice_model_id' => 'nullable|integer|exists:voice_models,id',
             'f0_up_key' => 'nullable|integer|min:-12|max:12',
             'index_rate' => 'nullable|numeric|min:0|max:1',
+            'apply_effects' => 'nullable|string|max:50', // Audio effect to apply after conversion
         ]);
 
         $text = $validated['text'];
@@ -274,14 +419,21 @@ class TTSController extends Controller
                 }
 
                 // Send to voice engine for conversion
-                $convertResponse = Http::timeout(120)->post("{$voiceEngineUrl}/convert", [
+                $convertPayload = [
                     'audio' => $audioBase64,
                     'sample_rate' => $sampleRate,
                     'model_path' => $voiceModel->model_path,
                     'index_path' => $voiceModel->index_path,
                     'f0_up_key' => $validated['f0_up_key'] ?? 0,
                     'index_rate' => $validated['index_rate'] ?? 0.75,
-                ]);
+                ];
+                
+                // Add audio effects if specified (applies after voice conversion)
+                if (!empty($validated['apply_effects'])) {
+                    $convertPayload['apply_effects'] = $validated['apply_effects'];
+                }
+                
+                $convertResponse = Http::timeout(120)->post("{$voiceEngineUrl}/convert", $convertPayload);
 
                 if (!$convertResponse->successful()) {
                     $job->update([
