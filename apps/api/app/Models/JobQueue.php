@@ -62,6 +62,9 @@ class JobQueue extends Model
     const TYPE_TRAINING = 'training';
     const TYPE_PREPROCESSING = 'preprocessing';
     const TYPE_TTS = 'tts';
+    const TYPE_AUDIO_CONVERT = 'audio_convert';
+    const TYPE_AUDIO_SPLIT = 'audio_split';
+    const TYPE_AUDIO_SWAP = 'audio_swap';
 
     // Relationships
     public function user(): BelongsTo

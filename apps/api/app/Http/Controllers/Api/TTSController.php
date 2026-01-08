@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Api;
 use App\Http\Controllers\Controller;
 use App\Models\VoiceModel;
 use App\Models\UsageEvent;
+use App\Models\JobQueue;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Storage;
@@ -200,6 +201,29 @@ class TTSController extends Controller
             ], 422);
         }
 
+        // Create job record
+        $voiceModel = !empty($validated['voice_model_id']) 
+            ? VoiceModel::find($validated['voice_model_id']) 
+            : null;
+
+        $job = JobQueue::create([
+            'user_id' => $user->id,
+            'voice_model_id' => $voiceModel?->id,
+            'type' => JobQueue::TYPE_TTS,
+            'status' => JobQueue::STATUS_PROCESSING,
+            'parameters' => [
+                'text' => $text,
+                'voice' => $voice,
+                'style' => $style,
+                'rate' => $rate,
+                'pitch' => $pitch,
+                'f0_up_key' => $validated['f0_up_key'] ?? 0,
+                'index_rate' => $validated['index_rate'] ?? 0.75,
+                'with_conversion' => !empty($validated['voice_model_id']),
+            ],
+            'started_at' => now(),
+        ]);
+
         try {
             // Generate TTS audio using voice engine
             $voiceEngineUrl = config('services.voice_engine.base_url', 'http://localhost:8001');
@@ -213,9 +237,17 @@ class TTSController extends Controller
             ]);
 
             if (!$ttsResponse->successful()) {
+                $job->update([
+                    'status' => JobQueue::STATUS_FAILED,
+                    'error_message' => 'TTS generation failed',
+                    'error_details' => ['response' => $ttsResponse->json()],
+                    'completed_at' => now(),
+                ]);
+
                 return response()->json([
                     'error' => 'TTS generation failed',
                     'message' => $ttsResponse->json('error') ?? 'Unknown error',
+                    'job_id' => $job->uuid,
                 ], 500);
             }
 
@@ -223,9 +255,7 @@ class TTSController extends Controller
             $sampleRate = $ttsResponse->json('sample_rate', 24000);
 
             // If voice model specified, apply RVC conversion
-            if (!empty($validated['voice_model_id'])) {
-                $voiceModel = VoiceModel::findOrFail($validated['voice_model_id']);
-                
+            if ($voiceModel) {
                 // Check access
                 if (!$voiceModel->isPublic() && !$voiceModel->isOwnedBy($user)) {
                     $hasPermission = $voiceModel->permittedUsers()
@@ -234,7 +264,12 @@ class TTSController extends Controller
                         ->exists();
                     
                     if (!$hasPermission && !$user->hasRole('admin')) {
-                        return response()->json(['error' => 'Access denied to voice model'], 403);
+                        $job->update([
+                            'status' => JobQueue::STATUS_FAILED,
+                            'error_message' => 'Access denied to voice model',
+                            'completed_at' => now(),
+                        ]);
+                        return response()->json(['error' => 'Access denied to voice model', 'job_id' => $job->uuid], 403);
                     }
                 }
 
@@ -249,9 +284,17 @@ class TTSController extends Controller
                 ]);
 
                 if (!$convertResponse->successful()) {
+                    $job->update([
+                        'status' => JobQueue::STATUS_FAILED,
+                        'error_message' => 'Voice conversion failed',
+                        'error_details' => ['response' => $convertResponse->json()],
+                        'completed_at' => now(),
+                    ]);
+
                     return response()->json([
                         'error' => 'Voice conversion failed',
                         'message' => $convertResponse->json('error') ?? 'Unknown error',
+                        'job_id' => $job->uuid,
                     ], 500);
                 }
 
@@ -266,6 +309,13 @@ class TTSController extends Controller
                 UsageEvent::recordTTS($user->id, null, strlen($text), false);
             }
 
+            // Mark job as completed
+            $job->update([
+                'status' => JobQueue::STATUS_COMPLETED,
+                'completed_at' => now(),
+                'progress' => 100,
+            ]);
+
             return response()->json([
                 'audio' => $audioBase64,
                 'sample_rate' => $sampleRate,
@@ -274,12 +324,20 @@ class TTSController extends Controller
                 'voice' => $voice,
                 'style' => $style,
                 'converted' => !empty($validated['voice_model_id']),
+                'job_id' => $job->uuid,
             ]);
 
         } catch (\Exception $e) {
+            $job->update([
+                'status' => JobQueue::STATUS_FAILED,
+                'error_message' => $e->getMessage(),
+                'completed_at' => now(),
+            ]);
+
             return response()->json([
                 'error' => 'TTS generation failed',
                 'message' => $e->getMessage(),
+                'job_id' => $job->uuid,
             ], 500);
         }
     }

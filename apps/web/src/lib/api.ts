@@ -556,58 +556,25 @@ export interface AudioProcessResponse {
   converted?: string; // Base64 encoded
   sample_rate: number;
   format: string;
+  job_id?: string; // Job tracking ID
 }
-
-// Voice engine API - in production, goes through nginx at /voice-engine/
-// In development, connects directly to localhost:8001
-const voiceEngineUrl = process.env.NEXT_PUBLIC_VOICE_ENGINE_API_URL || 
-  (typeof window !== 'undefined' && window.location.hostname !== 'localhost' 
-    ? `${window.location.origin}/voice-engine` 
-    : 'http://localhost:8001');
 
 export const audioProcessingApi = {
   /**
-   * Process audio with various modes
+   * Process audio with various modes (calls Laravel backend for job tracking)
    */
   process: async (request: AudioProcessRequest): Promise<AudioProcessResponse> => {
-    // First, get model path from API if model_id provided
-    let modelPath: string | undefined;
-    let indexPath: string | undefined;
-    
-    if (request.model_id && (request.mode === 'convert' || request.mode === 'swap')) {
-      try {
-        const modelData = await voiceModelsApi.get(request.model_id.toString());
-        modelPath = modelData.model?.model_path || undefined;
-        indexPath = modelData.model?.index_path || undefined;
-      } catch (err) {
-        console.error('Failed to get model paths:', err);
-        throw new Error('Failed to load voice model information');
-      }
-    }
-    
-    // Call voice engine directly
-    const response = await fetch(`${voiceEngineUrl}/audio/process`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        audio: request.audio,
-        sample_rate: request.sample_rate || 44100,
-        mode: request.mode,
-        model_path: modelPath,
-        index_path: indexPath,
-        f0_up_key: request.f0_up_key || 0,
-        index_rate: request.index_rate || 0.75,
-        pitch_shift_all: request.pitch_shift_all || 0,
-      }),
+    // Call Laravel API which handles job recording and forwards to voice engine
+    const response = await api.post('/audio/process', {
+      audio: request.audio,
+      sample_rate: request.sample_rate || 44100,
+      mode: request.mode,
+      model_id: request.model_id,
+      f0_up_key: request.f0_up_key || 0,
+      index_rate: request.index_rate || 0.75,
+      pitch_shift_all: request.pitch_shift_all || 0,
     });
     
-    if (!response.ok) {
-      const error = await response.json().catch(() => ({ detail: 'Processing failed' }));
-      throw new Error(error.detail || 'Audio processing failed');
-    }
-    
-    return response.json();
+    return response.data;
   },
 };
