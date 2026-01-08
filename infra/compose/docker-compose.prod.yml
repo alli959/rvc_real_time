@@ -176,8 +176,8 @@ services:
       SESSION_DRIVER: redis
       SESSION_DOMAIN: .${DOMAIN}
       
-      # Sanctum stateful domains for production
-      SANCTUM_STATEFUL_DOMAINS: ${DOMAIN},www.${DOMAIN},api.${DOMAIN}
+      # Sanctum stateful domains - empty for stateless API with Bearer tokens
+      # SANCTUM_STATEFUL_DOMAINS: (disabled - using stateless Bearer token auth)
       
       # CORS allowed origins for production
       CORS_ALLOWED_ORIGINS: https://${DOMAIN},https://www.${DOMAIN},https://api.${DOMAIN}
