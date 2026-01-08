@@ -191,4 +191,70 @@ class JobController extends Controller
             'upload_url' => $uploadUrl,
         ]);
     }
+
+    /**
+     * Admin: List all jobs across all users
+     */
+    public function adminIndex(Request $request)
+    {
+        $query = JobQueue::with(['user:id,name,email', 'voiceModel:id,uuid,name,slug']);
+
+        // Filter by status
+        if ($request->filled('status')) {
+            $query->where('status', $request->status);
+        }
+
+        // Filter by type
+        if ($request->filled('type')) {
+            $query->where('type', $request->type);
+        }
+
+        // Filter by user
+        if ($request->filled('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
+
+        // Search by user email or name
+        if ($request->filled('search')) {
+            $search = $request->search;
+            $query->whereHas('user', function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                  ->orWhere('email', 'like', "%{$search}%");
+            });
+        }
+
+        $jobs = $query->orderBy('created_at', 'desc')
+            ->paginate($request->get('per_page', 20));
+
+        return response()->json($jobs);
+    }
+
+    /**
+     * Admin: Get system statistics
+     */
+    public function systemStats(Request $request)
+    {
+        $stats = [
+            'total_jobs' => JobQueue::count(),
+            'jobs_by_status' => [
+                'pending' => JobQueue::where('status', JobQueue::STATUS_PENDING)->count(),
+                'queued' => JobQueue::where('status', JobQueue::STATUS_QUEUED)->count(),
+                'processing' => JobQueue::where('status', JobQueue::STATUS_PROCESSING)->count(),
+                'completed' => JobQueue::where('status', JobQueue::STATUS_COMPLETED)->count(),
+                'failed' => JobQueue::where('status', JobQueue::STATUS_FAILED)->count(),
+                'cancelled' => JobQueue::where('status', JobQueue::STATUS_CANCELLED)->count(),
+            ],
+            'jobs_by_type' => JobQueue::selectRaw('type, COUNT(*) as count')
+                ->groupBy('type')
+                ->pluck('count', 'type'),
+            'jobs_today' => JobQueue::whereDate('created_at', today())->count(),
+            'jobs_this_week' => JobQueue::whereBetween('created_at', [now()->startOfWeek(), now()])->count(),
+            'recent_jobs' => JobQueue::with(['user:id,name,email', 'voiceModel:id,name'])
+                ->orderBy('created_at', 'desc')
+                ->limit(10)
+                ->get(),
+        ];
+
+        return response()->json($stats);
+    }
 }
