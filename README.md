@@ -187,9 +187,8 @@ MIT License - See LICENSE file for details.
 **Alexander Guðmundsson**
 
 - 🌐 Website: [morphvox.net](https://morphvox.net)
-- 💬 Discord: [alexanderg](https://discord.com/users/alexanderg)
-- 💼 LinkedIn: [Alexander Guðmundsson](https://linkedin.com/in/alexander-gudmundsson)
-- 🐙 GitHub: [alexanderg](https://github.com/alexanderg)
+- 💼 LinkedIn: [Alexander Guðmundsson]([https://linkedin.com/in/alexander-gudmundsson](https://www.linkedin.com/in/alexander-gu%C3%B0mundsson-053200189/))
+- 🐙 GitHub: [alexanderg](https://github.com/alli959)
 
 ---
 
