@@ -2,7 +2,7 @@
 HTTP API Server for Voice Engine
 
 Provides REST API endpoints for:
-- Text-to-Speech (TTS) generation using Edge TTS
+- Text-to-Speech (TTS) generation using Edge TTS with emotion support
 - Voice conversion using RVC models
 - Health checks and model listing
 """
@@ -14,9 +14,10 @@ import base64
 import io
 import logging
 import os
+import re
 import tempfile
 from pathlib import Path
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Dict, List
 
 import numpy as np
 import soundfile as sf
@@ -81,10 +82,22 @@ class ConvertRequest(BaseModel):
     index_path: Optional[str] = Field(default=None, description="Path to .index file")
     f0_up_key: int = Field(default=0, description="Pitch shift (-12 to 12)")
     f0_method: str = Field(default="rmvpe", description="F0 extraction method")
-    index_rate: float = Field(default=0.75, description="Index blend rate")
-    filter_radius: int = Field(default=3, description="Filter radius")
-    rms_mix_rate: float = Field(default=0.25, description="RMS mix rate")
-    protect: float = Field(default=0.33, description="Protect rate")
+    # Adjusted defaults for more natural sound
+    index_rate: float = Field(default=0.5, description="Index blend rate (0.0-1.0, lower=more natural, higher=more like target)")
+    filter_radius: int = Field(default=3, description="Filter radius (0-7)")
+    rms_mix_rate: float = Field(default=0.2, description="RMS mix rate (0.0-1.0, lower=keep original dynamics)")
+    protect: float = Field(default=0.4, description="Protect consonants (0.0-0.5, higher=more natural speech)")
+    # Quality preset option
+    quality_preset: Optional[str] = Field(default=None, description="Quality preset: 'natural', 'balanced', 'accurate', or None for custom")
+    # Post-conversion audio effects
+    apply_effects: Optional[str] = Field(default=None, description="Emotion/effect name to apply after conversion (e.g. 'robot', 'whisper', 'terrified')")
+
+
+class ApplyEffectsRequest(BaseModel):
+    """Request to apply audio effects to existing audio"""
+    audio: str = Field(..., description="Base64 encoded audio data")
+    sample_rate: int = Field(default=16000, description="Input sample rate")
+    effect: str = Field(..., description="Effect name to apply (e.g. 'robot', 'whisper', 'terrified')")
 
 
 class ConvertResponse(BaseModel):
@@ -102,8 +115,460 @@ class HealthResponse(BaseModel):
 
 
 # =============================================================================
-# Edge TTS Integration
+# Edge TTS Integration with Emotion Support
 # =============================================================================
+
+# Emotion presets - adjust prosody to simulate emotions
+# Format: (rate_adjustment, pitch_adjustment, description)
+EMOTION_PRESETS: Dict[str, Dict[str, str]] = {
+    # Happy / Positive emotions
+    'happy': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Cheerful, upbeat tone'},
+    'excited': {'rate': '+20%', 'pitch': '+10Hz', 'desc': 'Very enthusiastic'},
+    'cheerful': {'rate': '+15%', 'pitch': '+8Hz', 'desc': 'Light and positive'},
+    'joyful': {'rate': '+10%', 'pitch': '+7Hz', 'desc': 'Full of joy'},
+    
+    # Sad / Negative emotions
+    'sad': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Melancholic, slow'},
+    'melancholy': {'rate': '-20%', 'pitch': '-8Hz', 'desc': 'Deep sadness'},
+    'depressed': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'Very low energy'},
+    'disappointed': {'rate': '-10%', 'pitch': '-3Hz', 'desc': 'Let down feeling'},
+    
+    # Angry / Intense emotions
+    'angry': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Frustrated, intense'},
+    'furious': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Very angry'},
+    'annoyed': {'rate': '+3%', 'pitch': '+2Hz', 'desc': 'Mildly irritated'},
+    'frustrated': {'rate': '+5%', 'pitch': '+2Hz', 'desc': 'Exasperated'},
+    
+    # Calm / Neutral emotions
+    'calm': {'rate': '-10%', 'pitch': '-2Hz', 'desc': 'Relaxed, peaceful'},
+    'peaceful': {'rate': '-15%', 'pitch': '-3Hz', 'desc': 'Very serene'},
+    'relaxed': {'rate': '-12%', 'pitch': '-2Hz', 'desc': 'At ease'},
+    'neutral': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Standard tone'},
+    
+    # Surprised / Shocked emotions
+    'surprised': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Caught off guard'},
+    'shocked': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Very surprised'},
+    'amazed': {'rate': '+10%', 'pitch': '+10Hz', 'desc': 'In awe'},
+    
+    # Fear / Anxiety emotions
+    'scared': {'rate': '+10%', 'pitch': '+8Hz', 'desc': 'Frightened'},
+    'terrified': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Extremely scared'},
+    'anxious': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Nervous, worried'},
+    'nervous': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Slightly on edge'},
+    
+    # Special expressions
+    'whisper': {'rate': '-20%', 'pitch': '-15Hz', 'desc': 'Quiet, secretive'},
+    'shouting': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Loud, emphatic'},
+    'sarcastic': {'rate': '-5%', 'pitch': '+5Hz', 'desc': 'Ironic tone'},
+    'romantic': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Soft, loving'},
+    'serious': {'rate': '-8%', 'pitch': '-3Hz', 'desc': 'Grave, important'},
+    'playful': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Fun, teasing'},
+    'dramatic': {'rate': '-10%', 'pitch': '+5Hz', 'desc': 'Theatrical'},
+    'mysterious': {'rate': '-15%', 'pitch': '-8Hz', 'desc': 'Enigmatic'},
+    
+    # Actions / Sounds (simulated via text and prosody)
+    'laugh': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Laughing sound'},
+    'laughing': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Laughing sound'},
+    'giggle': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Light giggling'},
+    'chuckle': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Soft laugh'},
+    'snicker': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Suppressed laugh'},
+    'cackle': {'rate': '+18%', 'pitch': '+12Hz', 'desc': 'Witch-like laugh'},
+    'sigh': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'Exhale sound'},
+    'gasp': {'rate': '+25%', 'pitch': '+15Hz', 'desc': 'Sharp intake'},
+    'yawn': {'rate': '-30%', 'pitch': '-15Hz', 'desc': 'Tired sound'},
+    'cry': {'rate': '-15%', 'pitch': '+3Hz', 'desc': 'Sobbing'},
+    'crying': {'rate': '-15%', 'pitch': '+3Hz', 'desc': 'Sobbing'},
+    'sob': {'rate': '-20%', 'pitch': '+5Hz', 'desc': 'Deep crying'},
+    'sniff': {'rate': '-10%', 'pitch': '+2Hz', 'desc': 'Sniffling'},
+    'groan': {'rate': '-20%', 'pitch': '-12Hz', 'desc': 'Pain/frustration'},
+    'moan': {'rate': '-25%', 'pitch': '-8Hz', 'desc': 'Discomfort sound'},
+    'scream': {'rate': '+30%', 'pitch': '+25Hz', 'desc': 'Screaming'},
+    'shriek': {'rate': '+35%', 'pitch': '+30Hz', 'desc': 'High pitched scream'},
+    'growl': {'rate': '-15%', 'pitch': '-20Hz', 'desc': 'Angry growl'},
+    'hum': {'rate': '-20%', 'pitch': '+0Hz', 'desc': 'Humming'},
+    'cough': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Coughing'},
+    'sneeze': {'rate': '+20%', 'pitch': '+10Hz', 'desc': 'Sneezing'},
+    'hiccup': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Hiccuping'},
+    'burp': {'rate': '-10%', 'pitch': '-15Hz', 'desc': 'Burping'},
+    'gulp': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Swallowing'},
+    'slurp': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Slurping'},
+    'whistle': {'rate': '+10%', 'pitch': '+20Hz', 'desc': 'Whistling'},
+    'hiss': {'rate': '+5%', 'pitch': '+15Hz', 'desc': 'Hissing sound'},
+    'shush': {'rate': '-15%', 'pitch': '+5Hz', 'desc': 'Shushing'},
+    'clap': {'rate': '+10%', 'pitch': '+8Hz', 'desc': 'Clapping'},
+    'snap': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Finger snap'},
+    'kiss': {'rate': '-10%', 'pitch': '+8Hz', 'desc': 'Kiss sound'},
+    'blow': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Blowing air'},
+    'pant': {'rate': '+20%', 'pitch': '+5Hz', 'desc': 'Heavy breathing'},
+    'breathe': {'rate': '-20%', 'pitch': '-5Hz', 'desc': 'Deep breath'},
+    'inhale': {'rate': '-15%', 'pitch': '+3Hz', 'desc': 'Breathing in'},
+    'exhale': {'rate': '-20%', 'pitch': '-5Hz', 'desc': 'Breathing out'},
+    'stutter': {'rate': '-5%', 'pitch': '+3Hz', 'desc': 'Stuttering'},
+    'mumble': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Mumbling'},
+    'stammer': {'rate': '-8%', 'pitch': '+2Hz', 'desc': 'Stammering'},
+    
+    # Thinking sounds
+    'hmm': {'rate': '-15%', 'pitch': '+0Hz', 'desc': 'Thinking sound'},
+    'thinking': {'rate': '-20%', 'pitch': '-3Hz', 'desc': 'Deep in thought'},
+    'uhh': {'rate': '-10%', 'pitch': '+0Hz', 'desc': 'Hesitation'},
+    'umm': {'rate': '-10%', 'pitch': '+0Hz', 'desc': 'Pause filler'},
+    
+    # Reactions
+    'wow': {'rate': '+10%', 'pitch': '+12Hz', 'desc': 'Impressed'},
+    'ooh': {'rate': '+5%', 'pitch': '+10Hz', 'desc': 'Intrigued'},
+    'ahh': {'rate': '-5%', 'pitch': '+5Hz', 'desc': 'Realization'},
+    'ugh': {'rate': '-10%', 'pitch': '-8Hz', 'desc': 'Disgusted'},
+    'eww': {'rate': '+5%', 'pitch': '+8Hz', 'desc': 'Grossed out'},
+    'yay': {'rate': '+25%', 'pitch': '+15Hz', 'desc': 'Celebration'},
+    'boo': {'rate': '-5%', 'pitch': '-5Hz', 'desc': 'Disapproval'},
+    'woohoo': {'rate': '+30%', 'pitch': '+20Hz', 'desc': 'Excitement'},
+    'ow': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Pain'},
+    'ouch': {'rate': '+20%', 'pitch': '+12Hz', 'desc': 'Sharp pain'},
+    'phew': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Relief'},
+    'tsk': {'rate': '+5%', 'pitch': '+5Hz', 'desc': 'Disapproval click'},
+    'psst': {'rate': '-20%', 'pitch': '+10Hz', 'desc': 'Getting attention quietly'},
+    
+    # Special voice effects (with audio processing)
+    'robot': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Robotic voice effect'},
+    'spooky': {'rate': '-15%', 'pitch': '-10Hz', 'desc': 'Spooky/haunted voice'},
+    'ethereal': {'rate': '-10%', 'pitch': '+5Hz', 'desc': 'Ethereal/heavenly voice'},
+    'phone': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Phone call quality'},
+    'radio': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Radio broadcast quality'},
+    'megaphone': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Megaphone/PA system'},
+    'echo': {'rate': '-5%', 'pitch': '+0Hz', 'desc': 'Echoey room'},
+    'underwater': {'rate': '-10%', 'pitch': '-5Hz', 'desc': 'Underwater/muffled'},
+}
+
+# Sound effect text replacements (what the TTS will say for actions)
+SOUND_REPLACEMENTS: Dict[str, str] = {
+    # Laughs
+    'laugh': 'haha haha',
+    'laughing': 'hahaha haha',
+    'giggle': 'hehe hehe',
+    'chuckle': 'heh heh heh',
+    'snicker': 'heh heh',
+    'cackle': 'ah hahaha haha',
+    
+    # Crying/Sadness
+    'cry': 'huuu huuu',
+    'crying': 'huuu huuu huuu',
+    'sob': 'huuuh huuuh',
+    'sniff': 'sniff sniff',
+    
+    # Surprise/Fear
+    'gasp': 'aah!',
+    'scream': 'aaaah!',
+    'shriek': 'eeeek!',
+    
+    # Pain/Discomfort  
+    'groan': 'uuugh',
+    'moan': 'mmmmh',
+    'sigh': 'haaaah',
+    'yawn': 'aaaahhh',
+    
+    # Body sounds
+    'cough': 'ahem ahem',
+    'sneeze': 'achoo!',
+    'hiccup': 'hic!',
+    'burp': 'burrrp',
+    'gulp': 'gulp',
+    'slurp': 'slurrrp',
+    
+    # Other vocalizations
+    'growl': 'grrrrr',
+    'hiss': 'ssssss',
+    'hum': 'hmm hmm hmm',
+    'whistle': 'wheeew',
+    'shush': 'shhhh',
+    'kiss': 'mwah',
+    'blow': 'fwooo',
+    
+    # Breathing
+    'pant': 'hah hah hah',
+    'breathe': 'hhhhhh',
+    'inhale': 'hhhhh',
+    'exhale': 'haaaah',
+    
+    # Speech patterns
+    'stutter': 'I I I',
+    'mumble': 'mmm mmm',
+    'stammer': 'uh uh um',
+    
+    # Thinking
+    'hmm': 'hmmm',
+    'thinking': 'hmmmm',
+    'uhh': 'uhhh',
+    'umm': 'ummm',
+    
+    # Reactions
+    'clap': 'clap clap clap',
+    'snap': 'snap',
+    'wow': 'woooow',
+    'ooh': 'oooooh',
+    'ahh': 'aaaaaah',
+    'ugh': 'uuugh',
+    'eww': 'eeeww',
+    'yay': 'yaaaaay',
+    'boo': 'boooo',
+    'woohoo': 'woo hoo!',
+    'ow': 'ow ow ow',
+    'ouch': 'ouch!',
+    'phew': 'pheeew',
+    'tsk': 'tsk tsk tsk',
+    'psst': 'psssst',
+    'thinking': 'hmmmm',
+}
+
+# =============================================================================
+# Audio Effects for Enhanced Emotion Expression
+# =============================================================================
+
+# Audio effects to apply per emotion (processed after TTS generation)
+# Uses scipy/numpy for DSP - no external dependencies needed
+EMOTION_EFFECTS: Dict[str, Dict] = {
+    # Whisper: quieter, slight high-pass to remove rumble
+    'whisper': {'volume': 0.6, 'highpass': 200},
+    'mysterious': {'volume': 0.7, 'reverb': 0.3, 'lowpass': 6000},
+    
+    # Shouting/Angry: louder, slight distortion/saturation
+    'shouting': {'volume': 1.4, 'saturation': 0.2},
+    'angry': {'volume': 1.2, 'saturation': 0.1},
+    'furious': {'volume': 1.3, 'saturation': 0.15},
+    
+    # Scared: tremolo effect (volume wobble)
+    'scared': {'tremolo': {'rate': 6, 'depth': 0.15}},
+    'terrified': {'tremolo': {'rate': 8, 'depth': 0.25}},
+    'nervous': {'tremolo': {'rate': 4, 'depth': 0.1}},
+    'anxious': {'tremolo': {'rate': 5, 'depth': 0.12}},
+    
+    # Sad: slightly quieter, subtle lowpass
+    'sad': {'volume': 0.85, 'lowpass': 7000},
+    'melancholy': {'volume': 0.8, 'lowpass': 6500},
+    'depressed': {'volume': 0.75, 'lowpass': 6000},
+    
+    # Dramatic: reverb for theater effect
+    'dramatic': {'reverb': 0.25},
+    
+    # Robot/electronic effect (for fun)
+    'robot': {'bitcrush': 8, 'lowpass': 4000},
+    
+    # Echo for spooky
+    'spooky': {'reverb': 0.4, 'lowpass': 5000, 'volume': 0.9},
+    'ethereal': {'reverb': 0.5, 'highpass': 300},
+    
+    # Phone/radio effect
+    'phone': {'lowpass': 3400, 'highpass': 300, 'volume': 0.9},
+    'radio': {'lowpass': 4000, 'highpass': 200, 'saturation': 0.1},
+    
+    # Megaphone
+    'megaphone': {'lowpass': 5000, 'highpass': 400, 'saturation': 0.2, 'volume': 1.2},
+    
+    # Echo/reverb
+    'echo': {'reverb': 0.35},
+    
+    # Underwater (heavy lowpass, slight pitch warble)
+    'underwater': {'lowpass': 1500, 'volume': 0.85, 'reverb': 0.2},
+}
+
+
+def apply_audio_effects(audio_data: np.ndarray, sample_rate: int, effects: Dict) -> np.ndarray:
+    """
+    Apply audio effects to numpy audio data.
+    
+    Supported effects:
+    - volume: Multiply amplitude (0.0-2.0)
+    - lowpass: Low-pass filter cutoff frequency in Hz
+    - highpass: High-pass filter cutoff frequency in Hz
+    - saturation: Soft clipping (0.0-1.0)
+    - tremolo: Volume wobble {'rate': Hz, 'depth': 0.0-1.0}
+    - reverb: Simple reverb amount (0.0-1.0)
+    - bitcrush: Bit depth reduction (1-16)
+    """
+    from scipy import signal as scipy_signal
+    
+    if not effects:
+        return audio_data
+    
+    audio = audio_data.astype(np.float32)
+    
+    # Normalize to -1 to 1 range if needed
+    max_val = np.max(np.abs(audio))
+    if max_val > 1.0:
+        audio = audio / max_val
+    
+    # High-pass filter (remove low rumble)
+    if 'highpass' in effects:
+        cutoff = effects['highpass']
+        nyquist = sample_rate / 2
+        if cutoff < nyquist:
+            b, a = scipy_signal.butter(2, cutoff / nyquist, btype='high')
+            audio = scipy_signal.filtfilt(b, a, audio)
+    
+    # Low-pass filter (muffle sound)
+    if 'lowpass' in effects:
+        cutoff = effects['lowpass']
+        nyquist = sample_rate / 2
+        if cutoff < nyquist:
+            b, a = scipy_signal.butter(2, cutoff / nyquist, btype='low')
+            audio = scipy_signal.filtfilt(b, a, audio)
+    
+    # Saturation (soft clipping for angry/distorted sound)
+    if 'saturation' in effects:
+        amount = effects['saturation']
+        # Soft clipping using tanh
+        audio = np.tanh(audio * (1 + amount * 3)) / np.tanh(1 + amount * 3)
+    
+    # Tremolo (volume wobble for scared/nervous)
+    if 'tremolo' in effects:
+        rate = effects['tremolo'].get('rate', 5)  # Hz
+        depth = effects['tremolo'].get('depth', 0.2)  # 0-1
+        t = np.arange(len(audio)) / sample_rate
+        modulation = 1 - depth * (0.5 + 0.5 * np.sin(2 * np.pi * rate * t))
+        audio = audio * modulation
+    
+    # Simple reverb (convolution with exponential decay)
+    if 'reverb' in effects:
+        amount = effects['reverb']
+        reverb_time = 0.3  # seconds
+        reverb_samples = int(reverb_time * sample_rate)
+        impulse = np.exp(-np.linspace(0, 5, reverb_samples))
+        impulse = impulse / np.sum(impulse)  # Normalize
+        reverb_signal = np.convolve(audio, impulse, mode='full')[:len(audio)]
+        audio = audio * (1 - amount) + reverb_signal * amount
+    
+    # Bitcrush (lo-fi effect)
+    if 'bitcrush' in effects:
+        bits = effects['bitcrush']
+        levels = 2 ** bits
+        audio = np.round(audio * levels) / levels
+    
+    # Volume adjustment (apply last)
+    if 'volume' in effects:
+        audio = audio * effects['volume']
+    
+    # Clip to prevent distortion
+    audio = np.clip(audio, -1.0, 1.0)
+    
+    return audio
+
+
+def get_emotion_effects(emotion: Optional[str]) -> Dict:
+    """Get audio effects for an emotion."""
+    if not emotion:
+        return {}
+    return EMOTION_EFFECTS.get(emotion.lower(), {})
+
+
+def parse_emotion_tags(text: str) -> List[Dict]:
+    """
+    Parse text with emotion tags and return segments with their emotions.
+    
+    Supported formats:
+    - [happy] text [/happy] - Tagged sections
+    - [laugh] - Sound effects (self-closing)
+    - *laughing* - Action asterisks
+    - (sigh) - Parenthetical actions
+    
+    Returns list of segments: [{'text': str, 'emotion': str or None}, ...]
+    """
+    segments = []
+    
+    # Pattern for [emotion] text [/emotion] or [emotion/]
+    tag_pattern = r'\[(\w+)\](.*?)\[/\1\]|\[(\w+)/?\]'
+    # Pattern for *action* 
+    action_pattern = r'\*(\w+)\*'
+    # Pattern for (action)
+    paren_pattern = r'\((\w+)\)'
+    
+    # Combined pattern to find all emotion markers
+    combined_pattern = r'\[(\w+)\](.*?)\[/\1\]|\[(\w+)/?\]|\*(\w+)\*|\((\w+)\)'
+    
+    last_end = 0
+    
+    for match in re.finditer(combined_pattern, text, re.IGNORECASE | re.DOTALL):
+        # Add any text before this match as neutral
+        if match.start() > last_end:
+            plain_text = text[last_end:match.start()].strip()
+            if plain_text:
+                segments.append({'text': plain_text, 'emotion': None})
+        
+        # Determine which pattern matched
+        if match.group(1) and match.group(2):  # [emotion]text[/emotion]
+            emotion = match.group(1).lower()
+            inner_text = match.group(2).strip()
+            if inner_text:
+                segments.append({'text': inner_text, 'emotion': emotion})
+        elif match.group(3):  # [emotion] or [emotion/] - self-closing/sound effect
+            emotion = match.group(3).lower()
+            if emotion in SOUND_REPLACEMENTS:
+                segments.append({'text': SOUND_REPLACEMENTS[emotion], 'emotion': emotion})
+            else:
+                # Just an emotion marker, apply to next segment
+                pass
+        elif match.group(4):  # *action*
+            action = match.group(4).lower()
+            if action in SOUND_REPLACEMENTS:
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action})
+            elif action in EMOTION_PRESETS:
+                # It's an emotion, mark but no text
+                pass
+        elif match.group(5):  # (action)
+            action = match.group(5).lower()
+            if action in SOUND_REPLACEMENTS:
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action})
+        
+        last_end = match.end()
+    
+    # Add remaining text
+    if last_end < len(text):
+        remaining = text[last_end:].strip()
+        if remaining:
+            segments.append({'text': remaining, 'emotion': None})
+    
+    # If no segments were found, return the original text
+    if not segments:
+        segments.append({'text': text, 'emotion': None})
+    
+    return segments
+
+
+def get_emotion_prosody(emotion: Optional[str], base_rate: str = "+0%", base_pitch: str = "+0Hz") -> Tuple[str, str]:
+    """
+    Get prosody adjustments for an emotion, combining with base adjustments.
+    
+    Returns (rate, pitch) strings for Edge TTS.
+    """
+    if not emotion or emotion not in EMOTION_PRESETS:
+        return base_rate, base_pitch
+    
+    preset = EMOTION_PRESETS[emotion]
+    
+    # Parse base values
+    def parse_adjustment(val: str) -> int:
+        val = val.strip()
+        if val.endswith('%'):
+            return int(val[:-1].replace('+', ''))
+        elif val.endswith('Hz'):
+            return int(val[:-2].replace('+', ''))
+        return 0
+    
+    def format_rate(val: int) -> str:
+        return f"+{val}%" if val >= 0 else f"{val}%"
+    
+    def format_pitch(val: int) -> str:
+        return f"+{val}Hz" if val >= 0 else f"{val}Hz"
+    
+    base_rate_val = parse_adjustment(base_rate)
+    base_pitch_val = parse_adjustment(base_pitch)
+    emotion_rate_val = parse_adjustment(preset['rate'])
+    emotion_pitch_val = parse_adjustment(preset['pitch'])
+    
+    # Combine adjustments
+    final_rate = base_rate_val + emotion_rate_val
+    final_pitch = base_pitch_val + emotion_pitch_val
+    
+    return format_rate(final_rate), format_pitch(final_pitch)
+
 
 async def generate_tts_audio(
     text: str,
@@ -113,16 +578,19 @@ async def generate_tts_audio(
     pitch: str = "+0Hz"
 ) -> Tuple[bytes, int]:
     """
-    Generate TTS audio using Edge TTS
+    Generate TTS audio using Edge TTS with emotion/action tag support.
     
-    Note: edge_tts library doesn't support SSML or emotion/style parameters.
-    Style parameter is ignored - for style support, use Azure Speech SDK directly.
+    Supports emotion tags in text:
+    - [happy]Hello![/happy] - Tagged sections with emotions
+    - [laugh] or *laugh* or (laugh) - Sound effects
+    - [sad]I'm so sorry[/sad] - Sad tone
     
     Returns:
         Tuple of (audio_bytes, sample_rate)
     """
     try:
         import edge_tts
+        import librosa
         
         # Fix rate format - Edge TTS requires +/- prefix
         if rate and not rate.startswith(('+', '-')):
@@ -132,37 +600,83 @@ async def generate_tts_audio(
         if pitch and not pitch.startswith(('+', '-')):
             pitch = f"+{pitch}"
         
-        # Note: edge_tts doesn't support SSML or express-as styles
-        # The style parameter is ignored - just use standard TTS
-        # For emotion/style support, would need Azure Speech SDK with subscription
-        if style and style != "default":
-            logger.warning(f"Style '{style}' requested but edge_tts doesn't support styles. Using standard voice.")
+        # Parse text for emotion tags
+        segments = parse_emotion_tags(text)
+        logger.info(f"Parsed {len(segments)} segment(s) from text")
         
-        # Standard request (edge_tts doesn't support SSML)
-        communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
+        # If we have multiple segments or emotions, process each separately
+        if len(segments) > 1 or (segments and segments[0].get('emotion')):
+            audio_chunks = []
+            target_sr = None
+            
+            for i, segment in enumerate(segments):
+                segment_text = segment['text']
+                emotion = segment.get('emotion')
+                
+                # Get prosody for this emotion
+                seg_rate, seg_pitch = get_emotion_prosody(emotion, rate, pitch)
+                
+                # Get audio effects for this emotion
+                effects = get_emotion_effects(emotion)
+                effects_str = ', '.join(effects.keys()) if effects else 'none'
+                
+                logger.info(f"Segment {i+1}: emotion={emotion}, rate={seg_rate}, pitch={seg_pitch}, effects=[{effects_str}], text='{segment_text[:50]}...'")
+                
+                # Generate this segment
+                communicate = edge_tts.Communicate(segment_text, voice, rate=seg_rate, pitch=seg_pitch)
+                
+                with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+                    tmp_path = tmp_file.name
+                
+                try:
+                    await communicate.save(tmp_path)
+                    audio, sr = librosa.load(tmp_path, sr=None, mono=True)
+                    
+                    if target_sr is None:
+                        target_sr = sr
+                    elif sr != target_sr:
+                        # Resample to target sample rate
+                        audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+                    
+                    # Apply audio effects for this emotion
+                    if effects:
+                        audio = apply_audio_effects(audio, target_sr, effects)
+                    
+                    audio_chunks.append(audio)
+                finally:
+                    if os.path.exists(tmp_path):
+                        os.unlink(tmp_path)
+            
+            # Concatenate all audio chunks
+            if audio_chunks:
+                combined_audio = np.concatenate(audio_chunks)
+                wav_buffer = io.BytesIO()
+                sf.write(wav_buffer, combined_audio, target_sr, format='WAV')
+                wav_buffer.seek(0)
+                return wav_buffer.read(), target_sr
+            else:
+                raise HTTPException(status_code=500, detail="No audio generated")
         
-        # Generate audio to temporary file
-        with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
-            tmp_path = tmp_file.name
-        
-        try:
-            await communicate.save(tmp_path)
+        else:
+            # Simple case - no emotion tags, generate directly
+            communicate = edge_tts.Communicate(text, voice, rate=rate, pitch=pitch)
             
-            # Read and convert to WAV format
-            import librosa
-            audio, sr = librosa.load(tmp_path, sr=None, mono=True)
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
             
-            # Convert to WAV bytes
-            wav_buffer = io.BytesIO()
-            sf.write(wav_buffer, audio, sr, format='WAV')
-            wav_buffer.seek(0)
-            
-            return wav_buffer.read(), sr
-            
-        finally:
-            # Clean up temp file
-            if os.path.exists(tmp_path):
-                os.unlink(tmp_path)
+            try:
+                await communicate.save(tmp_path)
+                audio, sr = librosa.load(tmp_path, sr=None, mono=True)
+                
+                wav_buffer = io.BytesIO()
+                sf.write(wav_buffer, audio, sr, format='WAV')
+                wav_buffer.seek(0)
+                
+                return wav_buffer.read(), sr
+                
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
                 
     except ImportError:
         raise HTTPException(
@@ -186,6 +700,69 @@ async def health_check():
         model_loaded=model_manager is not None and model_manager.model_name is not None,
         current_model=model_manager.model_name if model_manager else None
     )
+
+
+@app.get("/emotions")
+async def list_emotions():
+    """
+    List available emotion tags for TTS.
+    
+    Use these in your text like:
+    - [happy]Hello there![/happy]
+    - [laugh] or *laugh* 
+    - [sad]I'm sorry to hear that[/sad]
+    - [robot]Beep boop[/robot] - Voice effect
+    """
+    emotions_by_category = {
+        'positive': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                     if name in ['happy', 'excited', 'cheerful', 'joyful']},
+        'negative': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                     if name in ['sad', 'melancholy', 'depressed', 'disappointed']},
+        'angry': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                  if name in ['angry', 'furious', 'annoyed', 'frustrated']},
+        'calm': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                 if name in ['calm', 'peaceful', 'relaxed', 'neutral']},
+        'surprised': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                      if name in ['surprised', 'shocked', 'amazed']},
+        'fear': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                 if name in ['scared', 'terrified', 'anxious', 'nervous']},
+        'special': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                    if name in ['whisper', 'shouting', 'sarcastic', 'romantic', 'serious', 'playful', 'dramatic', 'mysterious']},
+        'effects': {name: preset['desc'] for name, preset in EMOTION_PRESETS.items() 
+                    if name in ['robot', 'spooky', 'ethereal', 'phone', 'radio', 'megaphone', 'echo', 'underwater']},
+        'sounds': {name: SOUND_REPLACEMENTS.get(name, 'sound effect') for name in SOUND_REPLACEMENTS.keys()},
+    }
+    
+    # Show what audio processing each effect applies
+    effects_details = {}
+    for name, effect_config in EMOTION_EFFECTS.items():
+        desc = EMOTION_PRESETS.get(name, {}).get('desc', '')
+        effects_details[name] = {
+            'description': desc,
+            'processing': list(effect_config.keys())
+        }
+    
+    return {
+        'emotions': emotions_by_category,
+        'audio_effects': effects_details,
+        'usage': {
+            'tagged': '[emotion]Your text here[/emotion]',
+            'sound_bracket': '[laugh]',
+            'sound_asterisk': '*laugh*',
+            'sound_paren': '(sigh)',
+        },
+        'examples': [
+            '[happy]I am so excited to see you![/happy]',
+            '[sad]I miss you so much[/sad]',
+            'Hello! *laugh* That was funny!',
+            '[whisper]This is a secret[/whisper]',
+            'Oh no! (gasp) What happened?',
+            '[excited]We won the game![/excited] [laugh]',
+            '[robot]I am a robot. Beep boop.[/robot]',
+            '[spooky]The ghost haunts this place...[/spooky]',
+            '[megaphone]Attention please![/megaphone]',
+        ]
+    }
 
 
 @app.get("/voices")
@@ -327,6 +904,69 @@ async def list_voices():
     }
 
 
+@app.post("/apply-effects")
+async def apply_effects_endpoint(request: ApplyEffectsRequest):
+    """
+    Apply audio effects to existing audio.
+    
+    Use this to add effects like 'robot', 'whisper', 'terrified' etc. 
+    after voice conversion or to any audio.
+    """
+    try:
+        effects = get_emotion_effects(request.effect)
+        if not effects:
+            # Check if it's a valid emotion name
+            if request.effect.lower() in EMOTION_PRESETS:
+                # It's a valid emotion but has no special audio effects
+                return {
+                    'audio': request.audio,  # Return unchanged
+                    'sample_rate': request.sample_rate,
+                    'format': 'wav',
+                    'effect_applied': request.effect,
+                    'effects': [],
+                    'note': 'This emotion only modifies TTS prosody, no post-processing effects'
+                }
+            raise HTTPException(status_code=400, detail=f"Unknown effect: {request.effect}")
+        
+        # Decode audio
+        audio_bytes = base64.b64decode(request.audio)
+        audio_buffer = io.BytesIO(audio_bytes)
+        
+        try:
+            audio, sr = sf.read(audio_buffer, dtype='float32')
+        except Exception:
+            import librosa
+            audio_buffer = io.BytesIO(audio_bytes)
+            audio, sr = librosa.load(audio_buffer, sr=None, mono=True)
+        
+        # Convert to mono if needed
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=1)
+        
+        # Apply effects
+        logger.info(f"Applying effects for '{request.effect}': {list(effects.keys())}")
+        processed_audio = apply_audio_effects(audio.astype(np.float32), sr, effects)
+        
+        # Convert back to WAV
+        wav_buffer = io.BytesIO()
+        sf.write(wav_buffer, processed_audio, sr, format='WAV')
+        wav_buffer.seek(0)
+        
+        return {
+            'audio': base64.b64encode(wav_buffer.read()).decode('utf-8'),
+            'sample_rate': sr,
+            'format': 'wav',
+            'effect_applied': request.effect,
+            'effects': list(effects.keys())
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to apply effects: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to apply effects: {str(e)}")
+
+
 @app.post("/tts", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest):
     """Generate speech from text using Edge TTS"""
@@ -348,6 +988,74 @@ async def text_to_speech(request: TTSRequest):
     )
 
 
+# Quality presets for voice conversion
+QUALITY_PRESETS = {
+    'natural': {
+        'index_rate': 0.4,      # Lower = more natural, less like target
+        'filter_radius': 3,     # Medium smoothing
+        'rms_mix_rate': 0.15,   # Keep more original dynamics
+        'protect': 0.45,        # High protection for consonants/breathing
+        'description': 'Most natural sounding, preserves speech characteristics'
+    },
+    'balanced': {
+        'index_rate': 0.55,     # Balanced blend
+        'filter_radius': 3,     # Medium smoothing
+        'rms_mix_rate': 0.25,   # Moderate dynamics blend
+        'protect': 0.35,        # Moderate protection
+        'description': 'Good balance between natural sound and voice accuracy'
+    },
+    'accurate': {
+        'index_rate': 0.75,     # Higher = more like target voice
+        'filter_radius': 3,     # Medium smoothing
+        'rms_mix_rate': 0.3,    # More converted dynamics
+        'protect': 0.25,        # Less protection, more transformation
+        'description': 'Sounds more like target voice but may be less natural'
+    },
+    'maximum': {
+        'index_rate': 0.9,      # Very high match to target
+        'filter_radius': 2,     # Less smoothing
+        'rms_mix_rate': 0.4,    # Use converted dynamics
+        'protect': 0.15,        # Minimal protection
+        'description': 'Maximum voice match, may sound artificial'
+    }
+}
+
+
+@app.get("/convert/presets")
+async def get_quality_presets():
+    """Get available quality presets for voice conversion"""
+    return {
+        'presets': QUALITY_PRESETS,
+        'parameters': {
+            'index_rate': {
+                'description': 'How much to match target voice timbre (0.0-1.0)',
+                'low': 'More natural, less like target',
+                'high': 'More like target, may sound robotic'
+            },
+            'protect': {
+                'description': 'Protect consonants and breathing (0.0-0.5)',
+                'low': 'More transformation, may lose speech clarity',
+                'high': 'More natural speech, consonants preserved'
+            },
+            'rms_mix_rate': {
+                'description': 'Volume dynamics blend (0.0-1.0)',
+                'low': 'Keep original volume changes',
+                'high': 'Use converted volume envelope'
+            },
+            'filter_radius': {
+                'description': 'Pitch smoothing (0-7)',
+                'low': 'More pitch detail but noisier',
+                'high': 'Smoother pitch but may lose nuance'
+            }
+        },
+        'recommendations': {
+            'singing': {'preset': 'accurate', 'note': 'Higher index_rate works better for singing'},
+            'speech': {'preset': 'natural', 'note': 'Lower index_rate sounds more natural for speech'},
+            'characters': {'preset': 'balanced', 'note': 'Good for character voices'},
+        }
+    }
+
+
 @app.post("/convert", response_model=ConvertResponse)
 async def convert_voice(request: ConvertRequest):
     """Convert voice using RVC model"""
@@ -357,6 +1065,20 @@ async def convert_voice(request: ConvertRequest):
         raise HTTPException(status_code=500, detail="Model manager not initialized")
     
     try:
+        # Apply quality preset if specified
+        index_rate = request.index_rate
+        filter_radius = request.filter_radius
+        rms_mix_rate = request.rms_mix_rate
+        protect = request.protect
+        
+        if request.quality_preset and request.quality_preset in QUALITY_PRESETS:
+            preset = QUALITY_PRESETS[request.quality_preset]
+            index_rate = preset['index_rate']
+            filter_radius = preset['filter_radius']
+            rms_mix_rate = preset['rms_mix_rate']
+            protect = preset['protect']
+            logger.info(f"Using quality preset: {request.quality_preset}")
+        
         # Decode audio
         audio_bytes = base64.b64decode(request.audio)
         
@@ -387,22 +1109,31 @@ async def convert_voice(request: ConvertRequest):
             if not success:
                 raise HTTPException(status_code=400, detail=f"Failed to load model: {request.model_path}")
         
-        # Create inference params
+        # Create inference params with adjusted values
         from app.model_manager import RVCInferParams
         params = RVCInferParams(
             f0_up_key=request.f0_up_key,
             f0_method=request.f0_method,
-            index_rate=request.index_rate,
-            filter_radius=request.filter_radius,
-            rms_mix_rate=request.rms_mix_rate,
-            protect=request.protect,
+            index_rate=index_rate,
+            filter_radius=filter_radius,
+            rms_mix_rate=rms_mix_rate,
+            protect=protect,
         )
+        
+        logger.info(f"Conversion params: index_rate={index_rate}, protect={protect}, rms_mix={rms_mix_rate}")
         
         # Run inference
         output_audio = model_manager.infer(audio, params=params)
         
         if output_audio is None or len(output_audio) == 0:
             raise HTTPException(status_code=500, detail="Voice conversion failed")
+        
+        # Apply audio effects after conversion if specified
+        if request.apply_effects:
+            effects = get_emotion_effects(request.apply_effects)
+            if effects:
+                logger.info(f"Applying post-conversion effects for '{request.apply_effects}': {list(effects.keys())}")
+                output_audio = apply_audio_effects(output_audio, 16000, effects)
         
         # Convert to WAV bytes
         wav_buffer = io.BytesIO()
@@ -451,8 +1182,11 @@ class AudioProcessRequest(BaseModel):
     model_path: Optional[str] = Field(default=None, description="Path to voice model for conversion")
     index_path: Optional[str] = Field(default=None, description="Path to index file")
     f0_up_key: int = Field(default=0, description="Pitch shift for vocals")
-    index_rate: float = Field(default=0.75, description="Index blend rate")
-    pitch_shift_all: int = Field(default=0, description="Pitch shift for ALL audio (vocals + instrumental) in semitones")
+    index_rate: float = Field(default=0.5, description="Index blend rate (lower=more natural)")
+    protect: float = Field(default=0.4, description="Protect consonants (higher=more natural)")
+    rms_mix_rate: float = Field(default=0.2, description="RMS mix rate")
+    pitch_shift_all: int = Field(default=0, description="Pitch shift for ALL audio in semitones")
+    quality_preset: Optional[str] = Field(default="natural", description="Quality preset: natural, balanced, accurate, maximum")
 
 
 class AudioProcessResponse(BaseModel):
@@ -587,12 +1321,27 @@ async def process_audio(request: AudioProcessRequest):
             if not success:
                 raise HTTPException(status_code=400, detail="Failed to load model")
             
+            # Apply quality preset if specified
+            index_rate = request.index_rate
+            protect = request.protect
+            rms_mix_rate = request.rms_mix_rate
+            
+            if request.quality_preset and request.quality_preset in QUALITY_PRESETS:
+                preset = QUALITY_PRESETS[request.quality_preset]
+                index_rate = preset['index_rate']
+                protect = preset['protect']
+                rms_mix_rate = preset['rms_mix_rate']
+                logger.info(f"Using quality preset: {request.quality_preset}")
+            
             # Run conversion
             from app.model_manager import RVCInferParams
             params = RVCInferParams(
                 f0_up_key=request.f0_up_key,
-                index_rate=request.index_rate,
+                index_rate=index_rate,
+                protect=protect,
+                rms_mix_rate=rms_mix_rate,
             )
+            logger.info(f"Conversion params: index_rate={index_rate}, protect={protect}, rms_mix={rms_mix_rate}")
             
             output_audio = model_manager.infer(audio.astype(np.float32), params=params)
             
@@ -648,11 +1397,26 @@ async def process_audio(request: AudioProcessRequest):
                 if not success:
                     raise HTTPException(status_code=400, detail="Failed to load model")
                 
+                # Apply quality preset if specified
+                index_rate = request.index_rate
+                protect = request.protect
+                rms_mix_rate = request.rms_mix_rate
+                
+                if request.quality_preset and request.quality_preset in QUALITY_PRESETS:
+                    preset = QUALITY_PRESETS[request.quality_preset]
+                    index_rate = preset['index_rate']
+                    protect = preset['protect']
+                    rms_mix_rate = preset['rms_mix_rate']
+                    logger.info(f"Using quality preset for swap: {request.quality_preset}")
+                
                 from app.model_manager import RVCInferParams
                 params = RVCInferParams(
                     f0_up_key=request.f0_up_key,
-                    index_rate=request.index_rate,
+                    index_rate=index_rate,
+                    protect=protect,
+                    rms_mix_rate=rms_mix_rate,
                 )
+                logger.info(f"Swap conversion params: index_rate={index_rate}, protect={protect}, rms_mix={rms_mix_rate}")
                 
                 converted_vocals = model_manager.infer(vocals_16k, params=params)
                 

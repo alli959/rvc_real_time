@@ -16,7 +16,7 @@ export default function TTSPage() {
           <div>
             <h1 className="text-2xl font-bold text-white">Text to Speech</h1>
             <p className="text-gray-400">
-              Generate natural-sounding speech from text with optional voice conversion
+              Generate expressive speech with emotions, sound effects, and voice conversion
             </p>
           </div>
         </div>
@@ -25,9 +25,10 @@ export default function TTSPage() {
         <div className="bg-gradient-to-r from-primary-900/30 to-purple-900/30 border border-primary-500/20 rounded-lg p-4">
           <h3 className="font-medium text-white mb-2">How it works</h3>
           <ol className="text-sm text-gray-300 space-y-1 list-decimal list-inside">
-            <li>Enter the text you want to convert to speech</li>
-            <li>Select a voice and speaking style</li>
-            <li>Optionally enable Voice Conversion to transform the speech using your custom voice models</li>
+            <li>Choose your language and gender preference</li>
+            <li>Enter the text you want to convert - add emotions using the picker!</li>
+            <li>Select a Voice Model to transform the speech into any character</li>
+            <li>Optionally add voice effects like Robot, Spooky, Phone, etc.</li>
             <li>Click Generate to create your audio</li>
           </ol>
         </div>
@@ -47,15 +48,19 @@ export default function TTSPage() {
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary-400">•</span>
-              <span>Try different speaking styles to match the emotion of your text</span>
+              <span>Add emotions like [happy], [sad], [angry] to make speech more expressive</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary-400">•</span>
-              <span>Voice conversion works best with clean TTS output - adjust pitch if the result sounds unnatural</span>
+              <span>Insert sound effects like [laugh], [gasp], [sigh] for realistic reactions</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="text-primary-400">•</span>
-              <span>For characters, use the Voice Conversion feature to apply their unique voice model</span>
+              <span>Adjust pitch shift if the converted voice sounds unnatural (negative = deeper)</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="text-primary-400">•</span>
+              <span>Voice effects like Robot and Phone work best AFTER voice conversion</span>
             </li>
           </ul>
         </div>

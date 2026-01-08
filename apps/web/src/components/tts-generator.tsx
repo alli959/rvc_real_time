@@ -1,160 +1,431 @@
 'use client';
 
-import { useState, useEffect, useRef, useMemo } from 'react';
-import { ttsApi, voiceModelsApi, TTSVoice, TTSStyle, VoiceModel } from '@/lib/api';
-import {
-  Volume2 as SpeakerWaveIcon,
-  Square as StopIcon,
-  Play as PlayIcon,
-  Download as ArrowDownTrayIcon,
-  Sparkles as SparklesIcon,
-  Globe,
-  User,
-  AlertCircle,
-  Info,
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
+import { useAuthStore } from '@/lib/store';
+import { 
+  Loader2, 
+  Download, 
+  Play, 
+  Pause,
+  Smile,
+  Frown,
+  Angry,
+  Heart,
+  AlertTriangle,
+  Sparkles,
+  Wand2,
+  Music,
+  Mic,
+  Volume2,
+  X
 } from 'lucide-react';
 
-interface TTSGeneratorProps {
-  className?: string;
-}
+// Emotion/Style categories with their tags
+const EMOTION_CATEGORIES = {
+  positive: {
+    name: 'Positive',
+    icon: Smile,
+    color: 'bg-green-500',
+    items: [
+      { tag: 'cheerful', label: 'Cheerful', icon: '😊' },
+      { tag: 'happy', label: 'Happy', icon: '😃' },
+      { tag: 'excited', label: 'Excited', icon: '🎉' },
+      { tag: 'friendly', label: 'Friendly', icon: '🤗' },
+      { tag: 'hopeful', label: 'Hopeful', icon: '🌟' },
+      { tag: 'affectionate', label: 'Affectionate', icon: '💕' },
+      { tag: 'gentle', label: 'Gentle', icon: '🌸' },
+      { tag: 'lyrical', label: 'Lyrical', icon: '🎵' },
+    ]
+  },
+  negative: {
+    name: 'Sad / Serious',
+    icon: Frown,
+    color: 'bg-blue-500',
+    items: [
+      { tag: 'sad', label: 'Sad', icon: '😢' },
+      { tag: 'depressed', label: 'Depressed', icon: '😞' },
+      { tag: 'disgruntled', label: 'Disgruntled', icon: '😒' },
+      { tag: 'serious', label: 'Serious', icon: '😐' },
+      { tag: 'embarrassed', label: 'Embarrassed', icon: '😳' },
+      { tag: 'envious', label: 'Envious', icon: '😤' },
+    ]
+  },
+  angry: {
+    name: 'Angry / Intense',
+    icon: Angry,
+    color: 'bg-red-500',
+    items: [
+      { tag: 'angry', label: 'Angry', icon: '😠' },
+      { tag: 'shouting', label: 'Shouting', icon: '🗣️' },
+      { tag: 'unfriendly', label: 'Unfriendly', icon: '😑' },
+    ]
+  },
+  calm: {
+    name: 'Calm / Professional',
+    icon: Heart,
+    color: 'bg-purple-500',
+    items: [
+      { tag: 'calm', label: 'Calm', icon: '😌' },
+      { tag: 'empathetic', label: 'Empathetic', icon: '💗' },
+      { tag: 'assistant', label: 'Assistant', icon: '🤖' },
+      { tag: 'customerservice', label: 'Customer Service', icon: '📞' },
+      { tag: 'newscast', label: 'Newscast', icon: '📺' },
+      { tag: 'narration', label: 'Narration', icon: '📖' },
+      { tag: 'documentary', label: 'Documentary', icon: '🎬' },
+      { tag: 'advertisement', label: 'Advertisement', icon: '📢' },
+      { tag: 'poetry', label: 'Poetry', icon: '✨' },
+    ]
+  },
+  fear: {
+    name: 'Fear / Surprise',
+    icon: AlertTriangle,
+    color: 'bg-yellow-500',
+    items: [
+      { tag: 'fearful', label: 'Fearful', icon: '😨' },
+      { tag: 'terrified', label: 'Terrified', icon: '😱' },
+      { tag: 'scared', label: 'Scared', icon: '😰' },
+      { tag: 'worried', label: 'Worried', icon: '😟' },
+      { tag: 'surprised', label: 'Surprised', icon: '😲' },
+    ]
+  },
+  special: {
+    name: 'Special Effects',
+    icon: Sparkles,
+    color: 'bg-cyan-500',
+    items: [
+      { tag: 'whispering', label: 'Whispering', icon: '🤫' },
+      { tag: 'chat', label: 'Chat', icon: '💬' },
+    ]
+  },
+  effects: {
+    name: 'Voice Effects',
+    icon: Wand2,
+    color: 'bg-orange-500',
+    items: [
+      { tag: 'robot', label: 'Robot', icon: '🤖', isEffect: true },
+      { tag: 'spooky', label: 'Spooky', icon: '👻', isEffect: true },
+      { tag: 'phone', label: 'Phone', icon: '📱', isEffect: true },
+      { tag: 'radio', label: 'Radio', icon: '📻', isEffect: true },
+      { tag: 'underwater', label: 'Underwater', icon: '🌊', isEffect: true },
+      { tag: 'megaphone', label: 'Megaphone', icon: '📣', isEffect: true },
+      { tag: 'evil', label: 'Evil', icon: '😈', isEffect: true },
+      { tag: 'dramatic', label: 'Dramatic', icon: '🎭', isEffect: true },
+      { tag: 'dreamy', label: 'Dreamy', icon: '💭', isEffect: true },
+    ]
+  },
+  sounds: {
+    name: 'Sound Effects',
+    icon: Music,
+    color: 'bg-pink-500',
+    items: [
+      { tag: 'laugh', label: 'Laugh', icon: '😂', isSound: true },
+      { tag: 'giggle', label: 'Giggle', icon: '🤭', isSound: true },
+      { tag: 'evil_laugh', label: 'Evil Laugh', icon: '😈', isSound: true },
+      { tag: 'cry', label: 'Cry', icon: '😭', isSound: true },
+      { tag: 'sob', label: 'Sob', icon: '😿', isSound: true },
+      { tag: 'sigh', label: 'Sigh', icon: '😮‍💨', isSound: true },
+      { tag: 'gasp', label: 'Gasp', icon: '😯', isSound: true },
+      { tag: 'scream', label: 'Scream', icon: '😱', isSound: true },
+      { tag: 'yawn', label: 'Yawn', icon: '🥱', isSound: true },
+      { tag: 'cough', label: 'Cough', icon: '😷', isSound: true },
+      { tag: 'sneeze', label: 'Sneeze', icon: '🤧', isSound: true },
+      { tag: 'growl', label: 'Growl', icon: '😤', isSound: true },
+      { tag: 'groan', label: 'Groan', icon: '😩', isSound: true },
+      { tag: 'moan', label: 'Moan', icon: '😫', isSound: true },
+      { tag: 'hum', label: 'Hum', icon: '🎵', isSound: true },
+      { tag: 'chuckle', label: 'Chuckle', icon: '😏', isSound: true },
+      { tag: 'whisper', label: 'Whisper', icon: '🤫', isSound: true },
+      { tag: 'shush', label: 'Shush', icon: '🤐', isSound: true },
+      { tag: 'hiccup', label: 'Hiccup', icon: '🫢', isSound: true },
+      { tag: 'burp', label: 'Burp', icon: '😋', isSound: true },
+      { tag: 'clearing_throat', label: 'Clear Throat', icon: '🗣️', isSound: true },
+      { tag: 'sniff', label: 'Sniff', icon: '👃', isSound: true },
+      { tag: 'snore', label: 'Snore', icon: '😴', isSound: true },
+      { tag: 'pant', label: 'Pant', icon: '🐕', isSound: true },
+      { tag: 'huff', label: 'Huff', icon: '😤', isSound: true },
+      { tag: 'gulp', label: 'Gulp', icon: '😰', isSound: true },
+      { tag: 'whimper', label: 'Whimper', icon: '🥺', isSound: true },
+      { tag: 'wail', label: 'Wail', icon: '😭', isSound: true },
+      { tag: 'howl', label: 'Howl', icon: '🐺', isSound: true },
+      { tag: 'shriek', label: 'Shriek', icon: '😱', isSound: true },
+      { tag: 'yelp', label: 'Yelp', icon: '😣', isSound: true },
+      { tag: 'grunt', label: 'Grunt', icon: '💪', isSound: true },
+      { tag: 'exclaim', label: 'Exclaim', icon: '❗', isSound: true },
+      { tag: 'murmur', label: 'Murmur', icon: '💭', isSound: true },
+      { tag: 'mutter', label: 'Mutter', icon: '🙄', isSound: true },
+      { tag: 'stammer', label: 'Stammer', icon: '😣', isSound: true },
+      { tag: 'stutter', label: 'Stutter', icon: '🔄', isSound: true },
+      { tag: 'slur', label: 'Slur', icon: '🍺', isSound: true },
+      { tag: 'babble', label: 'Babble', icon: '👶', isSound: true },
+      { tag: 'ramble', label: 'Ramble', icon: '🗣️', isSound: true },
+      { tag: 'applause', label: 'Applause', icon: '👏', isSound: true },
+      { tag: 'cheering', label: 'Cheering', icon: '🎉', isSound: true },
+      { tag: 'clap', label: 'Clap', icon: '👐', isSound: true },
+      { tag: 'snap', label: 'Snap', icon: '🫰', isSound: true },
+      { tag: 'whistle', label: 'Whistle', icon: '😗', isSound: true },
+      { tag: 'boo', label: 'Boo', icon: '👎', isSound: true },
+      { tag: 'hiss', label: 'Hiss', icon: '🐍', isSound: true },
+      { tag: 'shout', label: 'Shout', icon: '📢', isSound: true },
+      { tag: 'yell', label: 'Yell', icon: '🗣️', isSound: true },
+      { tag: 'cheer', label: 'Cheer', icon: '🙌', isSound: true },
+      { tag: 'chant', label: 'Chant', icon: '🎵', isSound: true },
+      { tag: 'sing', label: 'Sing', icon: '🎤', isSound: true },
+      { tag: 'hum_song', label: 'Hum Song', icon: '🎶', isSound: true },
+      { tag: 'beatbox', label: 'Beatbox', icon: '🥁', isSound: true },
+      { tag: 'kiss', label: 'Kiss', icon: '💋', isSound: true },
+    ]
+  }
+};
 
-interface EnhancedTTSVoice extends TTSVoice {
+// Effects that can be applied after voice conversion
+const VOICE_CONVERSION_EFFECTS = [
+  { value: '', label: 'None' },
+  { value: 'robot', label: '🤖 Robot' },
+  { value: 'spooky', label: '👻 Spooky' },
+  { value: 'phone', label: '📱 Phone' },
+  { value: 'radio', label: '📻 Radio' },
+  { value: 'underwater', label: '🌊 Underwater' },
+  { value: 'megaphone', label: '📣 Megaphone' },
+  { value: 'evil', label: '😈 Evil' },
+  { value: 'dramatic', label: '🎭 Dramatic' },
+  { value: 'dreamy', label: '💭 Dreamy' },
+  { value: 'scared', label: '😰 Scared/Trembling' },
+  { value: 'angry', label: '😠 Angry/Distorted' },
+  { value: 'sad', label: '😢 Sad/Muffled' },
+  { value: 'excited', label: '🎉 Excited/Bright' },
+  { value: 'serious', label: '😐 Serious/Deep' },
+  { value: 'whisper', label: '🤫 Whisper' },
+];
+
+interface Voice {
+  id: string;
+  name: string;
+  language: string;
+  gender: string;
   supports_styles?: boolean;
 }
 
-export function TTSGenerator({ className }: TTSGeneratorProps) {
-  // TTS settings
+interface VoiceModel {
+  id: number;
+  name: string;
+  category: string;
+}
+
+export function TTSGenerator() {
+  const { token, isHydrated } = useAuthStore();
+  
+  // Voice and text state
+  const [voices, setVoices] = useState<Voice[]>([]);
   const [text, setText] = useState('');
-  const [language, setLanguage] = useState('English (US)');
-  const [gender, setGender] = useState<'male' | 'female'>('male');
-  const [voice, setVoice] = useState('en-US-GuyNeural');
-  const [style, setStyle] = useState('default');
-  const [rate, setRate] = useState(0); // -50 to 50
-  const [pitch, setPitch] = useState(0); // -50 to 50
-
-  // Voice conversion settings
-  const [useVoiceModel, setUseVoiceModel] = useState(false);
-  const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
-  const [f0UpKey, setF0UpKey] = useState(0);
-  const [indexRate, setIndexRate] = useState(0.75);
-
-  // Data
-  const [voices, setVoices] = useState<EnhancedTTSVoice[]>([]);
-  const [styles, setStyles] = useState<TTSStyle[]>([]);
-  const [languages, setLanguages] = useState<string[]>([]);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+  
+  // Language and gender for auto-selection
+  const [selectedLanguage, setSelectedLanguage] = useState('');
+  const [selectedGender, setSelectedGender] = useState('');
+  
+  // Voice conversion options (always enabled)
   const [voiceModels, setVoiceModels] = useState<VoiceModel[]>([]);
-
-  // State
+  const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | ''>('');
+  const [indexRatio, setIndexRatio] = useState(0.5);
+  const [pitchShift, setPitchShift] = useState(0);
+  const [convertEffect, setConvertEffect] = useState('');
+  
+  // UI state
   const [loading, setLoading] = useState(false);
-  const [generating, setGenerating] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [audioUrl, setAudioUrl] = useState<string | null>(null);
+  const [error, setError] = useState('');
+  const [audioUrl, setAudioUrl] = useState('');
   const [isPlaying, setIsPlaying] = useState(false);
-
+  const [showEmotionPicker, setShowEmotionPicker] = useState(false);
+  const [selectedCategory, setSelectedCategory] = useState<string>('positive');
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Load voices and models on mount
-  useEffect(() => {
-    const loadData = async () => {
-      setLoading(true);
-      try {
-        const [voicesData, modelsData] = await Promise.all([
-          ttsApi.getVoices(),
-          voiceModelsApi.list({ all: true }),
-        ]);
-        setVoices(voicesData.voices || []);
-        setStyles(voicesData.styles || []);
-        setLanguages(voicesData.languages || []);
-        setVoiceModels(modelsData.data || []);
-      } catch (err) {
-        console.error('Failed to load TTS data:', err);
-        setError('Failed to load voice data');
-      } finally {
-        setLoading(false);
-      }
-    };
-    loadData();
-  }, []);
-
-  // Cleanup audio URL on unmount
-  useEffect(() => {
-    return () => {
-      if (audioUrl) {
-        URL.revokeObjectURL(audioUrl);
-      }
-    };
-  }, [audioUrl]);
-
+  
+  // Get unique languages - use language field from API
+  const languages = useMemo(() => {
+    const langSet = new Set<string>();
+    voices.forEach(v => {
+      if (v.language) langSet.add(v.language);
+    });
+    return Array.from(langSet).sort();
+  }, [voices]);
+  
   // Filter voices by language and gender
   const filteredVoices = useMemo(() => {
-    return voices.filter(v => v.language === language && v.gender === gender);
-  }, [voices, language, gender]);
-
-  // Select first voice when filters change
+    let filtered = voices.filter(v => v.language); // Filter out voices without language
+    if (selectedLanguage) {
+      filtered = filtered.filter(v => v.language === selectedLanguage);
+    }
+    if (selectedGender) {
+      filtered = filtered.filter(v => v.gender?.toLowerCase() === selectedGender.toLowerCase());
+    }
+    return filtered;
+  }, [voices, selectedLanguage, selectedGender]);
+  
+  // Auto-select best voice based on filters
+  const selectedVoice = useMemo(() => {
+    if (filteredVoices.length === 0) return null;
+    // Prefer voices with style support
+    const styled = filteredVoices.find(v => v.supports_styles);
+    return styled || filteredVoices[0];
+  }, [filteredVoices]);
+  
+  // Fetch voices on mount - wait for hydration and token
   useEffect(() => {
-    if (filteredVoices.length > 0 && !filteredVoices.find(v => v.id === voice)) {
-      setVoice(filteredVoices[0].id);
-    }
-  }, [filteredVoices, voice]);
-
-  // Get current voice info
-  const currentVoice = useMemo(() => {
-    return voices.find(v => v.id === voice);
-  }, [voices, voice]);
-
-  // Check if current voice supports styles
-  const supportsStyles = currentVoice?.supports_styles ?? false;
-
-  // Reset style if voice doesn't support it
+    if (!isHydrated || !token) return;
+    fetchVoices();
+    fetchVoiceModels();
+  }, [isHydrated, token]);
+  
+  // Set default language
   useEffect(() => {
-    if (!supportsStyles && style !== 'default') {
-      setStyle('default');
+    if (languages.length > 0 && !selectedLanguage) {
+      // Default to English (US)
+      const english = languages.find(lang => lang.includes('English'));
+      if (english) setSelectedLanguage(english);
+      else setSelectedLanguage(languages[0]);
     }
-  }, [supportsStyles, style]);
+  }, [languages, selectedLanguage]);
 
-  const handleGenerate = async () => {
-    if (!text.trim()) {
-      setError('Please enter some text');
-      return;
-    }
-
-    setGenerating(true);
-    setError(null);
-    setAudioUrl(null);
-
+  const fetchVoices = async () => {
+    if (!token) return;
     try {
-      const response = await ttsApi.generate({
-        text: text.trim(),
-        voice,
-        style,
-        rate: rate > 0 ? `+${rate}%` : `${rate}%`,
-        pitch: pitch > 0 ? `+${pitch}Hz` : `${pitch}Hz`,
-        voice_model_id: useVoiceModel && selectedModelId ? selectedModelId : undefined,
-        f0_up_key: useVoiceModel ? f0UpKey : undefined,
-        index_rate: useVoiceModel ? indexRate : undefined,
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/tts/voices`, {
+        headers: { Authorization: `Bearer ${token}` },
       });
-
-      // Convert base64 to blob URL
-      const audioBlob = base64ToBlob(response.audio, 'audio/wav');
-      const url = URL.createObjectURL(audioBlob);
-      setAudioUrl(url);
-
-      // Auto-play
-      if (audioRef.current) {
-        audioRef.current.src = url;
-        audioRef.current.play();
-        setIsPlaying(true);
+      if (response.ok) {
+        const data = await response.json();
+        setVoices(data.voices || []);
       }
-    } catch (err: any) {
-      setError(err.response?.data?.message || err.response?.data?.error || 'Generation failed');
-    } finally {
-      setGenerating(false);
+    } catch (err) {
+      console.error('Failed to fetch voices:', err);
     }
   };
 
-  const handlePlayPause = () => {
-    if (!audioRef.current || !audioUrl) return;
+  const fetchVoiceModels = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/voice-models`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setVoiceModels(data.data || []);
+      }
+    } catch (err) {
+      console.error('Failed to fetch voice models:', err);
+    }
+  };
 
+  // Insert emotion tag at cursor
+  const insertTag = useCallback((tag: string, isSound?: boolean) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = text;
+    
+    let insertText: string;
+    let cursorOffset: number;
+    
+    if (isSound) {
+      // Sound effects are self-closing
+      insertText = `[${tag}]`;
+      cursorOffset = insertText.length;
+    } else {
+      // Emotions wrap text
+      insertText = `[${tag}][/${tag}]`;
+      cursorOffset = tag.length + 2; // Position cursor between tags
+    }
+    
+    const newText = currentText.substring(0, start) + insertText + currentText.substring(end);
+    setText(newText);
+    
+    // Set cursor position after React re-render
+    setTimeout(() => {
+      textarea.focus();
+      const newPos = start + cursorOffset;
+      textarea.setSelectionRange(newPos, newPos);
+    }, 0);
+    
+    setShowEmotionPicker(false);
+  }, [text]);
+
+  const handleGenerate = async () => {
+    if (!text.trim() || !selectedVoice) {
+      setError('Please enter text and ensure a voice is available');
+      return;
+    }
+
+    if (!selectedVoiceModel) {
+      setError('Please select a voice model for conversion');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    setAudioUrl('');
+
+    try {
+      const payload: any = {
+        text: text.trim(),
+        voice: selectedVoice.id,
+        convert_voice: true,
+        voice_model_id: selectedVoiceModel,
+        index_ratio: indexRatio,
+        pitch_shift: pitchShift,
+      };
+      
+      // Add effect to apply after conversion
+      if (convertEffect) {
+        payload.apply_effects = convertEffect;
+      }
+
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/tts/generate`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!response.ok) {
+        // Try to parse as JSON, but handle HTML error pages
+        const contentType = response.headers.get('content-type');
+        if (contentType && contentType.includes('application/json')) {
+          const data = await response.json();
+          throw new Error(data.message || 'Generation failed');
+        } else {
+          throw new Error(`Server error: ${response.status} ${response.statusText}`);
+        }
+      }
+
+      // Parse JSON response with base64 audio
+      const data = await response.json();
+      
+      if (!data.audio) {
+        throw new Error('No audio data received');
+      }
+      
+      // Decode base64 audio to blob
+      const binaryString = atob(data.audio);
+      const bytes = new Uint8Array(binaryString.length);
+      for (let i = 0; i < binaryString.length; i++) {
+        bytes[i] = binaryString.charCodeAt(i);
+      }
+      const blob = new Blob([bytes], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      setAudioUrl(url);
+    } catch (err: any) {
+      setError(err.message || 'An error occurred');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const togglePlayback = () => {
+    if (!audioRef.current) return;
+    
     if (isPlaying) {
       audioRef.current.pause();
     } else {
@@ -165,360 +436,288 @@ export function TTSGenerator({ className }: TTSGeneratorProps) {
 
   const handleDownload = () => {
     if (!audioUrl) return;
-    
     const a = document.createElement('a');
     a.href = audioUrl;
-    a.download = `tts_${Date.now()}.wav`;
+    a.download = 'tts-output.mp3';
     a.click();
   };
 
-  const base64ToBlob = (base64: string, mimeType: string): Blob => {
-    const byteCharacters = atob(base64);
-    const byteNumbers = new Array(byteCharacters.length);
-    for (let i = 0; i < byteCharacters.length; i++) {
-      byteNumbers[i] = byteCharacters.charCodeAt(i);
+  useEffect(() => {
+    if (audioRef.current) {
+      audioRef.current.onended = () => setIsPlaying(false);
     }
-    const byteArray = new Uint8Array(byteNumbers);
-    return new Blob([byteArray], { type: mimeType });
-  };
-
-  if (loading) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-primary-500" />
-      </div>
-    );
-  }
+  }, [audioUrl]);
 
   return (
-    <div className={`space-y-6 ${className}`}>
-      {/* Text Input */}
+    <div className="space-y-6">
+      {/* Language & Gender Selection */}
+      <div className="grid grid-cols-2 gap-4">
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">Language</label>
+          <select
+            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            value={selectedLanguage}
+            onChange={(e) => setSelectedLanguage(e.target.value)}
+          >
+            {languages.length === 0 && (
+              <option value="">Loading languages...</option>
+            )}
+            {languages.map((lang) => (
+              <option key={lang} value={lang}>{lang}</option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">Gender</label>
+          <select
+            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            value={selectedGender}
+            onChange={(e) => setSelectedGender(e.target.value)}
+          >
+            <option value="">Any</option>
+            <option value="Female">Female</option>
+            <option value="Male">Male</option>
+          </select>
+        </div>
+      </div>
+      
+      {/* Auto-selected voice display */}
+      {selectedVoice && (
+        <div className="flex items-center gap-2 text-sm text-gray-400">
+          <Mic className="h-4 w-4" />
+          <span>Using: <strong className="text-white">{selectedVoice.name}</strong></span>
+          {selectedVoice.supports_styles && (
+            <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded">Supports Emotions</span>
+          )}
+        </div>
+      )}
+
+      {/* Text Input with Emotion Button */}
       <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Text to Speak
-        </label>
+        <div className="flex items-center justify-between mb-2">
+          <label className="block text-sm font-medium text-gray-200">Text to Speak</label>
+          <button
+            onClick={() => setShowEmotionPicker(true)}
+            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+          >
+            <Sparkles className="h-4 w-4" />
+            Add Emotion / Effect
+          </button>
+        </div>
+        
         <textarea
+          ref={textareaRef}
+          className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-3 min-h-[150px] font-mono text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+          placeholder="Enter text... Use [emotion]text[/emotion] tags or click 'Add Emotion' to add expressive styles!"
           value={text}
           onChange={(e) => setText(e.target.value)}
-          rows={4}
-          maxLength={5000}
-          className="w-full px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:ring-2 focus:ring-primary-500 focus:border-transparent resize-none"
-          placeholder="Enter the text you want to convert to speech..."
         />
-        <p className="mt-1 text-xs text-gray-500 text-right">
-          {text.length} / 5000 characters
+        
+        <p className="text-xs text-gray-500 mt-1">
+          Example: Hello! [cheerful]I&apos;m so happy to see you![/cheerful] [laugh] How are you today?
         </p>
       </div>
 
-      {/* Language and Voice Selection */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* Language */}
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            <div className="flex items-center gap-2">
-              <Globe className="h-4 w-4" />
-              Language
-            </div>
-          </label>
-          <select
-            value={language}
-            onChange={(e) => setLanguage(e.target.value)}
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            {languages.map((lang) => (
-              <option key={lang} value={lang}>
-                {lang}
-              </option>
-            ))}
-          </select>
-        </div>
-
-        {/* Gender */}
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            <div className="flex items-center gap-2">
-              <User className="h-4 w-4" />
-              Voice Type
-            </div>
-          </label>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setGender('male')}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                gender === 'male'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-              }`}
-            >
-              Male
-            </button>
-            <button
-              onClick={() => setGender('female')}
-              className={`flex-1 py-2 px-4 rounded-lg font-medium transition-colors ${
-                gender === 'female'
-                  ? 'bg-primary-600 text-white'
-                  : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-              }`}
-            >
-              Female
-            </button>
-          </div>
-        </div>
-
-        {/* Voice */}
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Voice
-          </label>
-          <select
-            value={voice}
-            onChange={(e) => setVoice(e.target.value)}
-            className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-          >
-            {filteredVoices.map((v) => (
-              <option key={v.id} value={v.id}>
-                {v.name} {v.supports_styles ? '✨' : ''}
-              </option>
-            ))}
-          </select>
-          {filteredVoices.length === 0 && (
-            <p className="mt-1 text-xs text-yellow-400">
-              No voices available for this language/gender combination
-            </p>
-          )}
-        </div>
-      </div>
-
-      {/* Speaking Style */}
-      <div>
-        <label className="block text-sm font-medium text-gray-300 mb-2">
-          Speaking Style
-          {!supportsStyles && (
-            <span className="ml-2 text-xs text-gray-500">
-              (Not available for this voice)
-            </span>
-          )}
-        </label>
-        <div className="flex flex-wrap gap-2">
-          {styles.slice(0, 10).map((s) => (
-            <button
-              key={s.id}
-              onClick={() => supportsStyles && setStyle(s.id)}
-              disabled={!supportsStyles && s.id !== 'default'}
-              className={`px-3 py-1.5 rounded-full text-sm font-medium transition-colors ${
-                style === s.id
-                  ? 'bg-primary-600 text-white'
-                  : supportsStyles || s.id === 'default'
-                  ? 'bg-gray-800 text-gray-300 hover:bg-gray-700'
-                  : 'bg-gray-800/50 text-gray-600 cursor-not-allowed'
-              }`}
-              title={s.description}
-            >
-              {s.name || s.id.charAt(0).toUpperCase() + s.id.slice(1).replace(/-/g, ' ')}
-            </button>
-          ))}
-        </div>
-        {supportsStyles && style !== 'default' && (
-          <p className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
-            <Info className="h-3 w-3" />
-            Note: Styles require Azure Speech SDK. Edge TTS may not apply all styles.
-          </p>
-        )}
-      </div>
-
-      {/* Rate & Pitch Sliders */}
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Speed: {rate > 0 ? `+${rate}%` : `${rate}%`}
-          </label>
-          <input
-            type="range"
-            min="-50"
-            max="50"
-            value={rate}
-            onChange={(e) => setRate(parseInt(e.target.value))}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>Slow</span>
-            <span>Normal</span>
-            <span>Fast</span>
-          </div>
-        </div>
-
-        <div>
-          <label className="block text-sm font-medium text-gray-300 mb-2">
-            Pitch: {pitch > 0 ? `+${pitch}Hz` : `${pitch}Hz`}
-          </label>
-          <input
-            type="range"
-            min="-50"
-            max="50"
-            value={pitch}
-            onChange={(e) => setPitch(parseInt(e.target.value))}
-            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-          />
-          <div className="flex justify-between text-xs text-gray-500 mt-1">
-            <span>Low</span>
-            <span>Normal</span>
-            <span>High</span>
-          </div>
-        </div>
-      </div>
-
-      {/* Voice Conversion Toggle */}
-      <div className="border-t border-gray-700 pt-6">
-        <div className="flex items-center justify-between mb-4">
-          <div className="flex items-center gap-2">
-            <SparklesIcon className="h-5 w-5 text-primary-400" />
-            <span className="font-medium text-white">Voice Conversion</span>
-            <span className="text-xs text-gray-500">(Apply custom voice model)</span>
-          </div>
-          <label className="relative inline-flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={useVoiceModel}
-              onChange={(e) => setUseVoiceModel(e.target.checked)}
-              className="sr-only peer"
-            />
-            <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-4 peer-focus:ring-primary-500/20 rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-primary-600"></div>
-          </label>
-        </div>
-
-        {useVoiceModel && (
-          <div className="space-y-4 bg-gray-800/50 rounded-lg p-4">
-            <p className="text-sm text-gray-400">
-              Transform the generated speech using a custom voice model (RVC). Great for character voices!
-            </p>
-
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                Voice Model
-              </label>
-              <select
-                value={selectedModelId || ''}
-                onChange={(e) => setSelectedModelId(e.target.value ? parseInt(e.target.value) : null)}
-                className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+      {/* Emotion Picker Modal */}
+      {showEmotionPicker && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-3xl max-h-[80vh] flex flex-col overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+                <Sparkles className="h-5 w-5 text-purple-500" />
+                Add Emotion, Style, or Sound Effect
+              </h2>
+              <button
+                onClick={() => setShowEmotionPicker(false)}
+                className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
               >
-                <option value="">Select a voice model...</option>
-                {voiceModels.map((m) => (
-                  <option key={m.id} value={m.id}>
-                    {m.name}
-                  </option>
-                ))}
-              </select>
+                <X className="h-5 w-5" />
+              </button>
             </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Pitch Shift: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
-                </label>
-                <input
-                  type="range"
-                  min="-12"
-                  max="12"
-                  value={f0UpKey}
-                  onChange={(e) => setF0UpKey(parseInt(e.target.value))}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                />
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>-12</span>
-                  <span>0</span>
-                  <span>+12</span>
-                </div>
+            
+            {/* Category Tabs */}
+            <div className="flex flex-wrap gap-2 p-4 border-b border-gray-700">
+              {Object.entries(EMOTION_CATEGORIES).map(([key, category]) => {
+                const Icon = category.icon;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setSelectedCategory(key)}
+                    className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm transition-all ${
+                      selectedCategory === key
+                        ? `${category.color} text-white`
+                        : 'bg-gray-700 hover:bg-gray-600 text-gray-300'
+                    }`}
+                  >
+                    <Icon className="h-4 w-4" />
+                    {category.name}
+                  </button>
+                );
+              })}
+            </div>
+            
+            {/* Items Grid */}
+            <div className="flex-1 overflow-y-auto p-4">
+              <div className="grid grid-cols-4 sm:grid-cols-5 md:grid-cols-6 gap-2">
+                {EMOTION_CATEGORIES[selectedCategory as keyof typeof EMOTION_CATEGORIES]?.items.map((item) => (
+                  <button
+                    key={item.tag}
+                    onClick={() => insertTag(item.tag, (item as any).isSound)}
+                    className="flex flex-col items-center gap-1 p-3 rounded-lg bg-gray-800 hover:bg-gray-700 border border-gray-700 hover:border-gray-500 transition-all group"
+                  >
+                    <span className="text-2xl group-hover:scale-110 transition-transform">
+                      {item.icon}
+                    </span>
+                    <span className="text-xs text-gray-400 group-hover:text-white">
+                      {item.label}
+                    </span>
+                  </button>
+                ))}
               </div>
-
-              <div>
-                <label className="block text-sm font-medium text-gray-300 mb-2">
-                  Index Rate: {indexRate.toFixed(2)}
-                </label>
-                <input
-                  type="range"
-                  min="0"
-                  max="100"
-                  value={indexRate * 100}
-                  onChange={(e) => setIndexRate(parseInt(e.target.value) / 100)}
-                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                />
-                <div className="flex justify-between text-xs text-gray-500 mt-1">
-                  <span>0</span>
-                  <span>0.5</span>
-                  <span>1.0</span>
-                </div>
-              </div>
+            </div>
+            
+            {/* Help Text */}
+            <div className="border-t border-gray-700 p-4 text-sm text-gray-400">
+              {selectedCategory === 'sounds' ? (
+                <p>Sound effects are inserted as <code className="bg-gray-800 px-1 rounded">[laugh]</code> - they play as standalone sounds.</p>
+              ) : selectedCategory === 'effects' ? (
+                <p>Voice effects wrap your text: <code className="bg-gray-800 px-1 rounded">[robot]your text here[/robot]</code></p>
+              ) : (
+                <p>Emotions wrap your text: <code className="bg-gray-800 px-1 rounded">[happy]your text here[/happy]</code></p>
+              )}
             </div>
           </div>
-        )}
+        </div>
+      )}
+
+      {/* Voice Conversion Options - Always visible */}
+      <div className="border border-gray-700 rounded-lg p-4 space-y-4">
+        <h3 className="font-medium text-white flex items-center gap-2">
+          <Wand2 className="h-5 w-5 text-purple-400" />
+          Voice Conversion (RVC)
+        </h3>
+        
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">Voice Model</label>
+          <select
+            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            value={selectedVoiceModel}
+            onChange={(e) => setSelectedVoiceModel(e.target.value ? Number(e.target.value) : '')}
+          >
+            <option value="">Select a voice model...</option>
+            {voiceModels.map((model) => (
+              <option key={model.id} value={model.id}>
+                {model.name} ({model.category})
+              </option>
+            ))}
+          </select>
+        </div>
+        
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Voice Effect (applied after conversion)
+          </label>
+          <select
+            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+            value={convertEffect}
+            onChange={(e) => setConvertEffect(e.target.value)}
+          >
+            {VOICE_CONVERSION_EFFECTS.map((effect) => (
+              <option key={effect.value} value={effect.value}>
+                {effect.label}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-gray-500 mt-1">
+            These effects are applied AFTER voice conversion for better results
+          </p>
+        </div>
+        
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Index Ratio: {indexRatio.toFixed(2)}
+          </label>
+          <input
+            type="range"
+            value={indexRatio}
+            onChange={(e) => setIndexRatio(parseFloat(e.target.value))}
+            min={0}
+            max={1}
+            step={0.05}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Higher = more like target voice, Lower = more like source
+          </p>
+        </div>
+        
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Pitch Shift: {pitchShift > 0 ? '+' : ''}{pitchShift} semitones
+          </label>
+          <input
+            type="range"
+            value={pitchShift}
+            onChange={(e) => setPitchShift(parseInt(e.target.value))}
+            min={-12}
+            max={12}
+            step={1}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Adjust pitch: negative = deeper, positive = higher
+          </p>
+        </div>
       </div>
 
-      {/* Error Message */}
+      {/* Generate Button */}
+      <button
+        onClick={handleGenerate}
+        disabled={loading || !text.trim() || !selectedVoice}
+        className="w-full flex items-center justify-center gap-2 px-6 py-3 rounded-lg bg-purple-600 hover:bg-purple-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white font-medium transition-colors"
+      >
+        {loading ? (
+          <>
+            <Loader2 className="h-5 w-5 animate-spin" />
+            Generating...
+          </>
+        ) : (
+          <>
+            <Volume2 className="h-5 w-5" />
+            Generate Speech
+          </>
+        )}
+      </button>
+
+      {/* Error Display */}
       {error && (
-        <div className="bg-red-400/10 border border-red-400/20 text-red-400 px-4 py-3 rounded-lg text-sm flex items-center gap-2">
-          <AlertCircle className="h-4 w-4 flex-shrink-0" />
+        <div className="p-4 bg-red-500/10 border border-red-500/50 rounded-lg text-red-400">
           {error}
         </div>
       )}
 
       {/* Audio Player */}
       {audioUrl && (
-        <div className="bg-gray-800 rounded-lg p-4">
-          <div className="flex items-center gap-4">
+        <div className="p-4 bg-gray-800 rounded-lg space-y-3">
+          <audio ref={audioRef} src={audioUrl} />
+          <div className="flex items-center gap-3">
             <button
-              onClick={handlePlayPause}
-              className="p-3 bg-primary-600 rounded-full hover:bg-primary-700 transition-colors"
+              onClick={togglePlayback}
+              className="p-2 rounded-lg border border-gray-600 bg-gray-700 hover:bg-gray-600 text-white transition-colors"
             >
-              {isPlaying ? (
-                <StopIcon className="h-6 w-6 text-white" />
-              ) : (
-                <PlayIcon className="h-6 w-6 text-white" />
-              )}
+              {isPlaying ? <Pause className="h-4 w-4" /> : <Play className="h-4 w-4" />}
             </button>
-            <div className="flex-1">
-              <audio
-                ref={audioRef}
-                src={audioUrl}
-                onEnded={() => setIsPlaying(false)}
-                onPause={() => setIsPlaying(false)}
-                onPlay={() => setIsPlaying(true)}
-              />
-              <div className="h-1 bg-gray-700 rounded-full">
-                <div className="h-full bg-primary-500 rounded-full w-0" />
-              </div>
-            </div>
             <button
               onClick={handleDownload}
-              className="p-2 text-gray-400 hover:text-white transition-colors"
-              title="Download"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-600 bg-gray-700 hover:bg-gray-600 text-white transition-colors"
             >
-              <ArrowDownTrayIcon className="h-5 w-5" />
+              <Download className="h-4 w-4" />
+              Download
             </button>
           </div>
         </div>
       )}
-
-      {/* Generate Button */}
-      <button
-        onClick={handleGenerate}
-        disabled={generating || !text.trim() || filteredVoices.length === 0}
-        className="w-full py-3 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
-      >
-        {generating ? (
-          <>
-            <svg className="animate-spin h-5 w-5" viewBox="0 0 24 24">
-              <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-              <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-            </svg>
-            Generating...
-          </>
-        ) : (
-          <>
-            <SpeakerWaveIcon className="h-5 w-5" />
-            Generate Speech
-          </>
-        )}
-      </button>
     </div>
   );
 }
