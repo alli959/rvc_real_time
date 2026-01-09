@@ -40,6 +40,7 @@ class AudioProcessingController extends Controller
             'f0_up_key' => 'nullable|integer|min:-24|max:24',
             'index_rate' => 'nullable|numeric|min:0|max:1',
             'pitch_shift_all' => 'nullable|integer|min:-24|max:24',
+            'instrumental_pitch' => 'nullable|integer|min:-24|max:24',
         ]);
 
         $mode = $validated['mode'];
@@ -107,6 +108,7 @@ class AudioProcessingController extends Controller
                 'f0_up_key' => $validated['f0_up_key'] ?? 0,
                 'index_rate' => $validated['index_rate'] ?? 0.75,
                 'pitch_shift_all' => $validated['pitch_shift_all'] ?? 0,
+                'instrumental_pitch' => $validated['instrumental_pitch'] ?? null,
             ];
 
             if ($modelPath) {

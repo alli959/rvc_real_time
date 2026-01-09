@@ -211,7 +211,12 @@ interface VoiceModel {
   category: string;
 }
 
-export function TTSGenerator() {
+interface TTSGeneratorProps {
+  preSelectedModelId?: number;
+  hideModelSelector?: boolean;
+}
+
+export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: TTSGeneratorProps = {}) {
   const { token, isHydrated } = useAuthStore();
   
   // Voice and text state
@@ -224,10 +229,11 @@ export function TTSGenerator() {
   const [selectedGender, setSelectedGender] = useState('');
   
   // Voice conversion options (always enabled)
+  // Defaults optimized for maximum voice model similarity
   const [voiceModels, setVoiceModels] = useState<VoiceModel[]>([]);
-  const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | ''>('');
-  const [indexRatio, setIndexRatio] = useState(0.5);
-  const [pitchShift, setPitchShift] = useState(0);
+  const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | ''>(preSelectedModelId || '');
+  const [indexRatio, setIndexRatio] = useState(0.75); // Higher = more like target voice model
+  const [pitchShift, setPitchShift] = useState(0); // Default 0 (no pitch change)
   const [convertEffect, setConvertEffect] = useState('');
   
   // UI state
@@ -371,8 +377,8 @@ export function TTSGenerator() {
         voice: selectedVoice.id,
         convert_voice: true,
         voice_model_id: selectedVoiceModel,
-        index_ratio: indexRatio,
-        pitch_shift: pitchShift,
+        index_rate: indexRatio,
+        f0_up_key: pitchShift,
       };
       
       // Add effect to apply after conversion
@@ -598,21 +604,23 @@ export function TTSGenerator() {
           Voice Conversion (RVC)
         </h3>
         
-        <div>
-          <label className="block text-sm font-medium mb-2 text-gray-200">Voice Model</label>
-          <select
-            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-            value={selectedVoiceModel}
-            onChange={(e) => setSelectedVoiceModel(e.target.value ? Number(e.target.value) : '')}
-          >
-            <option value="">Select a voice model...</option>
-            {voiceModels.map((model) => (
-              <option key={model.id} value={model.id}>
-                {model.name} ({model.category})
-              </option>
-            ))}
-          </select>
-        </div>
+        {!hideModelSelector && (
+          <div>
+            <label className="block text-sm font-medium mb-2 text-gray-200">Voice Model</label>
+            <select
+              className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              value={selectedVoiceModel}
+              onChange={(e) => setSelectedVoiceModel(e.target.value ? Number(e.target.value) : '')}
+            >
+              <option value="">Select a voice model...</option>
+              {voiceModels.map((model) => (
+                <option key={model.id} value={model.id}>
+                  {model.name} ({model.category})
+                </option>
+              ))}
+            </select>
+          </div>
+        )}
         
         <div>
           <label className="block text-sm font-medium mb-2 text-gray-200">
@@ -648,7 +656,7 @@ export function TTSGenerator() {
             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Higher = more like target voice, Lower = more like source
+            Higher = more like voice model personality (0.7-0.85 recommended)
           </p>
         </div>
         
@@ -666,7 +674,7 @@ export function TTSGenerator() {
             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Adjust pitch: negative = deeper, positive = higher
+            Match pitch to voice model: +6 to +12 for higher voices, -6 to -12 for deeper
           </p>
         </div>
       </div>

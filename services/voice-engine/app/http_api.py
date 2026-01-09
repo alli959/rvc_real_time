@@ -33,6 +33,20 @@ app = FastAPI(
     version="1.0.0"
 )
 
+# Import YouTube service (optional)
+try:
+    from app.youtube_service import (
+        search_youtube, 
+        download_youtube_audio, 
+        get_video_info,
+        SearchResult,
+        is_cached
+    )
+    YOUTUBE_AVAILABLE = True
+except ImportError:
+    YOUTUBE_AVAILABLE = False
+    logger.warning("YouTube service not available - yt-dlp may not be installed")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -120,51 +134,52 @@ class HealthResponse(BaseModel):
 
 # Emotion presets - adjust prosody to simulate emotions
 # Format: (rate_adjustment, pitch_adjustment, description)
+# Enhanced values for more noticeable effect
 EMOTION_PRESETS: Dict[str, Dict[str, str]] = {
-    # Happy / Positive emotions
-    'happy': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Cheerful, upbeat tone'},
-    'excited': {'rate': '+20%', 'pitch': '+10Hz', 'desc': 'Very enthusiastic'},
-    'cheerful': {'rate': '+15%', 'pitch': '+8Hz', 'desc': 'Light and positive'},
-    'joyful': {'rate': '+10%', 'pitch': '+7Hz', 'desc': 'Full of joy'},
+    # Happy / Positive emotions - more dramatic pitch and speed
+    'happy': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Cheerful, upbeat tone'},
+    'excited': {'rate': '+35%', 'pitch': '+25Hz', 'desc': 'Very enthusiastic'},
+    'cheerful': {'rate': '+25%', 'pitch': '+18Hz', 'desc': 'Light and positive'},
+    'joyful': {'rate': '+22%', 'pitch': '+20Hz', 'desc': 'Full of joy'},
     
-    # Sad / Negative emotions
-    'sad': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Melancholic, slow'},
-    'melancholy': {'rate': '-20%', 'pitch': '-8Hz', 'desc': 'Deep sadness'},
-    'depressed': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'Very low energy'},
-    'disappointed': {'rate': '-10%', 'pitch': '-3Hz', 'desc': 'Let down feeling'},
+    # Sad / Negative emotions - slower and lower pitched
+    'sad': {'rate': '-25%', 'pitch': '-15Hz', 'desc': 'Melancholic, slow'},
+    'melancholy': {'rate': '-35%', 'pitch': '-20Hz', 'desc': 'Deep sadness'},
+    'depressed': {'rate': '-40%', 'pitch': '-25Hz', 'desc': 'Very low energy'},
+    'disappointed': {'rate': '-20%', 'pitch': '-10Hz', 'desc': 'Let down feeling'},
     
-    # Angry / Intense emotions
-    'angry': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Frustrated, intense'},
-    'furious': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Very angry'},
-    'annoyed': {'rate': '+3%', 'pitch': '+2Hz', 'desc': 'Mildly irritated'},
-    'frustrated': {'rate': '+5%', 'pitch': '+2Hz', 'desc': 'Exasperated'},
+    # Angry / Intense emotions - faster with higher pitch
+    'angry': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Frustrated, intense'},
+    'furious': {'rate': '+25%', 'pitch': '+15Hz', 'desc': 'Very angry'},
+    'annoyed': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Mildly irritated'},
+    'frustrated': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Exasperated'},
     
-    # Calm / Neutral emotions
-    'calm': {'rate': '-10%', 'pitch': '-2Hz', 'desc': 'Relaxed, peaceful'},
-    'peaceful': {'rate': '-15%', 'pitch': '-3Hz', 'desc': 'Very serene'},
-    'relaxed': {'rate': '-12%', 'pitch': '-2Hz', 'desc': 'At ease'},
+    # Calm / Neutral emotions - slower and slightly lower
+    'calm': {'rate': '-20%', 'pitch': '-8Hz', 'desc': 'Relaxed, peaceful'},
+    'peaceful': {'rate': '-30%', 'pitch': '-12Hz', 'desc': 'Very serene'},
+    'relaxed': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'At ease'},
     'neutral': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Standard tone'},
     
-    # Surprised / Shocked emotions
-    'surprised': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Caught off guard'},
-    'shocked': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Very surprised'},
-    'amazed': {'rate': '+10%', 'pitch': '+10Hz', 'desc': 'In awe'},
+    # Surprised / Shocked emotions - big pitch jumps
+    'surprised': {'rate': '+25%', 'pitch': '+25Hz', 'desc': 'Caught off guard'},
+    'shocked': {'rate': '+35%', 'pitch': '+35Hz', 'desc': 'Very surprised'},
+    'amazed': {'rate': '+20%', 'pitch': '+22Hz', 'desc': 'In awe'},
     
-    # Fear / Anxiety emotions
-    'scared': {'rate': '+10%', 'pitch': '+8Hz', 'desc': 'Frightened'},
-    'terrified': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Extremely scared'},
-    'anxious': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Nervous, worried'},
-    'nervous': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Slightly on edge'},
+    # Fear / Anxiety emotions - fast with trembling pitch
+    'scared': {'rate': '+20%', 'pitch': '+20Hz', 'desc': 'Frightened'},
+    'terrified': {'rate': '+30%', 'pitch': '+30Hz', 'desc': 'Extremely scared'},
+    'anxious': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Nervous, worried'},
+    'nervous': {'rate': '+12%', 'pitch': '+10Hz', 'desc': 'Slightly on edge'},
     
-    # Special expressions
-    'whisper': {'rate': '-20%', 'pitch': '-15Hz', 'desc': 'Quiet, secretive'},
-    'shouting': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Loud, emphatic'},
-    'sarcastic': {'rate': '-5%', 'pitch': '+5Hz', 'desc': 'Ironic tone'},
-    'romantic': {'rate': '-15%', 'pitch': '-5Hz', 'desc': 'Soft, loving'},
-    'serious': {'rate': '-8%', 'pitch': '-3Hz', 'desc': 'Grave, important'},
-    'playful': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Fun, teasing'},
-    'dramatic': {'rate': '-10%', 'pitch': '+5Hz', 'desc': 'Theatrical'},
-    'mysterious': {'rate': '-15%', 'pitch': '-8Hz', 'desc': 'Enigmatic'},
+    # Special expressions - more dramatic
+    'whisper': {'rate': '-30%', 'pitch': '-25Hz', 'desc': 'Quiet, secretive'},
+    'shouting': {'rate': '+25%', 'pitch': '+20Hz', 'desc': 'Loud, emphatic'},
+    'sarcastic': {'rate': '-10%', 'pitch': '+12Hz', 'desc': 'Ironic tone'},
+    'romantic': {'rate': '-25%', 'pitch': '-12Hz', 'desc': 'Soft, loving'},
+    'serious': {'rate': '-15%', 'pitch': '-10Hz', 'desc': 'Grave, important'},
+    'playful': {'rate': '+22%', 'pitch': '+18Hz', 'desc': 'Fun, teasing'},
+    'dramatic': {'rate': '-20%', 'pitch': '+15Hz', 'desc': 'Theatrical'},
+    'mysterious': {'rate': '-25%', 'pitch': '-18Hz', 'desc': 'Enigmatic'},
     
     # Actions / Sounds (simulated via text and prosody)
     'laugh': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Laughing sound'},
@@ -325,49 +340,67 @@ SOUND_REPLACEMENTS: Dict[str, str] = {
 
 # Audio effects to apply per emotion (processed after TTS generation)
 # Uses scipy/numpy for DSP - no external dependencies needed
+# Enhanced values for more noticeable emotional effects
 EMOTION_EFFECTS: Dict[str, Dict] = {
-    # Whisper: quieter, slight high-pass to remove rumble
-    'whisper': {'volume': 0.6, 'highpass': 200},
-    'mysterious': {'volume': 0.7, 'reverb': 0.3, 'lowpass': 6000},
+    # Whisper: quieter with breathy quality
+    'whisper': {'volume': 0.4, 'highpass': 250, 'noise': 0.02},
+    'mysterious': {'volume': 0.6, 'reverb': 0.5, 'lowpass': 5000},
     
-    # Shouting/Angry: louder, slight distortion/saturation
-    'shouting': {'volume': 1.4, 'saturation': 0.2},
-    'angry': {'volume': 1.2, 'saturation': 0.1},
-    'furious': {'volume': 1.3, 'saturation': 0.15},
+    # Shouting/Angry: louder with more aggressive saturation
+    'shouting': {'volume': 1.6, 'saturation': 0.35, 'compression': True},
+    'angry': {'volume': 1.4, 'saturation': 0.25, 'highpass': 150},
+    'furious': {'volume': 1.5, 'saturation': 0.3, 'highpass': 180, 'compression': True},
     
-    # Scared: tremolo effect (volume wobble)
-    'scared': {'tremolo': {'rate': 6, 'depth': 0.15}},
-    'terrified': {'tremolo': {'rate': 8, 'depth': 0.25}},
-    'nervous': {'tremolo': {'rate': 4, 'depth': 0.1}},
-    'anxious': {'tremolo': {'rate': 5, 'depth': 0.12}},
+    # Scared: stronger tremolo effect (voice shaking)
+    'scared': {'tremolo': {'rate': 8, 'depth': 0.25}, 'pitch_wobble': 0.1},
+    'terrified': {'tremolo': {'rate': 12, 'depth': 0.4}, 'pitch_wobble': 0.15, 'volume': 1.1},
+    'nervous': {'tremolo': {'rate': 5, 'depth': 0.15}},
+    'anxious': {'tremolo': {'rate': 6, 'depth': 0.2}},
     
-    # Sad: slightly quieter, subtle lowpass
-    'sad': {'volume': 0.85, 'lowpass': 7000},
-    'melancholy': {'volume': 0.8, 'lowpass': 6500},
-    'depressed': {'volume': 0.75, 'lowpass': 6000},
+    # Sad: quieter with more muffled quality (crying-like)
+    'sad': {'volume': 0.7, 'lowpass': 5500, 'reverb': 0.15},
+    'melancholy': {'volume': 0.65, 'lowpass': 5000, 'reverb': 0.2},
+    'depressed': {'volume': 0.55, 'lowpass': 4500, 'reverb': 0.25},
+    'crying': {'volume': 0.75, 'tremolo': {'rate': 4, 'depth': 0.2}, 'lowpass': 6000},
+    'sob': {'volume': 0.7, 'tremolo': {'rate': 5, 'depth': 0.25}, 'lowpass': 5500},
     
-    # Dramatic: reverb for theater effect
-    'dramatic': {'reverb': 0.25},
+    # Happy/Excited: brighter and slightly louder
+    'happy': {'volume': 1.15, 'highpass': 100, 'brightness': 0.2},
+    'excited': {'volume': 1.25, 'highpass': 120, 'brightness': 0.3},
+    'cheerful': {'volume': 1.1, 'brightness': 0.15},
+    'joyful': {'volume': 1.2, 'brightness': 0.25},
     
-    # Robot/electronic effect (for fun)
-    'robot': {'bitcrush': 8, 'lowpass': 4000},
+    # Dramatic: strong reverb for theater effect
+    'dramatic': {'reverb': 0.45, 'volume': 1.1},
+    
+    # Robot/electronic effect
+    'robot': {'bitcrush': 6, 'lowpass': 3500, 'formant_shift': 0.8},
     
     # Echo for spooky
-    'spooky': {'reverb': 0.4, 'lowpass': 5000, 'volume': 0.9},
-    'ethereal': {'reverb': 0.5, 'highpass': 300},
+    'spooky': {'reverb': 0.55, 'lowpass': 4500, 'volume': 0.8, 'echo': True},
+    'ethereal': {'reverb': 0.65, 'highpass': 350, 'shimmer': 0.3},
     
     # Phone/radio effect
-    'phone': {'lowpass': 3400, 'highpass': 300, 'volume': 0.9},
-    'radio': {'lowpass': 4000, 'highpass': 200, 'saturation': 0.1},
+    'phone': {'lowpass': 3200, 'highpass': 350, 'volume': 0.85, 'saturation': 0.1},
+    'radio': {'lowpass': 3800, 'highpass': 250, 'saturation': 0.15, 'noise': 0.015},
     
     # Megaphone
-    'megaphone': {'lowpass': 5000, 'highpass': 400, 'saturation': 0.2, 'volume': 1.2},
+    'megaphone': {'lowpass': 4500, 'highpass': 500, 'saturation': 0.3, 'volume': 1.4, 'compression': True},
     
     # Echo/reverb
-    'echo': {'reverb': 0.35},
+    'echo': {'reverb': 0.5, 'echo': True},
     
     # Underwater (heavy lowpass, slight pitch warble)
-    'underwater': {'lowpass': 1500, 'volume': 0.85, 'reverb': 0.2},
+    'underwater': {'lowpass': 1200, 'volume': 0.75, 'reverb': 0.3, 'pitch_wobble': 0.08},
+    
+    # Laughing sounds (warmer, brighter)
+    'laugh': {'brightness': 0.2, 'volume': 1.15},
+    'laughing': {'brightness': 0.25, 'volume': 1.2},
+    'giggle': {'brightness': 0.3, 'volume': 1.1, 'highpass': 150},
+    
+    # Scream/Shriek
+    'scream': {'volume': 1.5, 'saturation': 0.2, 'highpass': 200},
+    'shriek': {'volume': 1.4, 'saturation': 0.15, 'highpass': 300, 'brightness': 0.3},
 }
 
 
@@ -383,6 +416,12 @@ def apply_audio_effects(audio_data: np.ndarray, sample_rate: int, effects: Dict)
     - tremolo: Volume wobble {'rate': Hz, 'depth': 0.0-1.0}
     - reverb: Simple reverb amount (0.0-1.0)
     - bitcrush: Bit depth reduction (1-16)
+    - noise: Add subtle background noise (0.0-0.1)
+    - brightness: Boost high frequencies (0.0-1.0)
+    - compression: Apply dynamic range compression
+    - pitch_wobble: Random pitch variation (0.0-0.3)
+    - echo: Add distinct echo effect
+    - shimmer: Add ethereal shimmer effect
     """
     from scipy import signal as scipy_signal
     
@@ -396,12 +435,27 @@ def apply_audio_effects(audio_data: np.ndarray, sample_rate: int, effects: Dict)
     if max_val > 1.0:
         audio = audio / max_val
     
+    # Pitch wobble (random slight pitch variations for scared/underwater)
+    if 'pitch_wobble' in effects:
+        import librosa
+        amount = effects['pitch_wobble']
+        # Create random pitch curve
+        wobble_rate = 3  # Hz
+        t = np.arange(len(audio)) / sample_rate
+        wobble = amount * np.sin(2 * np.pi * wobble_rate * t + np.random.random() * 2 * np.pi)
+        # Apply time-varying pitch shift (approximated with amplitude modulation + slight resampling)
+        # This is a simplified approximation
+        mod_factor = 1 + wobble * 0.02
+        indices = np.clip(np.arange(len(audio)) * np.interp(np.arange(len(audio)), 
+                         np.arange(0, len(audio), 100), mod_factor[::100]), 0, len(audio)-1).astype(int)
+        audio = audio[indices]
+    
     # High-pass filter (remove low rumble)
     if 'highpass' in effects:
         cutoff = effects['highpass']
         nyquist = sample_rate / 2
         if cutoff < nyquist:
-            b, a = scipy_signal.butter(2, cutoff / nyquist, btype='high')
+            b, a = scipy_signal.butter(3, cutoff / nyquist, btype='high')
             audio = scipy_signal.filtfilt(b, a, audio)
     
     # Low-pass filter (muffle sound)
@@ -409,32 +463,85 @@ def apply_audio_effects(audio_data: np.ndarray, sample_rate: int, effects: Dict)
         cutoff = effects['lowpass']
         nyquist = sample_rate / 2
         if cutoff < nyquist:
-            b, a = scipy_signal.butter(2, cutoff / nyquist, btype='low')
+            b, a = scipy_signal.butter(3, cutoff / nyquist, btype='low')
             audio = scipy_signal.filtfilt(b, a, audio)
+    
+    # Brightness boost (enhance high frequencies)
+    if 'brightness' in effects:
+        amount = effects['brightness']
+        # High shelf boost
+        nyquist = sample_rate / 2
+        cutoff = 3000 / nyquist
+        if cutoff < 1:
+            b, a = scipy_signal.butter(2, cutoff, btype='high')
+            high_freq = scipy_signal.filtfilt(b, a, audio)
+            audio = audio + high_freq * amount
     
     # Saturation (soft clipping for angry/distorted sound)
     if 'saturation' in effects:
         amount = effects['saturation']
-        # Soft clipping using tanh
-        audio = np.tanh(audio * (1 + amount * 3)) / np.tanh(1 + amount * 3)
+        # More aggressive soft clipping using tanh
+        drive = 1 + amount * 5
+        audio = np.tanh(audio * drive) / np.tanh(drive)
+    
+    # Compression (dynamic range compression for shouting/megaphone)
+    if effects.get('compression'):
+        threshold = 0.5
+        ratio = 4.0
+        # Simple compression
+        mask = np.abs(audio) > threshold
+        audio[mask] = np.sign(audio[mask]) * (threshold + (np.abs(audio[mask]) - threshold) / ratio)
     
     # Tremolo (volume wobble for scared/nervous)
     if 'tremolo' in effects:
         rate = effects['tremolo'].get('rate', 5)  # Hz
         depth = effects['tremolo'].get('depth', 0.2)  # 0-1
         t = np.arange(len(audio)) / sample_rate
-        modulation = 1 - depth * (0.5 + 0.5 * np.sin(2 * np.pi * rate * t))
+        # Use combination of sine waves for more natural tremolo
+        modulation = 1 - depth * (0.5 + 0.5 * np.sin(2 * np.pi * rate * t) * 
+                                  (1 + 0.3 * np.sin(2 * np.pi * rate * 1.5 * t)))
         audio = audio * modulation
+    
+    # Add noise (for radio/whisper breathiness)
+    if 'noise' in effects:
+        amount = effects['noise']
+        noise = np.random.randn(len(audio)) * amount
+        audio = audio + noise
     
     # Simple reverb (convolution with exponential decay)
     if 'reverb' in effects:
         amount = effects['reverb']
-        reverb_time = 0.3  # seconds
+        reverb_time = 0.5  # seconds (increased from 0.3)
         reverb_samples = int(reverb_time * sample_rate)
-        impulse = np.exp(-np.linspace(0, 5, reverb_samples))
+        impulse = np.exp(-np.linspace(0, 6, reverb_samples))
         impulse = impulse / np.sum(impulse)  # Normalize
         reverb_signal = np.convolve(audio, impulse, mode='full')[:len(audio)]
         audio = audio * (1 - amount) + reverb_signal * amount
+    
+    # Echo effect (distinct delayed repeat)
+    if effects.get('echo'):
+        delay_time = 0.25  # seconds
+        decay = 0.4
+        delay_samples = int(delay_time * sample_rate)
+        echo_signal = np.zeros_like(audio)
+        if delay_samples < len(audio):
+            echo_signal[delay_samples:] = audio[:-delay_samples] * decay
+            # Add second echo
+            if delay_samples * 2 < len(audio):
+                echo_signal[delay_samples*2:] += audio[:-delay_samples*2] * decay * 0.5
+            audio = audio + echo_signal
+    
+    # Shimmer effect (ethereal octave shimmer)
+    if 'shimmer' in effects:
+        import librosa
+        amount = effects['shimmer']
+        # Create octave-up shimmer
+        shimmer = librosa.effects.pitch_shift(audio, sr=sample_rate, n_steps=12)
+        # Apply envelope following
+        envelope = np.abs(audio)
+        envelope = scipy_signal.filtfilt(*scipy_signal.butter(2, 10/(sample_rate/2)), envelope)
+        shimmer = shimmer * envelope * amount
+        audio = audio + shimmer
     
     # Bitcrush (lo-fi effect)
     if 'bitcrush' in effects:
@@ -446,7 +553,12 @@ def apply_audio_effects(audio_data: np.ndarray, sample_rate: int, effects: Dict)
     if 'volume' in effects:
         audio = audio * effects['volume']
     
-    # Clip to prevent distortion
+    # Final normalization to prevent clipping
+    max_val = np.max(np.abs(audio))
+    if max_val > 0.95:
+        audio = audio * (0.95 / max_val)
+    
+    # Clip to prevent any remaining distortion
     audio = np.clip(audio, -1.0, 1.0)
     
     return audio
@@ -686,6 +798,144 @@ async def generate_tts_audio(
     except Exception as e:
         logger.exception(f"TTS generation failed: {e}")
         raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+
+# =============================================================================
+# YouTube / Song Search API Endpoints
+# =============================================================================
+
+class YouTubeSearchRequest(BaseModel):
+    """YouTube search request"""
+    query: str = Field(..., description="Search query (artist, song name, etc.)", max_length=200)
+    max_results: int = Field(default=10, ge=1, le=25, description="Maximum results to return")
+
+
+class YouTubeSearchResult(BaseModel):
+    """Single search result"""
+    id: str
+    title: str
+    artist: str
+    duration: int
+    thumbnail: str
+    url: str
+    view_count: int
+    is_cached: bool = False
+
+
+class YouTubeSearchResponse(BaseModel):
+    """YouTube search response"""
+    results: List[YouTubeSearchResult]
+    query: str
+
+
+class YouTubeDownloadRequest(BaseModel):
+    """YouTube audio download request"""
+    video_id: str = Field(..., description="YouTube video ID")
+    use_cache: bool = Field(default=True, description="Use cached audio if available")
+
+
+class YouTubeDownloadResponse(BaseModel):
+    """YouTube download response"""
+    audio: str = Field(..., description="Base64 encoded WAV audio")
+    sample_rate: int
+    video_id: str
+    title: str = ""
+    artist: str = ""
+    duration: int = 0
+
+
+@app.post("/youtube/search", response_model=YouTubeSearchResponse)
+async def youtube_search(request: YouTubeSearchRequest):
+    """
+    Search YouTube for songs.
+    
+    Returns a list of search results with video IDs that can be used
+    with the /youtube/download endpoint.
+    """
+    if not YOUTUBE_AVAILABLE:
+        raise HTTPException(
+            status_code=501, 
+            detail="YouTube service not available. Install yt-dlp: pip install yt-dlp"
+        )
+    
+    try:
+        results = await search_youtube(request.query, request.max_results)
+        
+        return YouTubeSearchResponse(
+            results=[
+                YouTubeSearchResult(
+                    id=r.id,
+                    title=r.title,
+                    artist=r.artist,
+                    duration=r.duration,
+                    thumbnail=r.thumbnail,
+                    url=r.url,
+                    view_count=r.view_count,
+                    is_cached=is_cached(r.id)
+                )
+                for r in results
+            ],
+            query=request.query
+        )
+    except Exception as e:
+        logger.exception(f"YouTube search failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Search failed: {str(e)}")
+
+
+@app.post("/youtube/download", response_model=YouTubeDownloadResponse)
+async def youtube_download(request: YouTubeDownloadRequest):
+    """
+    Download audio from a YouTube video.
+    
+    Returns base64-encoded WAV audio that can be used directly with
+    the /audio/process endpoint for vocal splitting or swapping.
+    """
+    if not YOUTUBE_AVAILABLE:
+        raise HTTPException(
+            status_code=501, 
+            detail="YouTube service not available. Install yt-dlp: pip install yt-dlp"
+        )
+    
+    try:
+        # Get video info first
+        info = await get_video_info(request.video_id)
+        
+        # Download audio
+        audio_bytes, sample_rate = await download_youtube_audio(
+            request.video_id, 
+            use_cache=request.use_cache
+        )
+        
+        return YouTubeDownloadResponse(
+            audio=base64.b64encode(audio_bytes).decode('utf-8'),
+            sample_rate=sample_rate,
+            video_id=request.video_id,
+            title=info.get('title', ''),
+            artist=info.get('artist', ''),
+            duration=info.get('duration', 0)
+        )
+        
+    except Exception as e:
+        logger.exception(f"YouTube download failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+
+
+@app.get("/youtube/info/{video_id}")
+async def youtube_info(video_id: str):
+    """Get information about a YouTube video"""
+    if not YOUTUBE_AVAILABLE:
+        raise HTTPException(
+            status_code=501, 
+            detail="YouTube service not available. Install yt-dlp: pip install yt-dlp"
+        )
+    
+    try:
+        info = await get_video_info(video_id)
+        info['is_cached'] = is_cached(video_id)
+        return info
+    except Exception as e:
+        logger.exception(f"Failed to get video info: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to get info: {str(e)}")
 
 
 # =============================================================================
@@ -1186,6 +1436,7 @@ class AudioProcessRequest(BaseModel):
     protect: float = Field(default=0.4, description="Protect consonants (higher=more natural)")
     rms_mix_rate: float = Field(default=0.2, description="RMS mix rate")
     pitch_shift_all: int = Field(default=0, description="Pitch shift for ALL audio in semitones")
+    instrumental_pitch: Optional[int] = Field(default=None, description="Separate pitch shift for instrumental in semitones (overrides pitch_shift_all for instrumental)")
     quality_preset: Optional[str] = Field(default="natural", description="Quality preset: natural, balanced, accurate, maximum")
 
 
@@ -1274,13 +1525,20 @@ async def process_audio(request: AudioProcessRequest):
                 
                 logger.info(f"Separation complete: vocals shape={vocals.shape}, instrumental shape={instrumental.shape}")
                 
-                # Apply pitch shift to both vocals and instrumental if requested
-                pitch_shift = request.pitch_shift_all
-                if pitch_shift != 0:
-                    logger.info(f"Applying pitch shift of {pitch_shift} semitones to both tracks")
-                    vocals = pitch_shift_audio(vocals, 44100, pitch_shift)
-                    instrumental = pitch_shift_audio(instrumental, 44100, pitch_shift)
-                    logger.info(f"Pitch shift applied: vocals shape={vocals.shape}, instrumental shape={instrumental.shape}")
+                # Apply pitch shift to vocals
+                vocals_pitch = request.pitch_shift_all
+                # Use separate instrumental_pitch if provided, otherwise use pitch_shift_all
+                instrumental_pitch = request.instrumental_pitch if request.instrumental_pitch is not None else request.pitch_shift_all
+                
+                if vocals_pitch != 0:
+                    logger.info(f"Applying pitch shift of {vocals_pitch} semitones to vocals")
+                    vocals = pitch_shift_audio(vocals, 44100, vocals_pitch)
+                    logger.info(f"Vocals pitch shift applied: shape={vocals.shape}")
+                
+                if instrumental_pitch != 0:
+                    logger.info(f"Applying pitch shift of {instrumental_pitch} semitones to instrumental")
+                    instrumental = pitch_shift_audio(instrumental, 44100, instrumental_pitch)
+                    logger.info(f"Instrumental pitch shift applied: shape={instrumental.shape}")
                 
                 return AudioProcessResponse(
                     mode="split",
@@ -1432,7 +1690,8 @@ async def process_audio(request: AudioProcessRequest):
                 
                 # Apply pitch shift to instrumental if requested (vocals already shifted via f0_up_key)
                 instrumental_final = instrumental
-                instrumental_pitch = request.pitch_shift_all
+                # Use separate instrumental_pitch if provided, otherwise fall back to pitch_shift_all
+                instrumental_pitch = request.instrumental_pitch if request.instrumental_pitch is not None else request.pitch_shift_all
                 if instrumental_pitch != 0:
                     logger.info(f"Applying pitch shift of {instrumental_pitch} semitones to instrumental")
                     instrumental_final = pitch_shift_audio(instrumental, 44100, instrumental_pitch)

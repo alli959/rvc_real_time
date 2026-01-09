@@ -7,24 +7,18 @@ import { useDropzone } from 'react-dropzone';
 import {
   Upload,
   Mic,
-  Music,
   FileAudio,
   Play,
   Square,
   Download,
   Sparkles,
-  Split,
-  Merge,
   AlertCircle,
   CheckCircle2,
   Loader2,
-  Volume2,
-  Guitar,
   Trash2,
 } from 'lucide-react';
 
 type Tab = 'upload' | 'record';
-type ProcessingMode = 'convert' | 'split' | 'swap';
 
 interface AudioFile {
   file: File;
@@ -33,14 +27,13 @@ interface AudioFile {
 }
 
 interface ProcessedResult {
-  type: 'converted' | 'vocals' | 'instrumental' | 'swapped';
+  type: 'converted';
   url: string;
   name: string;
 }
 
 export default function AudioProcessingPage() {
   const [activeTab, setActiveTab] = useState<Tab>('upload');
-  const [processingMode, setProcessingMode] = useState<ProcessingMode>('convert');
   
   // Audio state
   const [audioFile, setAudioFile] = useState<AudioFile | null>(null);
@@ -69,7 +62,6 @@ export default function AudioProcessingPage() {
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [f0UpKey, setF0UpKey] = useState(0);
   const [indexRate, setIndexRate] = useState(0.75);
-  const [pitchShiftAll, setPitchShiftAll] = useState(0);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -79,12 +71,10 @@ export default function AudioProcessingPage() {
       setModelsLoading(true);
       setModelsError(null);
       try {
-        // Use per_page instead of all parameter for more reliable pagination
         const data = await voiceModelsApi.list({ per_page: 100 });
         const models = data.data || [];
         setVoiceModels(models);
         
-        // Auto-select first model if available
         if (models.length > 0 && !selectedModelId) {
           setSelectedModelId(models[0].id);
         }
@@ -189,15 +179,49 @@ export default function AudioProcessingPage() {
     }
   };
 
+  // Format recording time
+  const formatTime = (seconds: number) => {
+    const mins = Math.floor(seconds / 60);
+    const secs = seconds % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
   // Process audio
   const handleProcess = async () => {
-    const sourceAudio = activeTab === 'upload' ? audioFile : recordedAudio;
-    if (!sourceAudio) {
+    let base64Audio: string;
+    let audioName: string;
+    
+    // Get audio based on active tab
+    if (activeTab === 'upload' && audioFile) {
+      audioName = audioFile.name;
+      base64Audio = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1] || result;
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(audioFile.file);
+      });
+    } else if (activeTab === 'record' && recordedAudio) {
+      audioName = recordedAudio.name;
+      base64Audio = await new Promise<string>((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => {
+          const result = reader.result as string;
+          const base64 = result.split(',')[1] || result;
+          resolve(base64);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(recordedAudio.file);
+      });
+    } else {
       setError('Please select or record an audio file');
       return;
     }
 
-    if ((processingMode === 'convert' || processingMode === 'swap') && !selectedModelId) {
+    if (!selectedModelId) {
       setError('Please select a voice model');
       return;
     }
@@ -208,43 +232,21 @@ export default function AudioProcessingPage() {
     setProcessingProgress(0);
 
     try {
-      // Step 1: Read file as base64
-      setProcessingStep('Reading audio file...');
+      setProcessingStep('Preparing audio...');
       setProcessingProgress(10);
-      
-      const base64Audio = await new Promise<string>((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => {
-          const result = reader.result as string;
-          // Remove data URL prefix (e.g., "data:audio/wav;base64,")
-          const base64 = result.split(',')[1] || result;
-          resolve(base64);
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(sourceAudio.file);
-      });
 
-      // Step 2: Call API
-      const steps = {
-        'convert': ['Converting voice...', 'Finalizing...'],
-        'split': ['Analyzing frequencies...', 'Separating vocals...', 'Extracting instrumental...'],
-        'swap': ['Separating vocals...', 'Converting vocals...', 'Merging tracks...'],
-      };
-
-      const currentSteps = steps[processingMode];
-      setProcessingStep(currentSteps[0]);
+      setProcessingStep('Converting voice...');
       setProcessingProgress(30);
 
       const response = await audioProcessingApi.process({
         audio: base64Audio,
-        mode: processingMode,
-        model_id: selectedModelId || undefined,
+        mode: 'convert',
+        model_id: selectedModelId,
         f0_up_key: f0UpKey,
         index_rate: indexRate,
-        pitch_shift_all: (processingMode === 'split' || processingMode === 'swap') ? pitchShiftAll : undefined,
       });
 
-      setProcessingStep('Processing complete!');
+      setProcessingStep('Finalizing...');
       setProcessingProgress(90);
 
       // Helper to convert base64 to blob URL
@@ -259,33 +261,14 @@ export default function AudioProcessingPage() {
         return URL.createObjectURL(blob);
       };
 
-      // Build results based on mode
-      const newResults: ProcessedResult[] = [];
-      
-      if (processingMode === 'split') {
-        if (response.vocals) {
-          newResults.push({
-            type: 'vocals',
-            url: base64ToUrl(response.vocals),
-            name: `vocals_${sourceAudio.name.replace(/\.[^/.]+$/, '')}.wav`,
-          });
-        }
-        if (response.instrumental) {
-          newResults.push({
-            type: 'instrumental',
-            url: base64ToUrl(response.instrumental),
-            name: `instrumental_${sourceAudio.name.replace(/\.[^/.]+$/, '')}.wav`,
-          });
-        }
-      } else if (response.converted) {
-        newResults.push({
-          type: processingMode === 'swap' ? 'swapped' : 'converted',
+      if (response.converted) {
+        setResults([{
+          type: 'converted',
           url: base64ToUrl(response.converted),
-          name: `${processingMode === 'swap' ? 'swapped' : 'converted'}_${sourceAudio.name.replace(/\.[^/.]+$/, '')}.wav`,
-        });
+          name: `converted_${audioName.replace(/\.[^/.]+$/, '')}.wav`,
+        }]);
       }
 
-      setResults(newResults);
       setProcessingProgress(100);
       setProcessingStep('Complete!');
     } catch (err: any) {
@@ -303,14 +286,8 @@ export default function AudioProcessingPage() {
     a.click();
   };
 
-  // Format recording time
-  const formatTime = (seconds: number) => {
-    const mins = Math.floor(seconds / 60);
-    const secs = seconds % 60;
-    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
-  };
-
-  const currentAudio = activeTab === 'upload' ? audioFile : recordedAudio;
+  // Check if we have audio based on active tab
+  const hasAudio = activeTab === 'upload' ? !!audioFile : !!recordedAudio;
 
   return (
     <DashboardLayout>
@@ -318,78 +295,13 @@ export default function AudioProcessingPage() {
         {/* Header */}
         <div className="flex items-center gap-3">
           <div className="p-2 bg-primary-600/20 rounded-lg">
-            <Music className="h-6 w-6 text-primary-400" />
+            <Sparkles className="h-6 w-6 text-primary-400" />
           </div>
           <div>
-            <h1 className="text-2xl font-bold text-white">Audio Processing</h1>
+            <h1 className="text-2xl font-bold text-white">Voice Convert</h1>
             <p className="text-gray-400">
-              Convert voice, split vocals/instruments, or swap vocals in your audio files
+              Apply AI voice models to transform your audio
             </p>
-          </div>
-        </div>
-
-        {/* Processing Mode Selection */}
-        <div className="bg-gray-900 border border-gray-800 rounded-lg p-4">
-          <label className="block text-sm font-medium text-gray-300 mb-3">
-            Processing Mode
-          </label>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            <button
-              onClick={() => setProcessingMode('convert')}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                processingMode === 'convert'
-                  ? 'border-primary-500 bg-primary-500/10'
-                  : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-              }`}
-            >
-              <Sparkles className={`h-6 w-6 mx-auto mb-2 ${
-                processingMode === 'convert' ? 'text-primary-400' : 'text-gray-400'
-              }`} />
-              <div className={`font-medium ${processingMode === 'convert' ? 'text-white' : 'text-gray-300'}`}>
-                Voice Convert
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Apply a voice model to the audio
-              </p>
-            </button>
-
-            <button
-              onClick={() => setProcessingMode('split')}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                processingMode === 'split'
-                  ? 'border-primary-500 bg-primary-500/10'
-                  : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-              }`}
-            >
-              <Split className={`h-6 w-6 mx-auto mb-2 ${
-                processingMode === 'split' ? 'text-primary-400' : 'text-gray-400'
-              }`} />
-              <div className={`font-medium ${processingMode === 'split' ? 'text-white' : 'text-gray-300'}`}>
-                Vocal Splitter
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Separate vocals & instrumentals
-              </p>
-            </button>
-
-            <button
-              onClick={() => setProcessingMode('swap')}
-              className={`p-4 rounded-lg border-2 transition-all ${
-                processingMode === 'swap'
-                  ? 'border-primary-500 bg-primary-500/10'
-                  : 'border-gray-700 bg-gray-800/50 hover:border-gray-600'
-              }`}
-            >
-              <Merge className={`h-6 w-6 mx-auto mb-2 ${
-                processingMode === 'swap' ? 'text-primary-400' : 'text-gray-400'
-              }`} />
-              <div className={`font-medium ${processingMode === 'swap' ? 'text-white' : 'text-gray-300'}`}>
-                Vocal Swap
-              </div>
-              <p className="text-xs text-gray-500 mt-1">
-                Replace vocals with converted voice
-              </p>
-            </button>
           </div>
         </div>
 
@@ -533,113 +445,77 @@ export default function AudioProcessingPage() {
           </div>
         </div>
 
-        {/* Voice Model Selection (for convert and swap modes) */}
-        {(processingMode === 'convert' || processingMode === 'swap') && (
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
-            <h3 className="font-medium text-white flex items-center gap-2">
-              <Sparkles className="h-5 w-5 text-primary-400" />
-              Voice Model
-            </h3>
+        {/* Voice Model Selection */}
+        <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+          <h3 className="font-medium text-white flex items-center gap-2">
+            <Sparkles className="h-5 w-5 text-primary-400" />
+            Voice Model
+          </h3>
 
-            {modelsLoading ? (
-              <div className="flex items-center gap-2 text-gray-400">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading voice models...
-              </div>
-            ) : modelsError ? (
-              <div className="flex items-center gap-2 text-red-400">
-                <AlertCircle className="h-4 w-4" />
-                {modelsError}
-              </div>
-            ) : voiceModels.length === 0 ? (
-              <div className="text-gray-400 text-sm">
-                No voice models available. Please upload or enable some models first.
-              </div>
-            ) : (
-              <>
-                <div>
-                  <select
-                    value={selectedModelId || ''}
-                    onChange={(e) => setSelectedModelId(e.target.value ? parseInt(e.target.value) : null)}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
-                  >
-                    <option value="">Select a voice model...</option>
-                    {voiceModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Pitch Shift: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
-                    </label>
-                    <input
-                      type="range"
-                      min="-12"
-                      max="12"
-                      value={f0UpKey}
-                      onChange={(e) => setF0UpKey(parseInt(e.target.value))}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                    />
-                  </div>
-
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Index Rate: {indexRate.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="100"
-                      value={indexRate * 100}
-                      onChange={(e) => setIndexRate(parseInt(e.target.value) / 100)}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
-          </div>
-        )}
-
-        {/* Pitch Shift Options (for split and swap modes) */}
-        {(processingMode === 'split' || processingMode === 'swap') && (
-          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
-            <h3 className="font-medium text-white flex items-center gap-2">
-              <Music className="h-5 w-5 text-primary-400" />
-              {processingMode === 'split' ? 'Output Pitch Adjustment' : 'Instrumental Pitch Adjustment'}
-            </h3>
-            <p className="text-sm text-gray-400">
-              {processingMode === 'split' 
-                ? 'Shift the pitch of both vocals and instrumental in the output'
-                : 'Shift the pitch of the instrumental track (vocals are adjusted separately via "Pitch Shift" above)'
-              }
-            </p>
-            
-            <div>
-              <label className="block text-sm font-medium text-gray-300 mb-2">
-                {processingMode === 'split' ? 'Pitch Shift (Both)' : 'Instrumental Pitch'}: {pitchShiftAll > 0 ? `+${pitchShiftAll}` : pitchShiftAll} semitones
-              </label>
-              <input
-                type="range"
-                min="-12"
-                max="12"
-                value={pitchShiftAll}
-                onChange={(e) => setPitchShiftAll(parseInt(e.target.value))}
-                className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
-              />
-              <div className="flex justify-between text-xs text-gray-500 mt-1">
-                <span>-12 (lower)</span>
-                <span>0 (original)</span>
-                <span>+12 (higher)</span>
-              </div>
+          {modelsLoading ? (
+            <div className="flex items-center gap-2 text-gray-400">
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Loading voice models...
             </div>
-          </div>
-        )}
+          ) : modelsError ? (
+            <div className="flex items-center gap-2 text-red-400">
+              <AlertCircle className="h-4 w-4" />
+              {modelsError}
+            </div>
+          ) : voiceModels.length === 0 ? (
+            <div className="text-gray-400 text-sm">
+              No voice models available. Please upload or enable some models first.
+            </div>
+          ) : (
+            <>
+              <div>
+                <select
+                  value={selectedModelId || ''}
+                  onChange={(e) => setSelectedModelId(e.target.value ? parseInt(e.target.value) : null)}
+                  className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-primary-500 focus:border-transparent"
+                >
+                  <option value="">Select a voice model...</option>
+                  {voiceModels.map((m) => (
+                    <option key={m.id} value={m.id}>
+                      {m.name}
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Pitch Shift: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
+                  </label>
+                  <input
+                    type="range"
+                    min="-12"
+                    max="12"
+                    value={f0UpKey}
+                    onChange={(e) => setF0UpKey(parseInt(e.target.value))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">
+                    Index Rate: {indexRate.toFixed(2)}
+                  </label>
+                  <input
+                    type="range"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    value={indexRate}
+                    onChange={(e) => setIndexRate(parseFloat(e.target.value))}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-primary-500"
+                  />
+                </div>
+              </div>
+            </>
+          )}
+        </div>
 
         {/* Error Message */}
         {error && (
@@ -680,13 +556,7 @@ export default function AudioProcessingPage() {
                   className="flex items-center justify-between p-4 bg-gray-800 rounded-lg"
                 >
                   <div className="flex items-center gap-3">
-                    {result.type === 'vocals' ? (
-                      <Volume2 className="h-5 w-5 text-blue-400" />
-                    ) : result.type === 'instrumental' ? (
-                      <Guitar className="h-5 w-5 text-purple-400" />
-                    ) : (
-                      <Sparkles className="h-5 w-5 text-primary-400" />
-                    )}
+                    <Sparkles className="h-5 w-5 text-primary-400" />
                     <div>
                       <p className="text-white font-medium">{result.name}</p>
                       <p className="text-xs text-gray-400 capitalize">{result.type}</p>
@@ -719,7 +589,7 @@ export default function AudioProcessingPage() {
         {/* Process Button */}
         <button
           onClick={handleProcess}
-          disabled={isProcessing || !currentAudio || ((processingMode === 'convert' || processingMode === 'swap') && !selectedModelId)}
+          disabled={isProcessing || !hasAudio || !selectedModelId}
           className="w-full py-4 bg-primary-600 text-white rounded-lg hover:bg-primary-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium text-lg"
         >
           {isProcessing ? (
@@ -729,22 +599,8 @@ export default function AudioProcessingPage() {
             </>
           ) : (
             <>
-              {processingMode === 'convert' ? (
-                <>
-                  <Sparkles className="h-5 w-5" />
-                  Convert Voice
-                </>
-              ) : processingMode === 'split' ? (
-                <>
-                  <Split className="h-5 w-5" />
-                  Split Audio
-                </>
-              ) : (
-                <>
-                  <Merge className="h-5 w-5" />
-                  Swap Vocals
-                </>
-              )}
+              <Sparkles className="h-5 w-5" />
+              Convert Voice
             </>
           )}
         </button>

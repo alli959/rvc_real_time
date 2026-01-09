@@ -10,10 +10,15 @@
 
 MorphVox is a comprehensive AI voice conversion platform featuring:
 
-- **🌐 WebUI** - Modern Next.js frontend for model browsing and voice conversion
+- **🌐 WebUI** - Modern Next.js frontend for model browsing, voice conversion, and TTS
 - **🔧 API Backend** - Laravel API for user management, model registry, and job processing
 - **🎤 Voice Engine** - Python RVC service for real-time voice conversion
-- **📦 S3 Storage** - MinIO for scalable object storage
+- **📦 S3 Storage** - MinIO for scalable object storage with presigned URLs
+- **🗣️ Text-to-Speech** - Edge TTS integration with 50+ voices and emotion/style support
+- **🎵 Audio Processing** - Voice conversion, vocal separation (UVR5), and voice swap
+- **🎶 Song Remix** - Split vocals from instrumentals and swap voices in songs
+- **👤 Admin Panel** - Full administration dashboard at admin.morphvox.net
+- **🔐 OAuth Login** - Google and GitHub OAuth authentication support
 
 ## 📁 Project Structure
 
@@ -114,10 +119,12 @@ async def convert_voice():
 
 | Role | Capabilities |
 |------|-------------|
-| **user** | Use public models, create jobs |
-| **premium** | Upload private models |
-| **creator** | Train custom models |
-| **admin** | Full platform access |
+| **user** | Use public models, TTS, create jobs |
+| **premium** | Upload private models, extended usage |
+| **creator** | Train custom models, monetization |
+| **admin** | Full platform access, admin panel |
+
+> Users can request role upgrades through the platform. Admins can approve/reject role requests.
 
 ## 📚 Documentation
 
@@ -173,6 +180,16 @@ python main.py --mode api
 - [x] Laravel API with auth & permissions
 - [x] Next.js WebUI scaffold
 - [x] Docker Compose infrastructure
+- [x] Text-to-Speech with Edge TTS (50+ voices)
+- [x] Audio processing (vocal separation, voice swap)
+- [x] Admin panel (admin.morphvox.net)
+- [x] Role request system
+- [x] Job queue tracking & history
+- [x] YouTube audio download integration
+- [x] OAuth login (Google & GitHub)
+- [x] S3 storage with presigned URLs
+- [x] Combined models page with tabs (Community/My Models)
+- [x] Dedicated Song Remix page
 - [ ] Model training pipeline
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription billing

@@ -83,6 +83,24 @@ python3 main.py --mode api
 python3 examples/socket_client.py
 ```
 
+### 6. Windows Full Client (`windows_full_client.py`)
+
+Complete Windows client with GUI for voice conversion:
+
+```bash
+# On Windows:
+python examples/windows_full_client.py
+```
+
+### 7. Windows Audio Receiver (`windows_audio_receiver.py`)
+
+Receives audio from remote RVC server and plays through virtual audio device:
+
+```bash
+# On Windows (requires VB-Cable):
+python examples/windows_audio_receiver.py --output-device "CABLE Input"
+```
+
 ## Requirements
 
 ```bash

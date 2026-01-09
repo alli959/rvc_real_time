@@ -164,6 +164,17 @@ export const authApi = {
     const response = await api.get('/auth/me');
     return response.data;
   },
+
+  // OAuth methods
+  getOAuthUrl: async (provider: 'google' | 'github'): Promise<{ url: string }> => {
+    const response = await api.get(`/auth/${provider}/redirect`);
+    return response.data;
+  },
+
+  handleOAuthCallback: async (provider: 'google' | 'github', code: string) => {
+    const response = await api.post(`/auth/${provider}/callback`, { code });
+    return response.data;
+  },
 };
 
 // =============================================================================
@@ -547,6 +558,7 @@ export interface AudioProcessRequest {
   f0_up_key?: number;
   index_rate?: number;
   pitch_shift_all?: number; // Pitch shift for both vocals and instrumental (split mode) or just instrumental (swap mode)
+  instrumental_pitch?: number; // Separate instrumental pitch shift (optional, used when different from pitch_shift_all)
 }
 
 export interface AudioProcessResponse {
@@ -573,8 +585,64 @@ export const audioProcessingApi = {
       f0_up_key: request.f0_up_key || 0,
       index_rate: request.index_rate || 0.75,
       pitch_shift_all: request.pitch_shift_all || 0,
+      instrumental_pitch: request.instrumental_pitch,
     });
     
+    return response.data;
+  },
+};
+
+// =============================================================================
+// YouTube Song Search API
+// =============================================================================
+
+export interface YouTubeSearchResult {
+  id: string;
+  title: string;
+  artist: string;
+  duration: number; // seconds
+  thumbnail: string;
+  url: string;
+  view_count: number;
+  is_cached: boolean;
+}
+
+export interface YouTubeSearchResponse {
+  results: YouTubeSearchResult[];
+  query: string;
+}
+
+export interface YouTubeDownloadResponse {
+  audio: string; // Base64 encoded WAV
+  sample_rate: number;
+  video_id: string;
+  title: string;
+  artist: string;
+  duration: number;
+}
+
+export const youtubeApi = {
+  /**
+   * Search YouTube for songs
+   */
+  search: async (query: string, maxResults: number = 10): Promise<YouTubeSearchResponse> => {
+    const response = await api.post('/youtube/search', { query, max_results: maxResults });
+    return response.data;
+  },
+
+  /**
+   * Download audio from YouTube video
+   */
+  download: async (videoId: string, useCache: boolean = true): Promise<YouTubeDownloadResponse> => {
+    const response = await api.post('/youtube/download', { video_id: videoId, use_cache: useCache });
+    return response.data;
+  },
+
+  /**
+   * Get video info
+   */
+  info: async (videoId: string) => {
+    const response = await api.get(`/youtube/info/${videoId}`);
     return response.data;
   },
 };

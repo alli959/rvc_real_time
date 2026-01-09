@@ -16,6 +16,9 @@ import {
   Menu,
   X,
   Loader2,
+  Music,
+  ChevronDown,
+  Users,
 } from 'lucide-react';
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
@@ -32,6 +35,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const { isAuthenticated, user, clearAuth, isHydrated, canUploadModels } = useAuthStore();
   const { isLoading, isReady } = useAuthContext();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
+  const [modelsDropdownOpen, setModelsDropdownOpen] = useState(false);
 
   // Redirect if not authenticated (only after hydration is complete)
   useEffect(() => {
@@ -68,9 +72,9 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
   const navItems = [
     { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
-    { href: '/dashboard/models', icon: Box, label: 'My Models' },
     { href: '/dashboard/tts', icon: Volume2, label: 'Text to Speech' },
     { href: '/dashboard/audio', icon: FileAudio, label: 'Audio Processing' },
+    { href: '/dashboard/song-remix', icon: Music, label: 'Song Remix' },
     { href: '/dashboard/jobs', icon: ListMusic, label: 'My Jobs' },
     { href: '/dashboard/settings', icon: Settings, label: 'Settings' },
   ];
@@ -124,7 +128,65 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
         </div>
 
         <nav className="flex-1 p-4 space-y-1 overflow-y-auto">
-          {navItems.map(({ href, icon, label }) => (
+          {/* Dashboard */}
+          <NavItem 
+            href="/dashboard" 
+            icon={LayoutDashboard} 
+            active={pathname === '/dashboard'}
+            onClick={() => setMobileMenuOpen(false)}
+          >
+            Dashboard
+          </NavItem>
+
+          {/* Models Dropdown */}
+          <div className="space-y-1">
+            <button
+              onClick={() => setModelsDropdownOpen(!modelsDropdownOpen)}
+              className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
+                pathname === '/dashboard/models' || pathname === '/models'
+                  ? 'bg-primary-600/20 text-primary-400'
+                  : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                <Box className="h-5 w-5" />
+                <span>Models</span>
+              </div>
+              <ChevronDown className={`h-4 w-4 transition-transform ${modelsDropdownOpen ? 'rotate-180' : ''}`} />
+            </button>
+            
+            {modelsDropdownOpen && (
+              <div className="ml-4 pl-4 border-l border-gray-700 space-y-1">
+                <Link
+                  href="/dashboard/models"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
+                    pathname === '/dashboard/models'
+                      ? 'bg-primary-600/20 text-primary-400'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                  }`}
+                >
+                  <Box className="h-4 w-4" />
+                  My Models
+                </Link>
+                <Link
+                  href="/models?tab=community"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
+                    pathname === '/models'
+                      ? 'bg-primary-600/20 text-primary-400'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                  }`}
+                >
+                  <Users className="h-4 w-4" />
+                  Community Models
+                </Link>
+              </div>
+            )}
+          </div>
+
+          {/* Other Nav Items */}
+          {navItems.slice(1).map(({ href, icon, label }) => (
             <NavItem 
               key={href}
               href={href} 
