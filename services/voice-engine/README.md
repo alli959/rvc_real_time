@@ -18,7 +18,10 @@ Real-time voice conversion application using **RVC (Retrieval-based Voice Conver
 - 🧠 **HuBERT feature extraction** (required)
 - 🎼 **RMVPE pitch extraction** (recommended; required if `F0_METHOD=rmvpe`)
 - 🧲 **Retrieval index support** (`.index`) with blend control (`INDEX_RATE`)
-- 🌐 **Remote conversion** via WebSocket or raw TCP socket server
+- 🌐 **HTTP API** - RESTful endpoints for file-based conversion
+- 🌐 **WebSocket API** - Real-time streaming via WebSocket server
+- 🔌 **TCP Socket** - Raw socket server for direct integration
+- 🎵 **Vocal Separation** - UVR5 for vocals/instrumental separation
 - ⚡ **GPU support** (CUDA auto-detect; inference runs on GPU when available)
 
 ---
@@ -161,7 +164,30 @@ python main.py --mode streaming \
 ```
 
 > **WSL/headless warning:** If you get ALSA errors like `cannot find card '0'` or PyAudio `Wait timed out`, your environment doesn’t expose a usable audio device. Run streaming mode on a machine with real audio I/O (native Linux/Windows/macOS), or configure audio passthrough.
+### HTTP API (RESTful endpoints)
 
+The HTTP API runs on port 8000 (by default) and provides file-based endpoints:
+
+```bash
+# Start HTTP API server
+python main.py --mode api
+
+# Endpoints:
+# POST /convert - Convert audio file
+# POST /split - Separate vocals/instrumental (UVR5)
+# POST /swap - Split, convert vocals, merge back
+# GET /models - List available models
+# GET /health - Health check
+```
+
+Example curl request:
+```bash
+curl -X POST http://localhost:8000/convert \
+  -F "audio=@input.wav" \
+  -F "model=BillCipher" \
+  -F "f0_up_key=0" \
+  -o output.wav
+```
 ---
 
 ## Command Line Options

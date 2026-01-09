@@ -2,11 +2,13 @@
 
 use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Api\AuthController;
+use App\Http\Controllers\Api\OAuthController;
 use App\Http\Controllers\Api\VoiceModelController;
 use App\Http\Controllers\Api\ModelUploadController;
 use App\Http\Controllers\Api\TTSController;
 use App\Http\Controllers\Api\JobController;
 use App\Http\Controllers\Api\RoleRequestController;
+use App\Http\Controllers\Api\YouTubeController;
 use App\Http\Controllers\Api\AudioProcessingController;
 
 /*
@@ -29,6 +31,14 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::get('/invitation/{token}', [AuthController::class, 'checkInvitation']);
     Route::post('/register-with-invite', [AuthController::class, 'registerWithInvitation']);
+    
+    // OAuth routes
+    Route::get('/{provider}/redirect', [OAuthController::class, 'redirect'])
+        ->where('provider', 'google|github');
+    Route::get('/{provider}/callback', [OAuthController::class, 'callback'])
+        ->where('provider', 'google|github');
+    Route::post('/{provider}/callback', [OAuthController::class, 'handleCode'])
+        ->where('provider', 'google|github');
 });
 
 // Voice models - unified endpoint for all models (system + user-uploaded)
@@ -123,6 +133,15 @@ Route::middleware('auth:sanctum')->group(function () {
     // ------------------------------------------------------------------
     Route::prefix('audio')->group(function () {
         Route::post('/process', [AudioProcessingController::class, 'process']);
+    });
+
+    // ------------------------------------------------------------------
+    // YouTube Song Search & Download
+    // ------------------------------------------------------------------
+    Route::prefix('youtube')->group(function () {
+        Route::post('/search', [YouTubeController::class, 'search']);
+        Route::post('/download', [YouTubeController::class, 'download']);
+        Route::get('/info/{videoId}', [YouTubeController::class, 'info']);
     });
 
     // ------------------------------------------------------------------

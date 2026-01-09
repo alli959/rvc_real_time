@@ -1,7 +1,8 @@
 import Link from 'next/link';
-import { Sparkles, Zap, Shield } from 'lucide-react';
+import { Sparkles, Zap, Shield, Mic2, Upload, Split, Music } from 'lucide-react';
 import { Navbar } from '@/components/navbar';
 import { Footer } from '@/components/footer';
+import { AuthAwareHero, AuthAwareCTA } from '@/components/home-auth-sections';
 
 export default function Home() {
   return (
@@ -9,48 +10,8 @@ export default function Home() {
       {/* Navigation */}
       <Navbar />
 
-      {/* Hero Section */}
-      <section className="pt-32 pb-20 px-4">
-        <div className="max-w-7xl mx-auto text-center">
-          <h1 className="text-5xl md:text-7xl font-bold mb-6">
-            Transform Your Voice with{' '}
-            <span className="gradient-text">AI</span>
-          </h1>
-          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-8">
-            Real-time voice conversion powered by state-of-the-art RVC technology. 
-            Create, share, and use custom voice models in seconds.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link 
-              href="/register" 
-              className="bg-primary-600 hover:bg-primary-700 text-white px-8 py-3 rounded-lg text-lg font-semibold transition-colors flex items-center gap-2"
-            >
-              <Sparkles className="h-5 w-5" />
-              Start Converting
-            </Link>
-            <Link 
-              href="/models" 
-              className="glass hover:bg-white/10 text-white px-8 py-3 rounded-lg text-lg font-semibold transition-colors"
-            >
-              Browse Models
-            </Link>
-          </div>
-
-          {/* Waveform Animation */}
-          <div className="mt-16 flex items-center justify-center gap-1">
-            {[...Array(20)].map((_, i) => (
-              <div
-                key={i}
-                className="w-1 bg-gradient-to-t from-primary-600 to-accent-500 rounded-full waveform-bar"
-                style={{
-                  height: `${Math.random() * 40 + 20}px`,
-                  animationDelay: `${i * 50}ms`,
-                }}
-              />
-            ))}
-          </div>
-        </div>
-      </section>
+      {/* Hero Section - Auth Aware */}
+      <AuthAwareHero />
 
       {/* Features Section */}
       <section className="py-20 px-4">
@@ -78,22 +39,8 @@ export default function Home() {
         </div>
       </section>
 
-      {/* CTA Section */}
-      <section className="py-20 px-4">
-        <div className="max-w-4xl mx-auto glass rounded-2xl p-12 text-center">
-          <h2 className="text-3xl font-bold mb-4">Ready to Transform?</h2>
-          <p className="text-gray-400 mb-8">
-            Join thousands of creators using MorphVox for content creation, 
-            entertainment, and accessibility.
-          </p>
-          <Link 
-            href="/register" 
-            className="bg-gradient-to-r from-primary-600 to-accent-600 hover:from-primary-700 hover:to-accent-700 text-white px-8 py-3 rounded-lg text-lg font-semibold transition-all"
-          >
-            Create Free Account
-          </Link>
-        </div>
-      </section>
+      {/* CTA Section - Auth Aware */}
+      <AuthAwareCTA />
 
       {/* Footer */}
       <Footer />

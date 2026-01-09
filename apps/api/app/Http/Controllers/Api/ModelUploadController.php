@@ -13,10 +13,36 @@ use Illuminate\Validation\Rules\File;
  * Controller for direct model file uploads.
  * 
  * Handles uploading .pth model files, .index files, and config.json files
- * directly to the server (stored in S3/MinIO).
+ * to either S3/MinIO or local storage based on configuration.
  */
 class ModelUploadController extends Controller
 {
+    /**
+     * Get the configured storage disk and type for model uploads
+     */
+    protected function getStorageDisk(): array
+    {
+        $defaultDisk = config('filesystems.default', 'local');
+        $preferS3 = env('MODEL_STORAGE', $defaultDisk) === 's3';
+        
+        // Check if S3 is configured and accessible
+        if ($preferS3) {
+            $s3Config = config('filesystems.disks.s3');
+            if (!empty($s3Config['key']) && !empty($s3Config['secret']) && !empty($s3Config['bucket'])) {
+                return [
+                    'disk' => Storage::disk('s3'),
+                    'type' => 's3'
+                ];
+            }
+            \Log::warning('S3 preferred but not configured, falling back to local storage');
+        }
+        
+        return [
+            'disk' => Storage::disk('local'),
+            'type' => 'local'
+        ];
+    }
+
     /**
      * Upload model files directly (model.pth, model.index, config.json)
      * 
@@ -51,7 +77,7 @@ class ModelUploadController extends Controller
             'model_file' => [
                 'required',
                 'file',
-                'max:102400', // 100MB max (matches PHP upload_max_filesize)
+                'max:204800', // 200MB max (increased to match PHP upload_max_filesize)
                 function ($attribute, $value, $fail) {
                     $ext = strtolower($value->getClientOriginalExtension());
                     if ($ext !== 'pth') {
@@ -87,6 +113,11 @@ class ModelUploadController extends Controller
             ],
         ]);
 
+        // Get storage disk (S3 or local)
+        $storage = $this->getStorageDisk();
+        $disk = $storage['disk'];
+        $storageType = $storage['type'];
+
         // Create the model record first
         $voiceModel = VoiceModel::create([
             'uuid' => (string) Str::uuid(),
@@ -98,22 +129,31 @@ class ModelUploadController extends Controller
             'tags' => $validated['tags'] ?? [],
             'has_consent' => $validated['has_consent'] ?? false,
             'consent_notes' => $validated['consent_notes'] ?? null,
-            'storage_type' => 's3',
+            'storage_type' => $storageType,
             'status' => 'pending',
         ]);
 
-        $prefix = $voiceModel->getStoragePrefix();
-        $disk = Storage::disk('s3');
+        // For local storage, use models directory; for S3 use uuid prefix
+        $prefix = $storageType === 'local' 
+            ? 'models/' . $voiceModel->uuid
+            : $voiceModel->getStoragePrefix();
 
         try {
-            // Upload model file
+            // Upload model file using streaming to handle large files
             $modelFile = $request->file('model_file');
             $modelPath = "{$prefix}/model.pth";
-            $disk->putFileAs(
-                dirname($modelPath),
-                $modelFile,
-                basename($modelPath)
-            );
+            
+            \Log::info("Starting model upload: {$modelPath}, size: " . $modelFile->getSize());
+            
+            // Use stream for better memory handling with large files
+            $stream = fopen($modelFile->getRealPath(), 'r');
+            $disk->put($modelPath, $stream);
+            if (is_resource($stream)) {
+                fclose($stream);
+            }
+            
+            \Log::info("Model file uploaded successfully: {$modelPath}");
+            
             $modelSize = $modelFile->getSize();
 
             // Upload index file if provided
@@ -121,12 +161,17 @@ class ModelUploadController extends Controller
             if ($request->hasFile('index_file')) {
                 $indexFile = $request->file('index_file');
                 $indexPath = "{$prefix}/model.index";
-                $disk->putFileAs(
-                    dirname($indexPath),
-                    $indexFile,
-                    basename($indexPath)
-                );
+                
+                \Log::info("Uploading index file: {$indexPath}");
+                
+                $indexStream = fopen($indexFile->getRealPath(), 'r');
+                $disk->put($indexPath, $indexStream);
+                if (is_resource($indexStream)) {
+                    fclose($indexStream);
+                }
+                
                 $modelSize += $indexFile->getSize();
+                \Log::info("Index file uploaded successfully");
             }
 
             // Upload config file if provided
@@ -134,12 +179,17 @@ class ModelUploadController extends Controller
             if ($request->hasFile('config_file')) {
                 $configFile = $request->file('config_file');
                 $configPath = "{$prefix}/config.json";
-                $disk->putFileAs(
-                    dirname($configPath),
-                    $configFile,
-                    basename($configPath)
-                );
+                
+                \Log::info("Uploading config file: {$configPath}");
+                
+                $configStream = fopen($configFile->getRealPath(), 'r');
+                $disk->put($configPath, $configStream);
+                if (is_resource($configStream)) {
+                    fclose($configStream);
+                }
+                
                 $modelSize += $configFile->getSize();
+                \Log::info("Config file uploaded successfully");
             }
 
             // Update model record with paths
@@ -151,6 +201,8 @@ class ModelUploadController extends Controller
                 'size_bytes' => $modelSize,
                 'status' => 'ready',
             ]);
+            
+            \Log::info("Model upload complete: {$voiceModel->uuid}, total size: {$modelSize}");
 
             return response()->json([
                 'message' => 'Model uploaded successfully',
@@ -158,6 +210,11 @@ class ModelUploadController extends Controller
             ], 201);
 
         } catch (\Exception $e) {
+            \Log::error("Model upload failed: " . $e->getMessage(), [
+                'model_uuid' => $voiceModel->uuid ?? null,
+                'exception' => $e,
+            ]);
+            
             // Clean up on failure
             $voiceModel->delete();
             $disk->deleteDirectory($prefix);
@@ -215,8 +272,13 @@ class ModelUploadController extends Controller
             ], 422);
         }
 
-        $prefix = $voiceModel->getStoragePrefix();
-        $disk = Storage::disk('s3');
+        // Use the model's storage type to determine which disk to use
+        $disk = $voiceModel->storage_type === 's3' 
+            ? Storage::disk('s3') 
+            : Storage::disk('local');
+        $prefix = $voiceModel->storage_type === 'local'
+            ? 'models/' . $voiceModel->uuid
+            : $voiceModel->getStoragePrefix();
         $updates = [];
 
         try {
@@ -273,7 +335,7 @@ class ModelUploadController extends Controller
             'model_file' => [
                 'required',
                 'file',
-                'max:102400', // 100MB max (matches PHP upload_max_filesize)
+                'max:204800', // 200MB max
                 function ($attribute, $value, $fail) {
                     $ext = strtolower($value->getClientOriginalExtension());
                     if ($ext !== 'pth') {
@@ -283,8 +345,13 @@ class ModelUploadController extends Controller
             ],
         ]);
 
-        $prefix = $voiceModel->getStoragePrefix();
-        $disk = Storage::disk('s3');
+        // Use the model's storage type to determine which disk to use
+        $disk = $voiceModel->storage_type === 's3' 
+            ? Storage::disk('s3') 
+            : Storage::disk('local');
+        $prefix = $voiceModel->storage_type === 'local'
+            ? 'models/' . $voiceModel->uuid
+            : $voiceModel->getStoragePrefix();
 
         try {
             // Delete old model file

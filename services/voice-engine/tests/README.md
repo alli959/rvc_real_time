@@ -22,8 +22,24 @@ This test checks:
 
 ### Quick Validation
 ```bash
-# Run structure and syntax validation
+# From the voice-engine directory
+cd services/voice-engine
 python tests/validate.py
+```
+
+### API Integration Tests
+
+Test the API endpoints (requires running server):
+
+```bash
+# Start server first
+python main.py --mode api &
+
+# Test WebSocket connection
+python examples/websocket_client.py
+
+# Test file conversion
+python examples/file_client.py input.wav output.wav
 ```
 
 ### Manual Testing

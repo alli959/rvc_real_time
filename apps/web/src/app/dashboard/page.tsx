@@ -15,6 +15,8 @@ import {
   ChevronRight,
   Volume2,
   AudioWaveform,
+  Music,
+  Sparkles,
 } from 'lucide-react';
 import { authApi, modelsApi, jobsApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
@@ -93,38 +95,38 @@ export default function DashboardPage() {
               className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
             >
               <div className="w-12 h-12 rounded-lg bg-cyan-600/20 flex items-center justify-center mb-4">
-                <AudioWaveform className="h-6 w-6 text-cyan-500" />
+                <Sparkles className="h-6 w-6 text-cyan-500" />
               </div>
               <h3 className="font-semibold mb-1 group-hover:text-cyan-400 transition-colors">
-                Audio Processing
+                Voice Convert
               </h3>
-              <p className="text-sm text-gray-400">Split vocals, convert & more</p>
+              <p className="text-sm text-gray-400">Transform audio with AI voices</p>
             </Link>
 
             <Link
-              href="/models"
+              href="/dashboard/song-remix"
               className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
             >
               <div className="w-12 h-12 rounded-lg bg-accent-600/20 flex items-center justify-center mb-4">
-                <Box className="h-6 w-6 text-accent-500" />
+                <Music className="h-6 w-6 text-accent-500" />
               </div>
               <h3 className="font-semibold mb-1 group-hover:text-accent-400 transition-colors">
-                Browse Models
+                Song Remix
               </h3>
-              <p className="text-sm text-gray-400">Discover community voices</p>
+              <p className="text-sm text-gray-400">Split vocals & swap voices</p>
             </Link>
 
             <Link
-              href="/dashboard/models"
+              href="/models?tab=my-models"
               className="glass rounded-xl p-6 hover:bg-white/10 transition-colors group"
             >
               <div className="w-12 h-12 rounded-lg bg-green-600/20 flex items-center justify-center mb-4">
-                <Plus className="h-6 w-6 text-green-500" />
+                <Box className="h-6 w-6 text-green-500" />
               </div>
               <h3 className="font-semibold mb-1 group-hover:text-green-400 transition-colors">
-                Upload Model
+                My Models
               </h3>
-              <p className="text-sm text-gray-400">Share your own voice model</p>
+              <p className="text-sm text-gray-400">Manage your voice models</p>
             </Link>
           </div>
 

@@ -19,11 +19,15 @@ class User extends Authenticatable
         'email',
         'password',
         'avatar',
+        'google_id',
+        'github_id',
     ];
 
     protected $hidden = [
         'password',
         'remember_token',
+        'google_id',
+        'github_id',
     ];
 
     protected function casts(): array

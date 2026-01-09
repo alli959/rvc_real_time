@@ -45,3 +45,6 @@ pyyaml>=6.0
 tqdm>=4.65.0
 colorama>=0.4.6
 edge-tts>=6.1.9
+
+# YouTube audio download - use latest for best anti-bot bypass
+yt-dlp>=2025.1.0

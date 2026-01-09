@@ -1,11 +1,12 @@
 
 # Use NVIDIA CUDA base image with Python 3.10 and cuDNN for GPU support
-FROM nvidia/cuda:12.2.0-runtime-ubuntu20.04
+FROM nvidia/cuda:12.2.0-runtime-ubuntu22.04
 ENV DEBIAN_FRONTEND=noninteractive
-# Install Python 3.10 and pip
 
+# Install Python 3.10 and pip
 RUN apt-get update && apt-get install -y \
-    python3 python3-distutils python3-pip \
+    python3.10 python3.10-distutils python3-pip python3.10-venv \
+    software-properties-common \
     build-essential \
     portaudio19-dev \
     libsndfile1 \
@@ -15,8 +16,9 @@ RUN apt-get update && apt-get install -y \
     g++ \
     && rm -rf /var/lib/apt/lists/*
 
-# Set python and pip aliases
-RUN update-alternatives --install /usr/bin/python python /usr/bin/python3 1
+# Set python3.10 as default
+RUN update-alternatives --install /usr/bin/python python /usr/bin/python3.10 1
+RUN update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
 RUN update-alternatives --install /usr/bin/pip pip /usr/bin/pip3 1
 
 # Set working directory

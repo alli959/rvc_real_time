@@ -193,9 +193,11 @@ services:
       VOICE_ENGINE_URL: http://voice-engine:8001
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
       
-      # Voice models configuration
-      VOICE_MODELS_STORAGE: local
+      # Voice models configuration - use S3 for cloud storage
+      VOICE_MODELS_STORAGE: ${VOICE_MODELS_STORAGE:-local}
       VOICE_MODELS_PATH: /var/www/html/storage/models
+      VOICE_MODELS_S3_PREFIX: models
+      VOICE_MODELS_S3_URL_EXPIRATION: 60
       
       # Trusted proxies for Nginx
       TRUSTED_PROXIES: "*"
