@@ -60,15 +60,17 @@ function ModelsPageContent() {
     enabled: activeTab === 'community',
   });
 
-  // My models query (only when logged in)
+  // My models query (only when logged in) - returns both owned and shared models
   const { data: myModelsData, isLoading: myModelsLoading, error: myModelsError, refetch: refetchMyModels } = useQuery({
     queryKey: ['my-voice-models', user?.id],
-    queryFn: () => voiceModelsApi.myModels(),
+    queryFn: () => voiceModelsApi.myModels({ per_page: 100 }),
     enabled: activeTab === 'my-models' && !!user,
   });
 
   const communityModels: SystemVoiceModel[] = communityData?.data || [];
-  const myModels: VoiceModel[] = myModelsData?.data || [];
+  // Filter to only show owned models in "My Models" tab (is_owned is true or undefined for backwards compat)
+  const allUserModels: (VoiceModel & { is_owned?: boolean })[] = myModelsData?.data || [];
+  const myModels: VoiceModel[] = allUserModels.filter(m => m.is_owned !== false);
 
   // Edit modal state
   const [editingModel, setEditingModel] = useState<VoiceModel | null>(null);
@@ -470,8 +472,16 @@ function ModelCard({ model, isSelected, onSelect }: { model: SystemVoiceModel; i
       onClick={onSelect}
       className={`glass rounded-xl overflow-hidden cursor-pointer transition-all group ${isSelected ? 'ring-2 ring-primary-500 bg-primary-500/10' : 'hover:bg-white/5'}`}
     >
-      <div className="aspect-video bg-gradient-to-br from-primary-900/50 to-accent-900/50 flex items-center justify-center relative">
-        <Mic2 className="h-16 w-16 text-gray-600" />
+      <div className="aspect-video bg-gradient-to-br from-primary-900/50 to-accent-900/50 flex items-center justify-center relative overflow-hidden">
+        {model.image_url ? (
+          <img 
+            src={model.image_url} 
+            alt={model.name} 
+            className="w-full h-full object-cover"
+          />
+        ) : (
+          <Mic2 className="h-16 w-16 text-gray-600" />
+        )}
         {isSelected && (
           <div className="absolute top-3 right-3 w-8 h-8 bg-primary-500 rounded-full flex items-center justify-center">
             <Check className="h-5 w-5 text-white" />
