@@ -95,6 +95,9 @@ COPY --chown=www-data:www-data . .
 # Remove .env file - production uses environment variables from docker-compose
 RUN rm -f .env
 
+# Clear bootstrap cache to prevent stale dev dependency references
+RUN rm -f bootstrap/cache/packages.php bootstrap/cache/services.php
+
 # Install production dependencies only
 RUN composer install --no-dev --no-interaction --no-progress --optimize-autoloader
 
