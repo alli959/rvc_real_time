@@ -10,6 +10,7 @@ use App\Http\Controllers\Api\JobController;
 use App\Http\Controllers\Api\RoleRequestController;
 use App\Http\Controllers\Api\YouTubeController;
 use App\Http\Controllers\Api\AudioProcessingController;
+use App\Http\Controllers\Api\TrainerController;
 
 /*
 |--------------------------------------------------------------------------
@@ -31,8 +32,10 @@ Route::prefix('auth')->group(function () {
     Route::post('/login', [AuthController::class, 'login']);
     Route::get('/invitation/{token}', [AuthController::class, 'checkInvitation']);
     Route::post('/register-with-invite', [AuthController::class, 'registerWithInvitation']);
-    
-    // OAuth routes
+});
+
+// OAuth routes - separate from auth prefix to match OAuth provider callback URLs
+Route::prefix('oauth')->group(function () {
     Route::get('/{provider}/redirect', [OAuthController::class, 'redirect'])
         ->where('provider', 'google|github');
     Route::get('/{provider}/callback', [OAuthController::class, 'callback'])
@@ -178,6 +181,48 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ------------------------------------------------------------------
+    // Trainer / Model Scanning
+    // ------------------------------------------------------------------
+    Route::prefix('trainer')->group(function () {
+        // Health & info
+        Route::get('/health', [TrainerController::class, 'health']);
+        Route::get('/languages', [TrainerController::class, 'languages']);
+        
+        // Phonemes & prompts
+        Route::get('/phonemes/{language}', [TrainerController::class, 'phonemes']);
+        Route::get('/prompts/{language}', [TrainerController::class, 'prompts']);
+        Route::post('/prompts/{language}/for-phonemes', [TrainerController::class, 'promptsForPhonemes']);
+        
+        // Model scanning
+        Route::post('/scan/{voiceModel}', [TrainerController::class, 'scanModel']);
+        Route::get('/readiness/{voiceModel}', [TrainerController::class, 'getModelReadiness']);
+        Route::post('/gaps/{voiceModel}', [TrainerController::class, 'analyzeGaps']);
+        
+        // Inference testing
+        Route::post('/test/{voiceModel}', [TrainerController::class, 'testModelInference']);
+        
+        // Training jobs
+        Route::post('/upload', [TrainerController::class, 'uploadAudio']);
+        Route::post('/start', [TrainerController::class, 'startTraining']);
+        Route::get('/jobs', [TrainerController::class, 'listTrainingJobs']);
+        Route::get('/jobs/{jobId}', [TrainerController::class, 'trainingStatus']);
+        Route::post('/jobs/{jobId}/cancel', [TrainerController::class, 'cancelTraining']);
+        
+        // Recording wizard
+        Route::post('/wizard/sessions', [TrainerController::class, 'createWizardSession']);
+        Route::get('/wizard/sessions/{sessionId}', [TrainerController::class, 'getWizardSession']);
+        Route::post('/wizard/sessions/{sessionId}/start', [TrainerController::class, 'startWizardSession']);
+        Route::get('/wizard/sessions/{sessionId}/prompt', [TrainerController::class, 'getWizardPrompt']);
+        Route::post('/wizard/sessions/{sessionId}/submit', [TrainerController::class, 'submitWizardRecording']);
+        Route::post('/wizard/sessions/{sessionId}/next', [TrainerController::class, 'wizardNext']);
+        Route::post('/wizard/sessions/{sessionId}/previous', [TrainerController::class, 'wizardPrevious']);
+        Route::post('/wizard/sessions/{sessionId}/skip', [TrainerController::class, 'wizardSkip']);
+        Route::post('/wizard/sessions/{sessionId}/pause', [TrainerController::class, 'pauseWizardSession']);
+        Route::post('/wizard/sessions/{sessionId}/complete', [TrainerController::class, 'completeWizardSession']);
+        Route::delete('/wizard/sessions/{sessionId}', [TrainerController::class, 'cancelWizardSession']);
+    });
+
+    // ------------------------------------------------------------------
     // Admin Routes
     // ------------------------------------------------------------------
     Route::middleware('role:admin')->prefix('admin')->group(function () {
@@ -189,6 +234,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Voice model admin actions
         Route::post('/voice-models/sync', [VoiceModelController::class, 'sync']);
         Route::get('/voice-models/config', [VoiceModelController::class, 'config']);
+        Route::post('/voice-models/scan-all', [TrainerController::class, 'scanAllModels']);
         
         // Role requests management
         Route::get('/role-requests', [RoleRequestController::class, 'adminIndex']);

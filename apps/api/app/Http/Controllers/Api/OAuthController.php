@@ -31,20 +31,20 @@ class OAuthController extends Controller
     }
 
     /**
-     * Handle OAuth callback
+     * Handle OAuth callback - redirects to frontend with token
      */
     public function callback(string $provider, Request $request)
     {
         $this->validateProvider($provider);
+        
+        $frontendUrl = config('app.frontend_url', 'https://morphvox.net');
 
         try {
             // Get the code from the request
             $code = $request->input('code');
             
             if (!$code) {
-                return response()->json([
-                    'error' => 'Authorization code not provided',
-                ], 400);
+                return redirect("{$frontendUrl}/login?error=no_code");
             }
 
             // Get user from provider
@@ -60,15 +60,10 @@ class OAuthController extends Controller
             // Create token
             $token = $user->createToken('auth-token')->plainTextToken;
 
-            return response()->json([
-                'user' => $this->formatUserWithRoles($user),
-                'token' => $token,
-            ]);
+            // Redirect to frontend with token
+            return redirect("{$frontendUrl}/auth/callback?token={$token}&provider={$provider}");
         } catch (\Exception $e) {
-            return response()->json([
-                'error' => 'Authentication failed',
-                'message' => $e->getMessage(),
-            ], 401);
+            return redirect("{$frontendUrl}/login?error=" . urlencode($e->getMessage()));
         }
     }
 

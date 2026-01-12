@@ -34,8 +34,12 @@ $adminRoutes = function () {
         // Voice models + resync
         Route::get('/voice-models', [VoiceModelAdminController::class, 'index'])->name('models.index');
         Route::post('/voice-models/sync', [VoiceModelAdminController::class, 'sync'])->name('models.sync');
+        Route::post('/voice-models/scan-languages', [VoiceModelAdminController::class, 'scanAllLanguages'])->name('models.scan-languages');
         Route::get('/voice-models/{voiceModel}/edit', [VoiceModelAdminController::class, 'edit'])->name('models.edit');
         Route::put('/voice-models/{voiceModel}', [VoiceModelAdminController::class, 'update'])->name('models.update');
+        Route::post('/voice-models/{voiceModel}/scan-languages', [VoiceModelAdminController::class, 'scanModelLanguages'])->name('models.scan-model-languages');
+        Route::post('/voice-models/{voiceModel}/transfer-ownership', [VoiceModelAdminController::class, 'transferOwnership'])->name('models.transfer-ownership');
+        Route::post('/voice-models/{voiceModel}/test-inference', [VoiceModelAdminController::class, 'testModelInference'])->name('models.test-inference');
 
         // Per-user access control for models
         Route::get('/voice-models/{voiceModel}/access', [VoiceModelAdminController::class, 'editAccess'])->name('models.access.edit');

@@ -47,13 +47,13 @@ return [
     'google' => [
         'client_id' => env('GOOGLE_CLIENT_ID'),
         'client_secret' => env('GOOGLE_CLIENT_SECRET'),
-        'redirect' => env('GOOGLE_REDIRECT_URI', '/api/auth/google/callback'),
+        'redirect' => env('GOOGLE_REDIRECT_URI'),
     ],
 
     'github' => [
         'client_id' => env('GITHUB_CLIENT_ID'),
         'client_secret' => env('GITHUB_CLIENT_SECRET'),
-        'redirect' => env('GITHUB_REDIRECT_URI', '/api/auth/github/callback'),
+        'redirect' => env('GITHUB_REDIRECT_URI'),
     ],
 
     /*
@@ -67,8 +67,10 @@ return [
     */
 
     'voice_engine' => [
+        'url' => env('VOICE_ENGINE_URL', 'http://voice-engine:8001'),
         'base_url' => env('VOICE_ENGINE_URL', 'http://voice-engine:8001'),
         'ws_url' => env('VOICE_ENGINE_WS_URL', 'ws://voice-engine:8765'),
+        'trainer_url' => env('VOICE_ENGINE_TRAINER_URL', env('VOICE_ENGINE_URL', 'http://voice-engine:8001') . '/api/v1/trainer'),
         'timeout' => env('VOICE_ENGINE_TIMEOUT', 300),
         'storage_endpoint' => env('VOICE_ENGINE_STORAGE_ENDPOINT', 'http://minio:9000'),
     ],
