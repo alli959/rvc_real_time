@@ -663,6 +663,104 @@ class RecordingWizard:
             "phonemes_added": len(session.current_coverage.found_phonemes - session.initial_coverage.found_phonemes),
             "phonemes_still_missing": len(session.current_coverage.missing_phonemes)
         }
+    
+    def get_all_sessions_for_model(self, exp_name: str) -> List[WizardSession]:
+        """
+        Get all wizard sessions for a model (exp_name).
+        Loads from disk if not in memory.
+        """
+        sessions = []
+        
+        # Check memory first
+        for session in self._sessions.values():
+            if session.exp_name == exp_name:
+                sessions.append(session)
+        
+        # Also check disk for sessions not in memory
+        session_ids_in_memory = {s.session_id for s in sessions}
+        
+        for session_dir in self.base_dir.iterdir():
+            if session_dir.is_dir():
+                session_file = session_dir / "session.json"
+                if session_file.exists():
+                    try:
+                        loaded = WizardSession.load(session_file)
+                        if loaded.exp_name == exp_name and loaded.session_id not in session_ids_in_memory:
+                            sessions.append(loaded)
+                    except Exception as e:
+                        logger.warning(f"Failed to load session from {session_file}: {e}")
+        
+        return sessions
+    
+    def get_all_recordings_for_model(self, exp_name: str) -> Dict[str, Any]:
+        """
+        Get all recordings across all sessions for a model.
+        Returns audio paths, phoneme coverage stats, and category breakdown.
+        """
+        sessions = self.get_all_sessions_for_model(exp_name)
+        
+        all_audio_paths = []
+        recordings_by_category: Dict[str, List[str]] = {}
+        total_duration = 0.0
+        phonemes_recorded: Set[str] = set()
+        
+        for session in sessions:
+            for prompt in session.prompts:
+                if prompt.is_accepted and prompt.audio_path:
+                    all_audio_paths.append(prompt.audio_path)
+                    total_duration += prompt.duration_seconds
+                    
+                    # Track by category
+                    if prompt.category not in recordings_by_category:
+                        recordings_by_category[prompt.category] = []
+                    recordings_by_category[prompt.category].append(prompt.audio_path)
+        
+        return {
+            "exp_name": exp_name,
+            "total_recordings": len(all_audio_paths),
+            "total_duration_seconds": round(total_duration, 1),
+            "audio_paths": all_audio_paths,
+            "categories": {
+                cat: {"count": len(paths), "audio_paths": paths}
+                for cat, paths in recordings_by_category.items()
+            },
+            "sessions": [s.to_dict() for s in sessions]
+        }
+    
+    def get_category_status(self, exp_name: str, language: str) -> Dict[str, Any]:
+        """
+        Get status of each category for a model - how many recordings exist.
+        Used to show progress indicators in UI.
+        """
+        sessions = self.get_all_sessions_for_model(exp_name)
+        
+        # Get all categories from prompt loader
+        prompts_data = self.prompt_loader.get_prompts(language)
+        all_categories = prompts_data.get("categories", {}) if prompts_data else {}
+        
+        category_status = {}
+        
+        for cat_id, cat_info in all_categories.items():
+            recordings_in_cat = 0
+            for session in sessions:
+                if session.language == language:
+                    for prompt in session.prompts:
+                        if prompt.category == cat_id and prompt.is_accepted:
+                            recordings_in_cat += 1
+            
+            category_status[cat_id] = {
+                "name": cat_info.get("description", cat_id),
+                "total_prompts": cat_info.get("prompt_count", 0),
+                "recordings": recordings_in_cat,
+                "has_recordings": recordings_in_cat > 0,
+                "phonemes_covered": cat_info.get("phonemes_covered", [])
+            }
+        
+        return {
+            "exp_name": exp_name,
+            "language": language,
+            "categories": category_status
+        }
 
 
 # Convenience functions

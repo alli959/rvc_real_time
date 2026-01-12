@@ -66,18 +66,62 @@ interface PhonemeStats {
   missing: string[];
 }
 
+// Error Boundary component
+class ErrorBoundary extends React.Component<
+  { children: React.ReactNode; fallback?: React.ReactNode },
+  { hasError: boolean; error: Error | null }
+> {
+  constructor(props: { children: React.ReactNode; fallback?: React.ReactNode }) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+
+  static getDerivedStateFromError(error: Error) {
+    return { hasError: true, error };
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback || (
+        <DashboardLayout>
+          <div className="flex flex-col items-center justify-center min-h-[60vh] gap-4">
+            <AlertCircle className="w-12 h-12 text-red-500" />
+            <h2 className="text-xl font-semibold">Something went wrong</h2>
+            <p className="text-gray-400 text-center max-w-md">
+              {this.state.error?.message || 'An error occurred while loading the training page.'}
+            </p>
+            <button
+              onClick={() => window.location.reload()}
+              className="px-4 py-2 bg-primary-600 hover:bg-primary-500 rounded-lg transition-colors"
+            >
+              Reload Page
+            </button>
+          </div>
+        </DashboardLayout>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// Need to import React for class component
+import * as React from 'react';
+
 // Wrapper component for Suspense boundary (required for useSearchParams)
 export default function TrainPage() {
   return (
-    <Suspense fallback={
-      <DashboardLayout>
-        <div className="flex items-center justify-center min-h-[60vh]">
-          <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
-        </div>
-      </DashboardLayout>
-    }>
-      <TrainPageContent />
-    </Suspense>
+    <ErrorBoundary>
+      <Suspense fallback={
+        <DashboardLayout>
+          <div className="flex items-center justify-center min-h-[60vh]">
+            <Loader2 className="h-8 w-8 animate-spin text-purple-500" />
+          </div>
+        </DashboardLayout>
+      }>
+        <TrainPageContent />
+      </Suspense>
+    </ErrorBoundary>
   );
 }
 
@@ -144,6 +188,24 @@ function TrainPageContent() {
     queryFn: () => trainerApi.getPrompts(selectedLanguage),
     enabled: !!selectedLanguage && (step === 'training-areas' || step === 'recording'),
   });
+
+  // Fetch category status (recordings per category) for the selected model
+  const { data: categoryStatus, refetch: refetchCategoryStatus } = useQuery({
+    queryKey: ['category-status', selectedModel?.slug, selectedLanguage],
+    queryFn: () => selectedModel?.slug 
+      ? trainerApi.getCategoryStatus(selectedModel.slug, selectedLanguage)
+      : null,
+    enabled: !!selectedModel?.slug && !!selectedLanguage && step === 'training-areas',
+  });
+
+  // Fetch model recordings summary
+  const { data: modelRecordings, refetch: refetchModelRecordings } = useQuery({
+    queryKey: ['model-recordings', selectedModel?.slug],
+    queryFn: () => selectedModel?.slug 
+      ? trainerApi.getModelRecordings(selectedModel.slug)
+      : null,
+    enabled: !!selectedModel?.slug && (step === 'training-areas' || step === 'start-training'),
+  });
   
   // Memoize models
   const myModels = useMemo(() => modelsData?.data || [], [modelsData?.data]);
@@ -194,7 +256,7 @@ function TrainPageContent() {
         color: 'purple',
         score: phonemeCoverage,
         maxScore: 100,
-        details: phonemeStats?.missing.slice(0, 5) || [],
+        details: (phonemeStats?.missing || []).slice(0, 5),
       },
       {
         id: 'clarity',
@@ -229,48 +291,71 @@ function TrainPageContent() {
     ];
   }, [phonemeStats, selectedModel]);
   
-  // Get categories for expanded area
+  // Get categories for expanded area with recording counts
   const areaCategories = useMemo(() => {
     if (!expandedArea || !promptsData?.categories) return [];
     
+    // Get recording counts from categoryStatus if available
+    const recordingCounts = categoryStatus?.categories || {};
+    
+    // Helper to get existing coverage from model scan
+    const getModelCoverage = (phonemes: string[]): boolean => {
+      if (!selectedModel || !phonemes.length) return false;
+      const isEnglish = selectedLanguage === 'en';
+      const missingPhonemes = isEnglish 
+        ? (selectedModel.en_missing_phonemes || [])
+        : (selectedModel.is_missing_phonemes || []);
+      // Check if none of the category's phonemes are in missing list
+      return phonemes.every(p => !missingPhonemes.includes(p));
+    };
+    
     if (expandedArea === 'phonemes') {
-      return Object.entries(promptsData.categories).map(([key, cat]) => ({
-        id: key,
-        name: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
-        description: cat.description,
-        phonemes: cat.phonemes_covered || [],
-        promptCount: cat.prompt_count || cat.prompts?.length || 0,
-      }));
+      return Object.entries(promptsData.categories).map(([key, cat]) => {
+        const status = recordingCounts[key];
+        const phonemes = cat.phonemes_covered || [];
+        return {
+          id: key,
+          name: key.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase()),
+          description: cat.description,
+          phonemes: phonemes,
+          promptCount: cat.prompt_count || cat.prompts?.length || 0,
+          // New fields for status indicators
+          recordingCount: status?.recordings || 0,
+          hasRecordings: status?.has_recordings || false,
+          modelHasCoverage: getModelCoverage(phonemes), // From existing model scan
+          willHaveCoverage: (status?.recordings || 0) > 0 || getModelCoverage(phonemes), // After training
+        };
+      });
     }
     
     // For other areas, return static categories (could be expanded later)
     if (expandedArea === 'clarity') {
       return [
-        { id: 'consonants', name: 'Consonant Exercises', description: 'Practice clear consonant sounds', phonemes: [], promptCount: 20 },
-        { id: 'vowels', name: 'Vowel Exercises', description: 'Distinct vowel pronunciation', phonemes: [], promptCount: 15 },
-        { id: 'diction', name: 'Diction Practice', description: 'Word clarity and enunciation', phonemes: [], promptCount: 25 },
+        { id: 'consonants', name: 'Consonant Exercises', description: 'Practice clear consonant sounds', phonemes: [], promptCount: 20, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'vowels', name: 'Vowel Exercises', description: 'Distinct vowel pronunciation', phonemes: [], promptCount: 15, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'diction', name: 'Diction Practice', description: 'Word clarity and enunciation', phonemes: [], promptCount: 25, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
       ];
     }
     
     if (expandedArea === 'pitch') {
       return [
-        { id: 'sustained', name: 'Sustained Tones', description: 'Hold steady pitches', phonemes: [], promptCount: 10 },
-        { id: 'scales', name: 'Scale Patterns', description: 'Ascending and descending patterns', phonemes: [], promptCount: 15 },
-        { id: 'transitions', name: 'Pitch Transitions', description: 'Smooth pitch changes', phonemes: [], promptCount: 12 },
+        { id: 'sustained', name: 'Sustained Tones', description: 'Hold steady pitches', phonemes: [], promptCount: 10, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'scales', name: 'Scale Patterns', description: 'Ascending and descending patterns', phonemes: [], promptCount: 15, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'transitions', name: 'Pitch Transitions', description: 'Smooth pitch changes', phonemes: [], promptCount: 12, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
       ];
     }
     
     if (expandedArea === 'expression') {
       return [
-        { id: 'happy', name: 'Happy & Excited', description: 'Positive emotional expressions', phonemes: [], promptCount: 20 },
-        { id: 'sad', name: 'Sad & Melancholic', description: 'Subdued emotional tones', phonemes: [], promptCount: 15 },
-        { id: 'angry', name: 'Angry & Intense', description: 'Strong emotional delivery', phonemes: [], promptCount: 15 },
-        { id: 'calm', name: 'Calm & Neutral', description: 'Relaxed, even tones', phonemes: [], promptCount: 20 },
+        { id: 'happy', name: 'Happy & Excited', description: 'Positive emotional expressions', phonemes: [], promptCount: 20, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'sad', name: 'Sad & Melancholic', description: 'Subdued emotional tones', phonemes: [], promptCount: 15, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'angry', name: 'Angry & Intense', description: 'Strong emotional delivery', phonemes: [], promptCount: 15, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
+        { id: 'calm', name: 'Calm & Neutral', description: 'Relaxed, even tones', phonemes: [], promptCount: 20, recordingCount: 0, hasRecordings: false, modelHasCoverage: false, willHaveCoverage: false },
       ];
     }
     
     return [];
-  }, [expandedArea, promptsData]);
+  }, [expandedArea, promptsData, categoryStatus, selectedModel, selectedLanguage]);
   
   // Auto-select model from URL
   useEffect(() => {
@@ -482,6 +567,9 @@ function TrainPageContent() {
       if (result.next_prompt) {
         setCurrentPrompt(result.next_prompt);
       } else if (result.session?.status === 'completed') {
+        // Refresh category status to show the new recordings
+        refetchCategoryStatus();
+        refetchModelRecordings();
         setStep('start-training');
       } else {
         const prompt = await trainerApi.getWizardPrompt(session.session_id);
@@ -511,6 +599,9 @@ function TrainPageContent() {
       if (result.next_prompt) {
         setCurrentPrompt(result.next_prompt);
       } else if (result.session?.status === 'completed') {
+        // Refresh category status to show the new recordings
+        refetchCategoryStatus();
+        refetchModelRecordings();
         setStep('start-training');
       } else {
         const prompt = await trainerApi.getWizardPrompt(session.session_id);
@@ -530,10 +621,13 @@ function TrainPageContent() {
         // Ignore errors
       }
     }
+    // Refresh category status to show the new recordings
+    refetchCategoryStatus();
+    refetchModelRecordings();
     setStep('start-training');
   };
   
-  // Start actual training
+  // Start actual training using all collected recordings
   const startTraining = async () => {
     if (!selectedModel) return;
     
@@ -541,9 +635,9 @@ function TrainPageContent() {
     setTrainingStatus('Starting training...');
     
     try {
-      const response = await trainerApi.startTraining(
+      // Use the new API that collects all recordings from wizard sessions
+      const response = await trainerApi.trainModelWithRecordings(
         selectedModel.slug || selectedModel.name,
-        selectedLanguage,
         {
           batch_size: 8,
           epochs: 100,
@@ -556,7 +650,7 @@ function TrainPageContent() {
       // Poll for training status
       pollTrainingStatus(response.job_id);
     } catch (err: any) {
-      setError(err.response?.data?.message || err.message || 'Failed to start training');
+      setError(err.response?.data?.message || err.response?.data?.detail || err.message || 'Failed to start training');
     }
   };
   
@@ -955,30 +1049,60 @@ function TrainPageContent() {
                               key={cat.id}
                               onClick={() => startCategorySession(cat.id)}
                               disabled={isStartingSession}
-                              className="p-4 rounded-lg border border-gray-600 hover:border-primary-500 disabled:border-gray-700 bg-gray-800/50 hover:bg-primary-500/10 disabled:bg-gray-800/30 disabled:cursor-not-allowed transition-all text-left group"
+                              className={`p-4 rounded-lg border transition-all text-left group ${
+                                cat.modelHasCoverage 
+                                  ? 'border-green-600/50 bg-green-900/10 hover:border-green-500' 
+                                  : cat.hasRecordings
+                                    ? 'border-yellow-600/50 bg-yellow-900/10 hover:border-yellow-500'
+                                    : 'border-gray-600 hover:border-primary-500 bg-gray-800/50 hover:bg-primary-500/10'
+                              } disabled:border-gray-700 disabled:bg-gray-800/30 disabled:cursor-not-allowed`}
                             >
                               <div className="flex items-center justify-between mb-2">
-                                <h4 className="font-medium group-hover:text-primary-400 transition-colors">
+                                <h4 className="font-medium group-hover:text-primary-400 transition-colors flex items-center gap-2">
                                   {isStartingSession && selectedCategory === cat.id ? (
                                     <span className="flex items-center gap-2">
                                       <Loader2 className="w-4 h-4 animate-spin" />
                                       Starting...
                                     </span>
-                                  ) : cat.name}
+                                  ) : (
+                                    <>
+                                      {cat.name}
+                                      {/* Status indicators */}
+                                      {cat.modelHasCoverage && (
+                                        <span title="Model already has this capability" className="text-green-400">
+                                          <Check className="w-4 h-4" />
+                                        </span>
+                                      )}
+                                      {!cat.modelHasCoverage && cat.hasRecordings && (
+                                        <span title="Recordings added - will have capability after training" className="text-yellow-400">
+                                          <Sparkles className="w-4 h-4" />
+                                        </span>
+                                      )}
+                                    </>
+                                  )}
                                 </h4>
-                                <span className="text-xs bg-gray-700 px-2 py-1 rounded">
-                                  {cat.promptCount} prompts
-                                </span>
+                                <div className="flex items-center gap-2">
+                                  {/* Recording count badge */}
+                                  {cat.recordingCount > 0 && (
+                                    <span className="text-xs bg-yellow-600/30 text-yellow-300 px-2 py-1 rounded flex items-center gap-1">
+                                      <FileAudio className="w-3 h-3" />
+                                      {cat.recordingCount} recorded
+                                    </span>
+                                  )}
+                                  <span className="text-xs bg-gray-700 px-2 py-1 rounded">
+                                    {cat.promptCount} prompts
+                                  </span>
+                                </div>
                               </div>
                               <p className="text-sm text-gray-500">{cat.description}</p>
-                              {cat.phonemes.length > 0 && (
+                              {(cat.phonemes?.length || 0) > 0 && (
                                 <div className="mt-2 flex flex-wrap gap-1">
-                                  {cat.phonemes.slice(0, 5).map((p, i) => (
+                                  {(cat.phonemes || []).slice(0, 5).map((p, i) => (
                                     <span key={i} className="text-xs bg-gray-700/50 px-1.5 py-0.5 rounded text-gray-400">
                                       {p}
                                     </span>
                                   ))}
-                                  {cat.phonemes.length > 5 && (
+                                  {(cat.phonemes?.length || 0) > 5 && (
                                     <span className="text-xs text-gray-500">+{cat.phonemes.length - 5}</span>
                                   )}
                                 </div>
@@ -1114,7 +1238,7 @@ function TrainPageContent() {
                   </p>
                 )}
                 <div className="mt-4 flex flex-wrap justify-center gap-2">
-                  {currentPrompt.phonemes.slice(0, 10).map((phoneme, i) => (
+                  {(currentPrompt.phonemes || []).slice(0, 10).map((phoneme, i) => (
                     <span 
                       key={i}
                       className="px-2 py-1 bg-gray-700/50 rounded text-xs text-gray-400"
@@ -1216,14 +1340,35 @@ function TrainPageContent() {
               <div>
                 <h2 className="text-xl font-semibold mb-2">Ready to Train</h2>
                 <p className="text-gray-400">
-                  {session 
-                    ? `You recorded ${session.completed} samples. Ready to train your model!`
-                    : 'Your audio files have been uploaded. Ready to train your model!'
+                  {modelRecordings && modelRecordings.total_recordings > 0
+                    ? `You have ${modelRecordings.total_recordings} recordings (${Math.round(modelRecordings.total_duration_seconds / 60)} min). Ready to train your model!`
+                    : session 
+                      ? `You recorded ${session.completed} samples. Ready to train your model!`
+                      : 'Your audio files have been uploaded. Ready to train your model!'
                   }
                 </p>
               </div>
               
-              {session && (
+              {/* Show total recordings from all sessions */}
+              {modelRecordings && modelRecordings.total_recordings > 0 && (
+                <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
+                  <div className="p-4 bg-gray-800/50 rounded-lg">
+                    <div className="text-2xl font-bold text-green-400">{modelRecordings.total_recordings}</div>
+                    <div className="text-sm text-gray-400">Total Recordings</div>
+                  </div>
+                  <div className="p-4 bg-gray-800/50 rounded-lg">
+                    <div className="text-2xl font-bold text-blue-400">{Math.round(modelRecordings.total_duration_seconds / 60)}</div>
+                    <div className="text-sm text-gray-400">Minutes</div>
+                  </div>
+                  <div className="p-4 bg-gray-800/50 rounded-lg">
+                    <div className="text-2xl font-bold text-purple-400">{Object.keys(modelRecordings.categories || {}).length}</div>
+                    <div className="text-sm text-gray-400">Categories</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Show current session stats if no total recordings */}
+              {(!modelRecordings || modelRecordings.total_recordings === 0) && session && (
                 <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto">
                   <div className="p-4 bg-gray-800/50 rounded-lg">
                     <div className="text-2xl font-bold text-green-400">{session.completed}</div>
@@ -1235,22 +1380,41 @@ function TrainPageContent() {
                   </div>
                 </div>
               )}
+
+              {/* Error message */}
+              {error && (
+                <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg text-red-400 text-sm max-w-md mx-auto">
+                  {error}
+                </div>
+              )}
               
               <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
                 <button
-                  onClick={() => setStep('training-areas')}
+                  onClick={() => {
+                    setError(null);
+                    setStep('training-areas');
+                  }}
                   className="px-6 py-3 border border-gray-600 hover:border-gray-500 rounded-lg transition-colors"
                 >
                   Add More Data
                 </button>
                 <button
                   onClick={startTraining}
-                  className="px-6 py-3 bg-primary-600 hover:bg-primary-500 rounded-lg font-medium transition-colors flex items-center gap-2"
+                  disabled={!modelRecordings || modelRecordings.total_recordings < 10}
+                  className="px-6 py-3 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center gap-2"
+                  title={modelRecordings && modelRecordings.total_recordings < 10 ? 'Need at least 10 recordings to start training' : ''}
                 >
                   <Play className="w-5 h-5" />
                   Start Training
                 </button>
               </div>
+
+              {/* Minimum recordings warning */}
+              {modelRecordings && modelRecordings.total_recordings < 10 && (
+                <p className="text-sm text-yellow-400">
+                  Need at least 10 recordings to start training. Currently have {modelRecordings.total_recordings}.
+                </p>
+              )}
             </div>
           )}
 

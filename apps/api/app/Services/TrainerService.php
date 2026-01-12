@@ -769,4 +769,90 @@ class TrainerService
             'is_score' => $languageScores['is']['overall_score'] ?? null,
         ]);
     }
+
+    // =========================================================================
+    // Model Training Data
+    // =========================================================================
+
+    /**
+     * Get all recordings for a model across all wizard sessions
+     */
+    public function getModelRecordings(string $expName): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->baseUrl}/model/{$expName}/recordings");
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Failed to get model recordings', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get model recordings exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get category recording status for a model
+     */
+    public function getCategoryStatus(string $expName, string $language): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->baseUrl}/model/{$expName}/category-status/{$language}");
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Failed to get category status', [
+                'exp_name' => $expName,
+                'language' => $language,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get category status exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Start training using all collected recordings
+     */
+    public function trainModel(string $expName, array $config = []): ?array
+    {
+        try {
+            $payload = [];
+            
+            if (!empty($config)) {
+                $payload['config'] = $config;
+            }
+
+            $response = Http::timeout($this->timeout)
+                ->post("{$this->baseUrl}/model/{$expName}/train", $payload);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Train model failed', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Train model exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
 }
