@@ -783,6 +783,9 @@ async def generate_with_bark(
     - ♪ for music
     - CAPS for emphasis
     - ... for hesitations
+    
+    NOTE: Bark can hallucinate with very short texts. We use low temperature
+    settings to improve accuracy, but for critical accuracy, use Edge TTS.
     """
     if not BARK_AVAILABLE:
         raise RuntimeError("Bark is not installed")
@@ -790,7 +793,14 @@ async def generate_with_bark(
     # Convert our tags to Bark format
     bark_text = convert_tags_for_bark(text)
     
-    logger.info(f"Bark TTS: '{bark_text[:100]}...'")
+    # Bark works better with some minimum context - very short texts can hallucinate
+    # If text is very short, add a subtle prefix that Bark handles well
+    original_bark_text = bark_text
+    if len(bark_text.strip()) < 20:
+        # Short text - Bark tends to hallucinate. Log warning.
+        logger.warning(f"Short text for Bark ({len(bark_text)} chars) - may have accuracy issues: '{bark_text}'")
+    
+    logger.info(f"Bark TTS input: '{bark_text}'")
     
     # Get speaker preset
     history_prompt = BARK_SPEAKERS.get(speaker, BARK_SPEAKERS['default'])
@@ -801,23 +811,42 @@ async def generate_with_bark(
     def _generate_bark_audio():
         """Generate Bark audio with retry on failure."""
         import torch
+        from bark.generation import generate_text_semantic, preload_models
+        from bark.api import semantic_to_waveform
         
         # Clear CUDA cache before generation to help with stability
         if torch.cuda.is_available():
             torch.cuda.empty_cache()
         
-        # Use the high-level API which handles errors better
-        # text_temp and waveform_temp control randomness (higher = more stable sometimes)
+        # Use LOWER temperature for more accurate text reproduction
+        # Default Bark uses text_temp=0.7, waveform_temp=0.7 which can hallucinate
+        # Lower values = more deterministic but potentially less expressive
+        TEXT_TEMP = 0.5  # Lower = more accurate to input text
+        WAVEFORM_TEMP = 0.5  # Lower = more consistent audio
+        
         try:
-            audio = bark_generate(bark_text, history_prompt=history_prompt)
+            # Use the semantic generation with controlled temperature
+            # This gives us more control over accuracy vs expressiveness
+            logger.info(f"Generating Bark audio with text_temp={TEXT_TEMP}, waveform_temp={WAVEFORM_TEMP}")
+            audio = bark_generate(
+                bark_text, 
+                history_prompt=history_prompt,
+                text_temp=TEXT_TEMP,
+                waveform_temp=WAVEFORM_TEMP
+            )
         except RuntimeError as e:
             error_msg = str(e).lower()
             if "probability tensor" in error_msg or "inf" in error_msg or "nan" in error_msg or "cuda error" in error_msg:
-                # Clear cache and retry with slightly different temp
-                logger.info("Retrying Bark with adjusted parameters...")
+                # Clear cache and retry with even lower temp for stability
+                logger.warning(f"Bark error: {e}, retrying with lower temperature...")
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()
-                audio = bark_generate(bark_text, history_prompt=history_prompt, text_temp=0.8, waveform_temp=0.8)
+                audio = bark_generate(
+                    bark_text, 
+                    history_prompt=history_prompt, 
+                    text_temp=0.4,  # Even more conservative
+                    waveform_temp=0.4
+                )
             else:
                 raise
         
@@ -1004,8 +1033,20 @@ async def generate_tts(
     # Bark only works well with English - detect non-English voices
     is_english_voice = voice.startswith('en-') or voice.startswith('en_')
     
-    # Try Bark first if available, requested, AND it's English
-    if use_bark and BARK_AVAILABLE and is_english_voice:
+    # Strip tags to get actual text length for Bark decision
+    plain_text = re.sub(r'\[/?[^\]]+\]', '', text)  # Remove [tags]
+    plain_text = re.sub(r'<[^>]+>', '', plain_text)  # Remove <tags>
+    plain_text_length = len(plain_text.strip())
+    
+    # Bark hallucinates on very short texts (< 15 chars) - use Edge TTS instead
+    MIN_BARK_TEXT_LENGTH = 15
+    text_too_short_for_bark = plain_text_length < MIN_BARK_TEXT_LENGTH
+    
+    if text_too_short_for_bark and use_bark:
+        logger.info(f"Text too short for Bark ({plain_text_length} chars < {MIN_BARK_TEXT_LENGTH}), using Edge TTS to avoid hallucination")
+    
+    # Try Bark first if available, requested, English, AND long enough
+    if use_bark and BARK_AVAILABLE and is_english_voice and not text_too_short_for_bark:
         try:
             logger.info("Using Bark TTS (native emotion support)")
             audio, sr = await generate_with_bark(text, bark_speaker)
