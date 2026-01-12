@@ -117,6 +117,22 @@ def run_streaming_mode(config: AppConfig):
         logger.info("No default model configured for warmup.")
     logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
     
+    # Preload Bark TTS models (~13GB on first run, then cached)
+    try:
+        from app.tts_service import setup_bark_cache, BARK_AVAILABLE
+        if BARK_AVAILABLE:
+            from bark.generation import preload_models
+            logger.info("Preloading Bark TTS models (this may take a while on first run)...")
+            bark_start = time.time()
+            preload_models()
+            logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
+        else:
+            logger.info("Bark TTS not available - skipping preload")
+    except ImportError as e:
+        logger.info(f"Bark TTS not installed - skipping preload: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to preload Bark models: {e}")
+    
     # Create stream processor
     stream_processor = StreamProcessor(
         model_manager=model_manager,
@@ -196,6 +212,23 @@ def run_api_mode(config: AppConfig):
     else:
         logger.info("No default model configured for warmup.")
     logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
+    
+    # Preload Bark TTS models (~13GB on first run, then cached)
+    # First, set up paths to use local models if they exist
+    try:
+        from app.tts_service import setup_bark_cache, BARK_AVAILABLE
+        if BARK_AVAILABLE:
+            from bark.generation import preload_models
+            logger.info("Preloading Bark TTS models (this may take a while on first run)...")
+            bark_start = time.time()
+            preload_models()
+            logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
+        else:
+            logger.info("Bark TTS not available - skipping preload")
+    except ImportError as e:
+        logger.info(f"Bark TTS not installed - skipping preload: {e}")
+    except Exception as e:
+        logger.warning(f"Failed to preload Bark models: {e}")
     
     # Create stream processor
     stream_processor = StreamProcessor(
