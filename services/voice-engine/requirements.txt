@@ -48,3 +48,11 @@ edge-tts>=6.1.9
 
 # YouTube audio download - use latest for best anti-bot bypass
 yt-dlp>=2025.1.0
+
+# Trainer & Phoneme Analysis (requires espeak-ng system package)
+phonemizer>=3.2.1
+epitran>=1.24
+faiss-cpu>=1.7.4
+
+# Whisper for speech recognition & phoneme detection
+openai-whisper>=20231117

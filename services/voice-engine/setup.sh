@@ -37,6 +37,21 @@ pip install git+https://github.com/facebookresearch/fairseq.git@v0.12.2 --no-dep
 # Install fairseq's required dependencies that don't conflict
 pip install hydra-core omegaconf cffi bitarray sacrebleu
 
+# Install trainer dependencies for phoneme analysis
+echo ""
+echo "Installing trainer/phoneme analysis dependencies..."
+# Install espeak-ng system dependency (for phonemizer)
+if command -v apt-get &> /dev/null; then
+    echo "Installing espeak-ng (required for phoneme analysis)..."
+    sudo apt-get update && sudo apt-get install -y espeak-ng || echo "⚠️  Could not install espeak-ng - phoneme analysis may be limited"
+elif command -v brew &> /dev/null; then
+    echo "Installing espeak (required for phoneme analysis)..."
+    brew install espeak || echo "⚠️  Could not install espeak - phoneme analysis may be limited"
+fi
+
+# Install Python packages for trainer
+pip install phonemizer>=3.2.1 epitran>=1.24 praat-parselmouth>=0.4 faiss-cpu>=1.7.4 || echo "⚠️  Some trainer dependencies failed to install"
+
 # Patch fairseq's broken imports
 echo "Patching fairseq..."
 python3 << 'PATCH_FAIRSEQ'

@@ -47,6 +47,15 @@ except ImportError:
     YOUTUBE_AVAILABLE = False
     logger.warning("YouTube service not available - yt-dlp may not be installed")
 
+# Import trainer API (optional)
+try:
+    from app.trainer_api import router as trainer_router, init_trainer_api
+    TRAINER_AVAILABLE = True
+except ImportError:
+    TRAINER_AVAILABLE = False
+    trainer_router = None
+    logger.warning("Trainer API not available - missing dependencies")
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -55,6 +64,11 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Include trainer router if available
+if TRAINER_AVAILABLE and trainer_router:
+    app.include_router(trainer_router)
+    logger.info("Trainer API endpoints enabled")
 
 # Global model manager reference (set from main.py)
 model_manager = None
@@ -1463,16 +1477,67 @@ async def process_audio(request: AudioProcessRequest):
     
     try:
         import librosa
+        from pydub import AudioSegment
+        import tempfile
+        import subprocess
         
-        # Decode audio
-        audio_bytes = base64.b64decode(request.audio)
+        # Decode audio - handle data URL prefix if present
+        audio_data = request.audio
+        if ',' in audio_data and audio_data.startswith('data:'):
+            audio_data = audio_data.split(',')[1]
+        
+        audio_bytes = base64.b64decode(audio_data)
         audio_buffer = io.BytesIO(audio_bytes)
         
+        # Try multiple methods to load audio
+        audio = None
+        sr = None
+        
+        # Method 1: Try soundfile directly
         try:
             audio, sr = sf.read(audio_buffer, dtype='float32')
-        except Exception:
+            logger.info(f"Loaded audio with soundfile: sr={sr}, shape={audio.shape}")
+        except Exception as e:
+            logger.debug(f"soundfile failed: {e}")
             audio_buffer.seek(0)
-            audio, sr = librosa.load(audio_buffer, sr=None, mono=False)
+            
+            # Method 2: Try librosa
+            try:
+                audio, sr = librosa.load(audio_buffer, sr=None, mono=False)
+                logger.info(f"Loaded audio with librosa: sr={sr}, shape={audio.shape}")
+            except Exception as e:
+                logger.debug(f"librosa failed: {e}")
+                audio_buffer.seek(0)
+                
+                # Method 3: Use pydub/ffmpeg as fallback for webm, opus, etc.
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
+                        tmp_in.write(audio_buffer.read())
+                        tmp_in_path = tmp_in.name
+                    
+                    tmp_out_path = tmp_in_path.replace('.webm', '.wav')
+                    
+                    # Convert to WAV using ffmpeg
+                    result = subprocess.run(
+                        ['ffmpeg', '-y', '-i', tmp_in_path, '-acodec', 'pcm_s16le', '-ar', '44100', tmp_out_path],
+                        capture_output=True, text=True
+                    )
+                    
+                    if result.returncode == 0:
+                        audio, sr = sf.read(tmp_out_path, dtype='float32')
+                        logger.info(f"Loaded audio with ffmpeg conversion: sr={sr}, shape={audio.shape}")
+                    else:
+                        raise Exception(f"ffmpeg conversion failed: {result.stderr}")
+                    
+                    # Cleanup temp files
+                    import os
+                    os.unlink(tmp_in_path)
+                    if os.path.exists(tmp_out_path):
+                        os.unlink(tmp_out_path)
+                        
+                except Exception as e:
+                    logger.error(f"All audio loading methods failed: {e}")
+                    raise HTTPException(status_code=400, detail=f"Could not decode audio file. Supported formats: WAV, MP3, FLAC, OGG, WEBM. Error: {str(e)}")
         
         # Keep original sample rate for output
         output_sr = sr if sr > 0 else 44100
@@ -1746,6 +1811,14 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8001, mm=None, params=Non
     
     if mm:
         set_model_manager(mm, params)
+    
+    # Initialize trainer API if available
+    if TRAINER_AVAILABLE:
+        try:
+            init_trainer_api()
+            logger.info("Trainer API initialized")
+        except Exception as e:
+            logger.warning(f"Failed to initialize trainer API: {e}")
     
     uvicorn.run(app, host=host, port=port, log_level="info")
 
