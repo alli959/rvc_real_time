@@ -60,7 +60,23 @@ git clone https://github.com/alli959/rvc_real_time.git
 cd rvc_real_time
 ````
 
-2. Create venv + install deps:
+2. Install system dependencies:
+
+**Ubuntu/Debian:**
+```bash
+sudo apt-get install ffmpeg espeak-ng libespeak-ng-dev portaudio19-dev
+```
+
+**macOS:**
+```bash
+brew install ffmpeg espeak portaudio
+```
+
+**Windows:**
+- Download ffmpeg from https://ffmpeg.org/download.html
+- Download espeak from http://espeak.sourceforge.net/download.html
+
+3. Create venv + install deps:
 
 ```bash
 python -m venv venv
@@ -68,7 +84,7 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Provide required assets:
+4. Provide required assets:
 
 #### Required: HuBERT
 
