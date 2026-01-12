@@ -1030,5 +1030,73 @@ export const trainerApi = {
     const response = await api.post(`/trainer/jobs/${jobId}/cancel`);
     return response.data;
   },
+
+  // ============================================================================
+  // Model Training Data (Cumulative recordings across sessions)
+  // ============================================================================
+
+  /**
+   * Get all recordings for a model
+   */
+  getModelRecordings: async (modelSlug: string): Promise<{
+    exp_name: string;
+    total_recordings: number;
+    total_duration_seconds: number;
+    audio_paths: string[];
+    categories: Record<string, { count: number; audio_paths: string[] }>;
+    sessions: any[];
+  }> => {
+    const response = await api.get(`/trainer/model/${modelSlug}/recordings`);
+    return response.data;
+  },
+
+  /**
+   * Get category recording status for a model
+   */
+  getCategoryStatus: async (modelSlug: string, language: string): Promise<{
+    exp_name: string;
+    language: string;
+    categories: Record<string, {
+      name: string;
+      total_prompts: number;
+      recordings: number;
+      has_recordings: boolean;
+      phonemes_covered: string[];
+    }>;
+    model: {
+      id: number;
+      name: string;
+      en_phoneme_coverage: number | null;
+      en_missing_phonemes: string[];
+      is_phoneme_coverage: number | null;
+      is_missing_phonemes: string[];
+      language_scanned_at: string | null;
+    };
+  }> => {
+    const response = await api.get(`/trainer/model/${modelSlug}/category-status`, {
+      params: { language }
+    });
+    return response.data;
+  },
+
+  /**
+   * Start training using all collected recordings for a model
+   */
+  trainModelWithRecordings: async (modelSlug: string, config?: {
+    epochs?: number;
+    batch_size?: number;
+    sample_rate?: number;
+    f0_method?: string;
+  }): Promise<{
+    job_id: string;
+    status: string;
+    exp_name: string;
+    audio_files: number;
+    total_duration: number;
+    config: { epochs: number; batch_size: number; sample_rate: number };
+  }> => {
+    const response = await api.post(`/trainer/model/${modelSlug}/train`, { config });
+    return response.data;
+  },
 };
 

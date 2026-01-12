@@ -220,6 +220,11 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/wizard/sessions/{sessionId}/pause', [TrainerController::class, 'pauseWizardSession']);
         Route::post('/wizard/sessions/{sessionId}/complete', [TrainerController::class, 'completeWizardSession']);
         Route::delete('/wizard/sessions/{sessionId}', [TrainerController::class, 'cancelWizardSession']);
+
+        // Model training data (cumulative recordings from all sessions)
+        Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
+        Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
+        Route::post('/model/{modelSlug}/train', [TrainerController::class, 'trainModel']);
     });
 
     // ------------------------------------------------------------------

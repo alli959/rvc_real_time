@@ -597,6 +597,99 @@ async def cancel_session(session_id: str):
 
 
 # ============================================================================
+# Model Training Data Endpoints
+# ============================================================================
+
+@router.get("/model/{exp_name}/recordings")
+async def get_model_recordings(exp_name: str):
+    """
+    Get all recordings for a model across all wizard sessions.
+    Used to gather training data from multiple recording sessions.
+    """
+    wizard = get_wizard()
+    return wizard.get_all_recordings_for_model(exp_name)
+
+
+@router.get("/model/{exp_name}/category-status/{language}")
+async def get_category_status(exp_name: str, language: str):
+    """
+    Get recording status for each category.
+    Shows how many recordings exist per category for the model.
+    """
+    wizard = get_wizard()
+    return wizard.get_category_status(exp_name, language)
+
+
+@router.post("/model/{exp_name}/train")
+async def train_model(
+    exp_name: str,
+    background_tasks: BackgroundTasks,
+    config: Optional[TrainingConfigInput] = None
+):
+    """
+    Start training a model using all collected recordings from wizard sessions.
+    """
+    wizard = get_wizard()
+    pipeline = get_pipeline()
+    
+    # Get all recordings for this model
+    recordings_data = wizard.get_all_recordings_for_model(exp_name)
+    audio_paths = recordings_data.get("audio_paths", [])
+    
+    if not audio_paths:
+        raise HTTPException(
+            status_code=400, 
+            detail="No recordings found. Please record some audio first."
+        )
+    
+    if len(audio_paths) < 10:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Need at least 10 recordings to train. Currently have {len(audio_paths)}."
+        )
+    
+    # Build training config
+    if config:
+        training_config = TrainingConfig(
+            exp_name=exp_name,
+            sample_rate=SampleRate(config.sample_rate) if config.sample_rate else SampleRate.SR_48K,
+            f0_method=F0Method(config.f0_method) if config.f0_method else F0Method.RMVPE,
+            epochs=config.epochs or 100,
+            batch_size=config.batch_size or 8,
+            save_every_epoch=config.save_every_epoch or 25,
+            version=RVCVersion(config.version) if config.version else RVCVersion.V2,
+            use_pitch_guidance=config.use_pitch_guidance if config.use_pitch_guidance is not None else True
+        )
+    else:
+        training_config = TrainingConfig(exp_name=exp_name)
+    
+    # Create job
+    job_id = pipeline.create_job(training_config)
+    
+    # Start training in background
+    async def run_training():
+        try:
+            await pipeline.train(training_config, audio_paths, job_id)
+        except Exception as e:
+            logger.exception(f"Training error: {e}")
+    
+    background_tasks.add_task(asyncio.create_task, run_training())
+    
+    return {
+        "job_id": job_id,
+        "status": "started",
+        "exp_name": exp_name,
+        "audio_files": len(audio_paths),
+        "total_duration": recordings_data.get("total_duration_seconds", 0),
+        "config": {
+            "epochs": training_config.epochs,
+            "batch_size": training_config.batch_size,
+            "sample_rate": training_config.sample_rate.value
+        }
+    }
+
+
+# ============================================================================
 # Prompt Endpoints
 # ============================================================================
 

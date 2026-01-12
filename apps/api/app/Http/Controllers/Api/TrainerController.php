@@ -544,6 +544,100 @@ class TrainerController extends Controller
     }
 
     // =========================================================================
+    // Model Training Data
+    // =========================================================================
+
+    /**
+     * Get all recordings for a model
+     */
+    public function getModelRecordings(string $modelSlug): JsonResponse
+    {
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        $recordings = $this->trainer->getModelRecordings($expName);
+
+        if (!$recordings) {
+            return response()->json(['error' => 'Failed to get recordings'], 500);
+        }
+
+        return response()->json($recordings);
+    }
+
+    /**
+     * Get category recording status for a model
+     */
+    public function getCategoryStatus(Request $request, string $modelSlug): JsonResponse
+    {
+        $language = $request->query('language', 'en');
+        
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        $status = $this->trainer->getCategoryStatus($expName, $language);
+
+        if (!$status) {
+            return response()->json(['error' => 'Failed to get category status'], 500);
+        }
+
+        // Merge with model's existing phoneme data
+        $status['model'] = [
+            'id' => $model->id,
+            'name' => $model->name,
+            'en_phoneme_coverage' => $model->en_phoneme_coverage,
+            'en_missing_phonemes' => $model->en_missing_phonemes ?? [],
+            'is_phoneme_coverage' => $model->is_phoneme_coverage,
+            'is_missing_phonemes' => $model->is_missing_phonemes ?? [],
+            'language_scanned_at' => $model->language_scanned_at,
+        ];
+
+        return response()->json($status);
+    }
+
+    /**
+     * Start training using all collected recordings
+     */
+    public function trainModel(Request $request, string $modelSlug): JsonResponse
+    {
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        // Check authorization
+        $user = $request->user();
+        if ($model->user_id !== $user->id && !$user->hasRole('admin')) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        $config = $request->input('config', []);
+        
+        $result = $this->trainer->trainModel($expName, $config);
+
+        if (!$result) {
+            return response()->json(['error' => 'Failed to start training'], 500);
+        }
+
+        return response()->json($result);
+    }
+
+    // =========================================================================
     // Helpers
     // =========================================================================
 
