@@ -1,0 +1,22 @@
+/node_modules
+/public/hot
+/public/storage
+/storage/*.key
+/vendor
+.env
+.env.backup
+.env.production
+.phpunit.result.cache
+Homestead.json
+Homestead.yaml
+auth.json
+npm-debug.log
+yarn-error.log
+/.idea
+/.vscode
+
+# Laravel bootstrap cache - these should be regenerated
+/bootstrap/cache/packages.php
+/bootstrap/cache/services.php
+/bootstrap/cache/config.php
+/bootstrap/cache/routes-v7.php

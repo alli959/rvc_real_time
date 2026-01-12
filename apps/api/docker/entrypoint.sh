@@ -17,6 +17,10 @@ done
 php artisan migrate --force
 php artisan db:seed --force
 
+# Create storage symlink (remove if exists as file)
+rm -f public/storage 2>/dev/null || true
+php artisan storage:link 2>/dev/null || true
+
 
 # Sync voice models from storage to database
 STORAGE_TYPE=${VOICE_MODELS_STORAGE:-local}
