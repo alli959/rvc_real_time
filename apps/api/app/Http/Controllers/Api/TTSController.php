@@ -300,6 +300,56 @@ class TTSController extends Controller
     }
 
     /**
+     * Get TTS capabilities including whether Bark (native emotions) is available
+     */
+    public function getCapabilities()
+    {
+        $voiceEngineUrl = config('services.voice_engine.url', 'http://voice-engine:8000');
+        
+        try {
+            // Forward to voice engine to get actual capabilities
+            $response = Http::timeout(10)->get("{$voiceEngineUrl}/tts/capabilities");
+            
+            if ($response->successful()) {
+                return response()->json($response->json());
+            }
+        } catch (\Exception $e) {
+            \Log::warning("Failed to fetch TTS capabilities from voice engine: " . $e->getMessage());
+        }
+        
+        // Fallback response if voice engine is unreachable
+        return response()->json([
+            'bark_available' => false,
+            'edge_tts_available' => true,
+            'supported_emotions' => [
+                'happy', 'excited', 'cheerful', 'joyful',
+                'sad', 'melancholy', 'depressed', 'disappointed',
+                'angry', 'furious', 'annoyed', 'frustrated',
+                'calm', 'peaceful', 'relaxed', 'neutral',
+                'surprised', 'shocked', 'amazed',
+                'scared', 'terrified', 'anxious', 'nervous',
+                'whisper', 'shouting', 'sarcastic', 'romantic',
+                'serious', 'playful', 'dramatic', 'mysterious',
+                'robot', 'spooky', 'ethereal', 'phone', 'radio',
+                'megaphone', 'echo', 'underwater'
+            ],
+            'supported_sounds' => [
+                'laugh', 'laughing', 'giggle', 'chuckle', 'snicker', 'cackle',
+                'cry', 'crying', 'sob', 'sniff',
+                'gasp', 'scream', 'shriek',
+                'groan', 'moan', 'sigh', 'yawn',
+                'cough', 'sneeze', 'hiccup', 'burp', 'gulp', 'slurp',
+                'growl', 'hiss', 'hum', 'whistle', 'shush', 'kiss', 'blow',
+                'pant', 'breathe', 'inhale', 'exhale',
+                'stutter', 'mumble', 'stammer',
+                'hmm', 'thinking', 'uhh', 'umm'
+            ],
+            'bark_speakers' => ['default', 'male1', 'male2', 'female1', 'female2', 'dramatic', 'calm'],
+            'recommendation' => 'Using Edge TTS with audio processing. Emotions are simulated via pitch/rate changes and audio effects.'
+        ]);
+    }
+
+    /**
      * Generate TTS audio, optionally with voice conversion
      * 
      * Request body:
@@ -310,18 +360,21 @@ class TTSController extends Controller
      * - pitch: Pitch adjustment (-50Hz to +50Hz, default: 0Hz)
      * - voice_model_id: Optional voice model ID for RVC conversion
      * - f0_up_key: Pitch shift for RVC (-12 to 12, default: 0)
+     * - include_segments: Optional array of {voice_model_id, text} for multi-voice
      * 
      * Emotion tags in text:
      * - [happy]Hello![/happy] - Tagged sections with emotions
      * - [laugh] or *laugh* or (laugh) - Sound effects
      * - [whisper]Secret[/whisper] - Special effects
+     * - <speed rate="-30%">Slow text</speed> - Speed control
+     * - <include voice_model_id="123">Other voice</include> - Multi-voice
      */
     public function generate(Request $request)
     {
         $user = $request->user();
 
         $validated = $request->validate([
-            'text' => 'required|string|max:5000',
+            'text' => 'required|string|max:10000',
             'voice' => 'nullable|string',
             'style' => 'nullable|string',
             'rate' => 'nullable|string', // e.g., "+10%", "-20%"
@@ -330,6 +383,13 @@ class TTSController extends Controller
             'f0_up_key' => 'nullable|integer|min:-12|max:12',
             'index_rate' => 'nullable|numeric|min:0|max:1',
             'apply_effects' => 'nullable|string|max:50', // Audio effect to apply after conversion
+            // Bark TTS options (native emotion support)
+            'use_bark' => 'nullable|boolean', // Use Bark TTS for native emotions (default: true)
+            'bark_speaker' => 'nullable|string|in:default,male1,male2,female1,female2,dramatic,calm',
+            // Multi-voice support
+            'include_segments' => 'nullable|array',
+            'include_segments.*.voice_model_id' => 'nullable|integer|exists:voice_models,id',
+            'include_segments.*.text' => 'nullable|string',
         ]);
 
         $text = $validated['text'];
@@ -370,15 +430,31 @@ class TTSController extends Controller
         ]);
 
         try {
+            // Check if this is a multi-voice request (has <include> tags or include_segments)
+            $hasIncludeTags = preg_match('/<include\s+[^>]+>/', $text);
+            $hasIncludeSegments = !empty($validated['include_segments']);
+            
+            if ($hasIncludeTags || $hasIncludeSegments) {
+                // Multi-voice TTS generation
+                return $this->generateMultiVoice($request, $validated, $voiceModel, $job, $user);
+            }
+            
             // Generate TTS audio using voice engine
             $voiceEngineUrl = config('services.voice_engine.base_url', 'http://localhost:8001');
             
-            $ttsResponse = Http::timeout(60)->post("{$voiceEngineUrl}/tts", [
+            // Use longer timeout for Bark TTS (it needs time to download models on first run and generate)
+            // Bark generation can take 15-30 seconds, first run can take 2-3 minutes for model download
+            $useBark = $validated['use_bark'] ?? true;
+            $ttsTimeout = $useBark ? 180 : 60;  // 3 minutes for Bark, 1 minute for Edge TTS
+            
+            $ttsResponse = Http::timeout($ttsTimeout)->post("{$voiceEngineUrl}/tts", [
                 'text' => $text,
                 'voice' => $voice,
                 'style' => $style,
                 'rate' => $rate,
                 'pitch' => $pitch,
+                'use_bark' => $useBark,
+                'bark_speaker' => $validated['bark_speaker'] ?? 'default',
             ]);
 
             if (!$ttsResponse->successful()) {
@@ -551,5 +627,179 @@ class TTSController extends Controller
             'Connection' => 'keep-alive',
             'X-Accel-Buffering' => 'no',
         ]);
+    }
+    
+    /**
+     * Generate multi-voice TTS with include segment support
+     */
+    protected function generateMultiVoice(Request $request, array $validated, ?VoiceModel $defaultModel, JobQueue $job, $user)
+    {
+        $voiceEngineUrl = config('services.voice_engine.base_url', 'http://localhost:8001');
+        
+        // Build voice model mappings for include segments
+        $voiceModelMappings = [];
+        $missingModelIds = [];
+        
+        // Extract voice_model_ids from include tags in text
+        preg_match_all('/<include\s+voice_model_id=["\']?(\d+)["\']?[^>]*>/', $validated['text'], $matches);
+        $includeModelIds = array_unique($matches[1] ?? []);
+        
+        // Also check include_segments array
+        if (!empty($validated['include_segments'])) {
+            foreach ($validated['include_segments'] as $segment) {
+                if (!empty($segment['voice_model_id'])) {
+                    $includeModelIds[] = $segment['voice_model_id'];
+                }
+            }
+            $includeModelIds = array_unique($includeModelIds);
+        }
+        
+        // Load all required voice models and check permissions
+        foreach ($includeModelIds as $modelId) {
+            $model = VoiceModel::find($modelId);
+            if (!$model) {
+                $missingModelIds[] = $modelId;
+                continue;
+            }
+            
+            // Check access
+            if (!$model->isPublic() && !$model->isOwnedBy($user)) {
+                $hasPermission = $model->permittedUsers()
+                    ->where('users.id', $user->id)
+                    ->where('voice_model_user_access.can_use', true)
+                    ->exists();
+                
+                if (!$hasPermission && !$user->hasRole('admin')) {
+                    continue; // Skip this model silently
+                }
+            }
+            
+            $voiceModelMappings[(string)$modelId] = [
+                'model_path' => $model->model_path,
+                'index_path' => $model->index_path,
+            ];
+        }
+        
+        // Return error if any voice models referenced in text don't exist
+        if (!empty($missingModelIds)) {
+            $job->update([
+                'status' => JobQueue::STATUS_FAILED,
+                'error_message' => 'Voice model(s) not found',
+                'error_details' => ['missing_ids' => $missingModelIds],
+                'completed_at' => now(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Voice model(s) not found',
+                'message' => 'Voice model ID(s) ' . implode(', ', $missingModelIds) . ' do not exist. Please use valid voice model IDs in your <include> tags.',
+                'missing_ids' => $missingModelIds,
+                'job_id' => $job->uuid,
+            ], 422);
+        }
+        
+        // Prepare request to voice engine multi-voice endpoint
+        $multiVoicePayload = [
+            'text' => $validated['text'],
+            'voice' => $validated['voice'] ?? 'en-US-GuyNeural',
+            'style' => $validated['style'] ?? 'default',
+            'rate' => $validated['rate'] ?? '+0%',
+            'pitch' => $validated['pitch'] ?? '+0Hz',
+            'voice_model_mappings' => $voiceModelMappings,
+        ];
+        
+        // Add default model if specified
+        if ($defaultModel) {
+            $multiVoicePayload['default_model_path'] = $defaultModel->model_path;
+            $multiVoicePayload['default_index_path'] = $defaultModel->index_path;
+            $multiVoicePayload['default_f0_up_key'] = $validated['f0_up_key'] ?? 0;
+            $multiVoicePayload['default_index_rate'] = $validated['index_rate'] ?? 0.75;
+        }
+        
+        try {
+            $response = Http::timeout(180)->post("{$voiceEngineUrl}/tts/multi-voice", $multiVoicePayload);
+            
+            if (!$response->successful()) {
+                $job->update([
+                    'status' => JobQueue::STATUS_FAILED,
+                    'error_message' => 'Multi-voice TTS generation failed',
+                    'error_details' => ['response' => $response->json()],
+                    'completed_at' => now(),
+                ]);
+
+                return response()->json([
+                    'error' => 'Multi-voice TTS generation failed',
+                    'message' => $response->json('error') ?? 'Unknown error',
+                    'job_id' => $job->uuid,
+                ], 500);
+            }
+            
+            $audioBase64 = $response->json('audio');
+            $sampleRate = $response->json('sample_rate', 24000);
+            $segmentsProcessed = $response->json('segments_processed', 1);
+            $includeSegmentsUsed = $response->json('include_segments_used', 0);
+            
+            // Apply post-conversion effects if specified
+            if (!empty($validated['apply_effects']) && $audioBase64) {
+                $effectsResponse = Http::timeout(60)->post("{$voiceEngineUrl}/apply-effects", [
+                    'audio' => $audioBase64,
+                    'sample_rate' => $sampleRate,
+                    'effect' => $validated['apply_effects'],
+                ]);
+                
+                if ($effectsResponse->successful()) {
+                    $audioBase64 = $effectsResponse->json('audio');
+                }
+            }
+            
+            // Record usage for all models used
+            foreach ($includeModelIds as $modelId) {
+                if (isset($voiceModelMappings[(string)$modelId])) {
+                    $model = VoiceModel::find($modelId);
+                    if ($model) {
+                        UsageEvent::recordTTS($user->id, $model->id, strlen($validated['text']) / count($includeModelIds), true);
+                        $model->incrementUsage();
+                    }
+                }
+            }
+            
+            if ($defaultModel) {
+                UsageEvent::recordTTS($user->id, $defaultModel->id, strlen($validated['text']), true);
+                $defaultModel->incrementUsage();
+            }
+            
+            // Mark job as completed
+            $job->update([
+                'status' => JobQueue::STATUS_COMPLETED,
+                'completed_at' => now(),
+                'progress' => 100,
+            ]);
+
+            return response()->json([
+                'audio' => $audioBase64,
+                'sample_rate' => $sampleRate,
+                'format' => 'wav',
+                'text_length' => strlen($validated['text']),
+                'voice' => $validated['voice'] ?? 'en-US-GuyNeural',
+                'style' => $validated['style'] ?? 'default',
+                'converted' => !empty($defaultModel) || !empty($voiceModelMappings),
+                'multi_voice' => true,
+                'segments_processed' => $segmentsProcessed,
+                'include_segments_used' => $includeSegmentsUsed,
+                'job_id' => $job->uuid,
+            ]);
+            
+        } catch (\Exception $e) {
+            $job->update([
+                'status' => JobQueue::STATUS_FAILED,
+                'error_message' => $e->getMessage(),
+                'completed_at' => now(),
+            ]);
+
+            return response()->json([
+                'error' => 'Multi-voice TTS generation failed',
+                'message' => $e->getMessage(),
+                'job_id' => $job->uuid,
+            ], 500);
+        }
     }
 }
