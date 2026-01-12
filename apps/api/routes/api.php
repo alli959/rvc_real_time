@@ -62,6 +62,9 @@ Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show'])->where
 // TTS voices list (public - no auth required)
 Route::get('/tts/voices', [TTSController::class, 'getVoices']);
 
+// TTS capabilities (public - shows what emotion/sound features are available)
+Route::get('/tts/capabilities', [TTSController::class, 'getCapabilities']);
+
 // ==========================================================================
 // Protected Routes (Authentication Required)
 // ==========================================================================
