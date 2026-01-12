@@ -3,6 +3,7 @@
 import { useState, useRef, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { youtubeApi, audioProcessingApi, YouTubeSearchResult } from '@/lib/api';
+import { AudioPlayer } from '@/components/audio-player';
 import {
   Upload,
   FileAudio,
@@ -491,6 +492,7 @@ export function VocalSplitterSwap({ selectedModelId, modelName, onProcessComplet
                   <img 
                     src={youtubeAudio.thumbnail} 
                     alt={youtubeAudio.title}
+                    referrerPolicy="no-referrer"
                     className="w-20 h-20 rounded-lg object-cover"
                   />
                   <div className="flex-1 min-w-0">
@@ -522,6 +524,7 @@ export function VocalSplitterSwap({ selectedModelId, modelName, onProcessComplet
                     <img
                       src={video.thumbnail}
                       alt={video.title}
+                      referrerPolicy="no-referrer"
                       className="w-16 h-12 rounded object-cover"
                     />
                     <div className="flex-1 min-w-0">
@@ -642,36 +645,15 @@ export function VocalSplitterSwap({ selectedModelId, modelName, onProcessComplet
           </h4>
 
           {results.map((result, index) => (
-            <div
+            <AudioPlayer
               key={index}
-              className="flex items-center justify-between p-4 bg-gray-800 rounded-lg"
-            >
-              <div className="flex items-center gap-3">
-                {getResultIcon(result.type)}
-                <div>
-                  <p className="text-white font-medium">{result.name}</p>
-                  <p className="text-xs text-gray-400 capitalize">{result.type}</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => togglePlay(result.url)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  {playingUrl === result.url && isPlaying ? (
-                    <Square className="h-5 w-5" />
-                  ) : (
-                    <Play className="h-5 w-5" />
-                  )}
-                </button>
-                <button
-                  onClick={() => downloadResult(result)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <Download className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
+              url={result.url}
+              name={result.name}
+              subtitle={result.type.charAt(0).toUpperCase() + result.type.slice(1)}
+              icon={getResultIcon(result.type)}
+              onDownload={() => downloadResult(result)}
+              showDownload={true}
+            />
           ))}
         </div>
       )}

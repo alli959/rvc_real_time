@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { audioProcessingApi, youtubeApi, YouTubeSearchResult } from '@/lib/api';
+import { AudioPlayer } from '@/components/audio-player';
 import {
   Upload,
   FileAudio,
@@ -471,6 +472,7 @@ export function SongRemixUpload({ selectedModelId, modelName, onProcessComplete 
                     <img 
                       src={youtubeAudio.thumbnail} 
                       alt={youtubeAudio.title}
+                      referrerPolicy="no-referrer"
                       className="w-14 h-14 rounded object-cover"
                     />
                     <div className="flex-1 min-w-0">
@@ -507,6 +509,7 @@ export function SongRemixUpload({ selectedModelId, modelName, onProcessComplete 
                       <img 
                         src={result.thumbnail} 
                         alt={result.title}
+                        referrerPolicy="no-referrer"
                         className="w-10 h-10 rounded object-cover flex-shrink-0"
                       />
                       <div className="flex-1 min-w-0">
@@ -643,38 +646,19 @@ export function SongRemixUpload({ selectedModelId, modelName, onProcessComplete 
 
           <div className="space-y-2">
             {results.map((result, index) => (
-              <div
+              <AudioPlayer
                 key={index}
-                className="p-3 bg-gray-800 rounded-lg flex items-center gap-3"
-              >
-                <div className="p-1.5 rounded bg-gray-700">
-                  {result.type === 'vocals' && <Volume2 className="h-4 w-4 text-purple-400" />}
-                  {result.type === 'instrumental' && <Guitar className="h-4 w-4 text-blue-400" />}
-                  {result.type === 'swapped' && <Volume2 className="h-4 w-4 text-accent-400" />}
-                </div>
-                <div className="flex-1 min-w-0">
-                  <p className="text-sm font-medium text-white truncate">{result.name}</p>
-                  <p className="text-xs text-gray-400 capitalize">{result.type}</p>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  <button
-                    onClick={() => togglePlay(result.url)}
-                    className="p-1.5 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
-                  >
-                    {playingUrl === result.url && isPlaying ? (
-                      <Square className="h-4 w-4" />
-                    ) : (
-                      <Play className="h-4 w-4" />
-                    )}
-                  </button>
-                  <button
-                    onClick={() => downloadResult(result)}
-                    className="p-1.5 bg-accent-600 rounded hover:bg-accent-700 transition-colors"
-                  >
-                    <Download className="h-4 w-4" />
-                  </button>
-                </div>
-              </div>
+                url={result.url}
+                name={result.name}
+                subtitle={result.type.charAt(0).toUpperCase() + result.type.slice(1)}
+                icon={
+                  result.type === 'vocals' ? <Volume2 className="h-5 w-5 text-purple-400" /> :
+                  result.type === 'instrumental' ? <Guitar className="h-5 w-5 text-blue-400" /> :
+                  <Volume2 className="h-5 w-5 text-accent-400" />
+                }
+                onDownload={() => downloadResult(result)}
+                showDownload={true}
+              />
             ))}
           </div>
         </div>

@@ -39,13 +39,13 @@ function QuickActionCard({
   return (
     <Link
       href={href}
-      className="glass rounded-xl p-6 hover:bg-white/10 transition-all hover:scale-105 group"
+      className="glass rounded-xl p-4 sm:p-6 hover:bg-white/10 transition-all hover:scale-105 group"
     >
-      <div className="mb-4 text-primary-400 group-hover:text-primary-300 transition-colors">
+      <div className="mb-3 sm:mb-4 text-primary-400 group-hover:text-primary-300 transition-colors">
         {icon}
       </div>
-      <h3 className="text-lg font-semibold mb-2 text-white">{title}</h3>
-      <p className="text-sm text-gray-400">{description}</p>
+      <h3 className="text-sm sm:text-lg font-semibold mb-1 sm:mb-2 text-white">{title}</h3>
+      <p className="text-xs sm:text-sm text-gray-400 hidden sm:block">{description}</p>
     </Link>
   );
 }
@@ -76,41 +76,41 @@ export function AuthAwareHero() {
   // Authenticated user experience
   if (isAuthenticated && user) {
     return (
-      <section className="pt-32 pb-20 px-4">
+      <section className="pt-24 sm:pt-32 pb-12 sm:pb-20 px-4">
         <div className="max-w-7xl mx-auto">
           {/* Personalized greeting */}
-          <div className="text-center mb-12">
-            <h1 className="text-4xl md:text-5xl font-bold mb-4">
+          <div className="text-center mb-8 sm:mb-12">
+            <h1 className="text-2xl sm:text-4xl md:text-5xl font-bold mb-3 sm:mb-4">
               Welcome back, <span className="gradient-text">{user.name?.split(' ')[0] || 'Creator'}</span>
             </h1>
-            <p className="text-xl text-gray-400 max-w-2xl mx-auto">
+            <p className="text-base sm:text-xl text-gray-400 max-w-2xl mx-auto">
               Ready to create something amazing? Pick up where you left off or try something new.
             </p>
           </div>
 
           {/* Quick Actions Grid */}
-          <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6 mb-12">
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-6 mb-8 sm:mb-12">
             <QuickActionCard
               href="/dashboard/tts"
-              icon={<MessageSquare className="h-8 w-8" />}
+              icon={<MessageSquare className="h-6 w-6 sm:h-8 sm:w-8" />}
               title="Text to Speech"
               description="Generate speech with AI voices and emotion tags"
             />
             <QuickActionCard
               href="/dashboard/audio"
-              icon={<Sparkles className="h-8 w-8" />}
+              icon={<Sparkles className="h-6 w-6 sm:h-8 sm:w-8" />}
               title="Voice Convert"
               description="Transform audio with AI voice models"
             />
             <QuickActionCard
               href="/dashboard/song-remix"
-              icon={<Music className="h-8 w-8" />}
+              icon={<Music className="h-6 w-6 sm:h-8 sm:w-8" />}
               title="Song Remix"
               description="Split vocals and swap voices in songs"
             />
             <QuickActionCard
-              href="/models?tab=community"
-              icon={<Globe className="h-8 w-8" />}
+              href="/dashboard/models?tab=community"
+              icon={<Globe className="h-6 w-6 sm:h-8 sm:w-8" />}
               title="Community Models"
               description="Browse public voice models from creators"
             />
