@@ -2,7 +2,9 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { voiceModelsApi, audioProcessingApi, youtubeApi, VoiceModel, YouTubeSearchResult } from '@/lib/api';
+import { audioProcessingApi, youtubeApi, VoiceModel, YouTubeSearchResult } from '@/lib/api';
+import { ModelSelector } from '@/components/model-selector';
+import { AudioPlayer } from '@/components/audio-player';
 import { useDropzone } from 'react-dropzone';
 import {
   Upload,
@@ -74,37 +76,11 @@ export default function SongRemixPage() {
   const [error, setError] = useState<string | null>(null);
   
   // Voice model selection (for swap mode)
-  const [voiceModels, setVoiceModels] = useState<VoiceModel[]>([]);
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
-  const [modelsLoading, setModelsLoading] = useState(true);
-  const [modelsError, setModelsError] = useState<string | null>(null);
   const [f0UpKey, setF0UpKey] = useState(0);
   const [indexRate, setIndexRate] = useState(0.75);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
-
-  // Load voice models
-  useEffect(() => {
-    const loadModels = async () => {
-      setModelsLoading(true);
-      setModelsError(null);
-      try {
-        const data = await voiceModelsApi.list({ per_page: 100 });
-        const models = data.data || [];
-        setVoiceModels(models);
-        
-        if (models.length > 0 && !selectedModelId) {
-          setSelectedModelId(models[0].id);
-        }
-      } catch (err: any) {
-        console.error('Failed to load models:', err);
-        setModelsError('Failed to load voice models. Please refresh the page.');
-      } finally {
-        setModelsLoading(false);
-      }
-    };
-    loadModels();
-  }, []);
 
   // Cleanup URLs on unmount
   useEffect(() => {
@@ -505,6 +481,7 @@ export default function SongRemixPage() {
                       <img 
                         src={youtubeAudio.thumbnail} 
                         alt={youtubeAudio.title}
+                        referrerPolicy="no-referrer"
                         className="w-20 h-20 rounded-lg object-cover"
                       />
                       <div className="flex-1 min-w-0">
@@ -541,6 +518,7 @@ export default function SongRemixPage() {
                         <img 
                           src={result.thumbnail} 
                           alt={result.title}
+                          referrerPolicy="no-referrer"
                           className="w-16 h-12 rounded object-cover"
                         />
                         <div className="flex-1 text-left min-w-0">
@@ -591,69 +569,43 @@ export default function SongRemixPage() {
               Voice Model
             </h3>
 
-            {modelsLoading ? (
-              <div className="flex items-center gap-2 text-gray-400">
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Loading voice models...
-              </div>
-            ) : modelsError ? (
-              <div className="flex items-center gap-2 text-red-400">
-                <AlertCircle className="h-4 w-4" />
-                {modelsError}
-              </div>
-            ) : voiceModels.length === 0 ? (
-              <div className="text-gray-400 text-sm">
-                No voice models available. Please upload or enable some models first.
-              </div>
-            ) : (
-              <>
-                <div>
-                  <select
-                    value={selectedModelId || ''}
-                    onChange={(e) => setSelectedModelId(e.target.value ? parseInt(e.target.value) : null)}
-                    className="w-full px-4 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:ring-2 focus:ring-accent-500 focus:border-transparent"
-                  >
-                    <option value="">Select a voice model...</option>
-                    {voiceModels.map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
+            <ModelSelector
+              value={selectedModelId}
+              onChange={(id) => setSelectedModelId(id)}
+              placeholder="Select a voice model..."
+              accentColor="accent"
+            />
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Pitch Shift: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
-                    </label>
-                    <input
-                      type="range"
-                      min="-12"
-                      max="12"
-                      value={f0UpKey}
-                      onChange={(e) => setF0UpKey(parseInt(e.target.value))}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
-                    />
-                  </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Pitch Shift: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
+                </label>
+                <input
+                  type="range"
+                  min="-12"
+                  max="12"
+                  value={f0UpKey}
+                  onChange={(e) => setF0UpKey(parseInt(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
+                />
+              </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-gray-300 mb-2">
-                      Index Rate: {indexRate.toFixed(2)}
-                    </label>
-                    <input
-                      type="range"
-                      min="0"
-                      max="1"
-                      step="0.01"
-                      value={indexRate}
-                      onChange={(e) => setIndexRate(parseFloat(e.target.value))}
-                      className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
-                    />
-                  </div>
-                </div>
-              </>
-            )}
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">
+                  Index Rate: {indexRate.toFixed(2)}
+                </label>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={indexRate}
+                  onChange={(e) => setIndexRate(parseFloat(e.target.value))}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
+                />
+              </div>
+            </div>
           </div>
         )}
 
@@ -699,42 +651,19 @@ export default function SongRemixPage() {
 
             <div className="grid gap-4">
               {results.map((result, idx) => (
-                <div
+                <AudioPlayer
                   key={idx}
-                  className="flex items-center gap-4 p-4 bg-gray-800 rounded-lg"
-                >
-                  <div className="p-2 rounded-lg bg-gray-700">
-                    {result.type === 'vocals' ? (
-                      <Volume2 className="h-5 w-5 text-blue-400" />
-                    ) : result.type === 'instrumental' ? (
-                      <Guitar className="h-5 w-5 text-purple-400" />
-                    ) : (
-                      <Merge className="h-5 w-5 text-green-400" />
-                    )}
-                  </div>
-                  <div className="flex-1 min-w-0">
-                    <p className="text-white font-medium truncate">{result.name}</p>
-                    <p className="text-sm text-gray-400 capitalize">{result.type}</p>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <button
-                      onClick={() => togglePlay(result.url)}
-                      className="p-2 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
-                    >
-                      {playingUrl === result.url && isPlaying ? (
-                        <Square className="h-5 w-5" />
-                      ) : (
-                        <Play className="h-5 w-5" />
-                      )}
-                    </button>
-                    <button
-                      onClick={() => downloadResult(result)}
-                      className="p-2 bg-accent-600 rounded-lg hover:bg-accent-700 transition-colors"
-                    >
-                      <Download className="h-5 w-5" />
-                    </button>
-                  </div>
-                </div>
+                  url={result.url}
+                  name={result.name}
+                  subtitle={result.type.charAt(0).toUpperCase() + result.type.slice(1)}
+                  icon={
+                    result.type === 'vocals' ? <Volume2 className="h-5 w-5 text-blue-400" /> :
+                    result.type === 'instrumental' ? <Guitar className="h-5 w-5 text-purple-400" /> :
+                    <Merge className="h-5 w-5 text-green-400" />
+                  }
+                  onDownload={() => downloadResult(result)}
+                  showDownload={true}
+                />
               ))}
             </div>
           </div>
