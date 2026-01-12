@@ -1,0 +1,10 @@
+# Bark TTS models directory
+# Models are downloaded on setup via scripts/download_bark_assets.sh
+# 
+# Expected files:
+#   - text_2.pt (~5GB) - Text encoder model
+#   - coarse_2.pt (~3.7GB) - Coarse acoustic model  
+#   - fine_2.pt (~3.5GB) - Fine acoustic model
+#   - encodec_24khz-d7cc33bc.th (~89MB) - Audio codec model
+#
+# Total: ~13GB
