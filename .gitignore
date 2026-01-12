@@ -57,6 +57,10 @@ services/voice-engine/assets/rmvpe/*.pt
 services/voice-engine/assets/uvr5_weights/*.pth
 services/voice-engine/assets/uvr5_weights/**/*.pth
 
+# Bark TTS models (downloaded on setup, ~13GB)
+services/voice-engine/assets/bark/*.pt
+services/voice-engine/assets/bark/*.th
+
 # ALL model .pth, .index, .npy files (too large for GitHub)
 # These are downloaded on setup via scripts/download_billcipher_model.sh
 services/voice-engine/assets/models/**/*.pth
@@ -90,6 +94,7 @@ services/voice-engine/assets/models/**/total_fea.npy
 # Keep directory structure
 !services/voice-engine/assets/hubert/.gitkeep
 !services/voice-engine/assets/rmvpe/.gitkeep
+!services/voice-engine/assets/bark/.gitkeep
 !services/voice-engine/assets/index/.gitkeep
 !services/voice-engine/assets/models/.gitkeep
 !services/voice-engine/assets/models/README.md
