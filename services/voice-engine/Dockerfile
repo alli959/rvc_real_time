@@ -65,6 +65,15 @@ RUN pip install --no-cache-dir git+https://github.com/facebookresearch/fairseq.g
 # Install fairseq's required dependencies that don't conflict
 RUN pip install --no-cache-dir hydra-core omegaconf cffi bitarray sacrebleu
 
+# Install Bark TTS for native emotion/sound effect support (optional, requires GPU)
+# This adds about 2GB to the image size but enables superior emotion handling
+# Comment out if you want to use Edge TTS only (smaller image, simulated emotions)
+ARG INSTALL_BARK=true
+RUN if [ "$INSTALL_BARK" = "true" ]; then \
+    pip install --no-cache-dir --default-timeout=300 \
+        git+https://github.com/suno-ai/bark.git; \
+    fi
+
 # Copy and run the fairseq patching script
 COPY patch_fairseq.py .
 RUN python3 patch_fairseq.py && rm patch_fairseq.py
@@ -80,7 +89,7 @@ COPY rvc/ ./rvc/
 COPY infer/ ./infer/
 
 # Create directories for assets
-RUN mkdir -p assets/models assets/hubert assets/rmvpe
+RUN mkdir -p assets/models assets/hubert assets/rmvpe assets/bark
 
 # Set environment variables
 ENV PYTHONUNBUFFERED=1

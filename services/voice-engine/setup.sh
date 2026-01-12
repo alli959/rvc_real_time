@@ -116,6 +116,28 @@ else
     echo "Vocal/instrumental separation will not be available"
 fi
 
+# Download Bark TTS models (optional, ~13GB - enables native emotion support)
+echo ""
+echo "Downloading Bark TTS models (for emotion and sound effect support)..."
+mkdir -p assets/bark
+if [ -f "scripts/download_bark_assets.sh" ]; then
+    # Check if main Bark model already exists
+    if [ -f "assets/bark/text_2.pt" ]; then
+        echo "✓ Bark TTS models already downloaded"
+    else
+        echo "Note: Bark models are ~13GB total. Download may take a while."
+        read -p "Download Bark TTS models? (y/N) " -n 1 -r
+        echo
+        if [[ $REPLY =~ ^[Yy]$ ]]; then
+            bash scripts/download_bark_assets.sh || echo "⚠️  Bark model download failed - TTS will use Edge TTS fallback"
+        else
+            echo "Skipping Bark models. TTS will use Edge TTS (no native emotion support)."
+        fi
+    fi
+else
+    echo "Warning: scripts/download_bark_assets.sh not found"
+fi
+
 # Download example model (BillCipher)
 echo ""
 echo "Downloading example model (BillCipher)..."
