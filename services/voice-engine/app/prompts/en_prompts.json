@@ -1,0 +1,325 @@
+{
+  "language": "en",
+  "language_name": "English",
+  "total_prompts": 200,
+  "description": "English language prompts for voice model training. Organized by phoneme categories to ensure comprehensive coverage.",
+  
+  "categories": {
+    "pangrams": {
+      "description": "Sentences containing all letters of the alphabet",
+      "prompts": [
+        "The quick brown fox jumps over the lazy dog.",
+        "Pack my box with five dozen liquor jugs.",
+        "How vexingly quick daft zebras jump!",
+        "The five boxing wizards jump quickly.",
+        "Jackdaws love my big sphinx of quartz.",
+        "Mr Jock, TV quiz PhD, bags few lynx.",
+        "Sphinx of black quartz, judge my vow.",
+        "Two driven jocks help fax my big quiz.",
+        "Watch Jeopardy, Alex Trebek's fun TV quiz game.",
+        "By Jove, my quick study of lexicography won a prize."
+      ]
+    },
+    
+    "plosives": {
+      "description": "Sentences emphasizing plosive consonants (p, b, t, d, k, g)",
+      "phonemes_covered": ["p", "b", "t", "d", "k", "g"],
+      "prompts": [
+        "Peter Piper picked a peck of pickled peppers.",
+        "Big bad bears bounce beautiful balls.",
+        "Tiny Tim took two teddy bears to town.",
+        "Danny decided to dig ditches down deep.",
+        "Kicking cans keeps kids quite calm.",
+        "Good grief, Gary's gone and gotten a gecko.",
+        "Pat put the purple pumpkin in the pot.",
+        "Bob bought a batch of blue biscuits.",
+        "Ted told Tom to tidy the table.",
+        "Ducks dive deep down during December.",
+        "Katie kept kicking the kitchen kettle.",
+        "Greg grabbed the green grapes greedily.",
+        "The picky parrot pecked the pretty peaches.",
+        "Barbara baked brownies by the bakery.",
+        "Tim tried to tie twenty twisted ties.",
+        "Did Debbie decide to dance at the disco?",
+        "Karl called his cousin from Kentucky.",
+        "Go get the golden goose from the garden."
+      ]
+    },
+    
+    "fricatives": {
+      "description": "Sentences emphasizing fricative consonants (f, v, θ, ð, s, z, ʃ, ʒ, h)",
+      "phonemes_covered": ["f", "v", "θ", "ð", "s", "z", "ʃ", "ʒ", "h"],
+      "prompts": [
+        "She sells seashells by the seashore.",
+        "The thistle sifter sifted thistles through.",
+        "Fresh French fried fish.",
+        "Vincent vowed vengeance very viciously.",
+        "Zany zebras zigzagged through the zoo.",
+        "His shirt has surely shrunk somewhat.",
+        "The unusual treasure measured pleasure.",
+        "Harry's house has huge hollow hallways.",
+        "Friendly Frank flips fine flapjacks fast.",
+        "Very vivid visions of Venice vanished.",
+        "Think thoroughly through those theories.",
+        "Father gathered feathers together there.",
+        "Six Swiss ships swished swiftly southward.",
+        "Zara's zesty zucchini amazed the zealots.",
+        "She should shush the shy sheriff.",
+        "The azure azure leisure seizure.",
+        "Happy Henry heard Helen humming.",
+        "Thoughtful Thelma thanked them thoroughly.",
+        "This, that, and the other thing.",
+        "Sheep should sleep in a shed.",
+        "The vision of the collision was a delusion."
+      ]
+    },
+    
+    "affricates": {
+      "description": "Sentences emphasizing affricate consonants (tʃ, dʒ)",
+      "phonemes_covered": ["tʃ", "dʒ"],
+      "prompts": [
+        "The cheerful child chose chocolate chip cookies.",
+        "The judge enjoyed the gentle giant's joke.",
+        "Chester cheetah chews cheap cheese chips.",
+        "Jane juggled jars of jam and jelly.",
+        "Church choirs chant charming chanties.",
+        "George the giant giraffe joined the gym.",
+        "Chunky Charlie changed channels cheerfully.",
+        "The jovial judge judged justly.",
+        "Which witch watched which watch?",
+        "Jim just jumped on the jungle gym.",
+        "Catch the chubby chicken in the kitchen.",
+        "The jolly jester joked with the jealous janitor."
+      ]
+    },
+    
+    "nasals": {
+      "description": "Sentences emphasizing nasal consonants (m, n, ŋ)",
+      "phonemes_covered": ["m", "n", "ŋ"],
+      "prompts": [
+        "The king was singing along strongly.",
+        "Mommy made many muffins this morning.",
+        "Nine nice night nurses nursing nicely.",
+        "Morning mist made mountains mysterious.",
+        "Nancy needed nine new notebooks.",
+        "Long songs bring strong feelings among us.",
+        "Munching mushrooms makes me merry.",
+        "Nothing's remaining after the ringing.",
+        "My mind moved many memories.",
+        "Running among the ringing bells.",
+        "The young king sang a song at sunrise.",
+        "Men named Norman never name their sons Norman."
+      ]
+    },
+    
+    "liquids_glides": {
+      "description": "Sentences emphasizing liquids (l, r) and glides (w, j)",
+      "phonemes_covered": ["l", "r", "w", "j"],
+      "prompts": [
+        "Red lorry, yellow lorry, red lorry, yellow lorry.",
+        "William walked while whistling wistfully.",
+        "Young Yolanda yelled at yesterday's yams.",
+        "Really leery Larry rarely relies on rulers.",
+        "Willy's real rear wheel really rattles.",
+        "Yes, young Yale students yawn yearly.",
+        "Literally literary literature lovers.",
+        "We were worried when Wayne went west.",
+        "Your yellow yo-yo yielded yearly yields.",
+        "Larry's loyal llama lacks a leash.",
+        "Wild winds whipped through the willows.",
+        "Yelling yields yearning young yachtsmen.",
+        "The loyal royal lawyer rarely relaxed.",
+        "Wanda wondered where William was wandering."
+      ]
+    },
+    
+    "vowels_monophthongs": {
+      "description": "Sentences emphasizing monophthong vowels",
+      "phonemes_covered": ["iː", "ɪ", "e", "æ", "ɑː", "ɒ", "ɔː", "ʊ", "uː", "ʌ", "ə", "ɜː"],
+      "prompts": [
+        "Each eagle easily eats eager eels.",
+        "Six thick thistle sticks.",
+        "Red leather, yellow leather.",
+        "The cat sat on the mat with a bat.",
+        "Father and Arthur bathed in the bathroom.",
+        "Hot coffee costs lots of dollars.",
+        "Paul saw four tall horses walking north.",
+        "Good books look good on wooden hooks.",
+        "Sue's blue shoes are too loose.",
+        "The sun shone but none wanted to run.",
+        "A banana and a comma are common in drama.",
+        "Her bird chirped first in the early world.",
+        "Bit by bit, Jim built his little ship.",
+        "The head chef said the bread was ready.",
+        "Bad lads had glad dads.",
+        "A large car parked far from the bar.",
+        "The dog got lost in the fog."
+      ]
+    },
+    
+    "vowels_diphthongs": {
+      "description": "Sentences emphasizing diphthong vowels",
+      "phonemes_covered": ["eɪ", "aɪ", "ɔɪ", "aʊ", "əʊ", "ɪə", "eə", "ʊə"],
+      "prompts": [
+        "My bike tire is quite nice and white.",
+        "How now brown cow?",
+        "Roy enjoys his toys with joy.",
+        "The rain in Spain stays mainly in the plain.",
+        "I scream, you scream, we all scream for ice cream.",
+        "Go slow over the road in the snow.",
+        "Near here, we fear the deer appear.",
+        "Their fair hair blew in the air.",
+        "The poor tourist took a tour.",
+        "Great apes make great escapes.",
+        "The shy guy flies high in the sky.",
+        "The noisy boys destroyed their toys.",
+        "The loud crowd shouted out loud.",
+        "The old soul strolled along the road.",
+        "We're nearly here, dear, never fear.",
+        "Where there's air, they're aware and care.",
+        "The cure for boredom is to endure more."
+      ]
+    },
+    
+    "connected_speech": {
+      "description": "Natural sentences for prosody and connected speech practice",
+      "prompts": [
+        "I'd like to order a large coffee with milk, please.",
+        "Could you tell me where the nearest bus stop is?",
+        "It's absolutely beautiful weather today, isn't it?",
+        "I'm not entirely sure what you mean by that.",
+        "Would you mind explaining that again more slowly?",
+        "I haven't seen you in ages! How have you been?",
+        "The presentation went really well, all things considered.",
+        "I'll need to think about that before making a decision.",
+        "That's exactly what I was trying to say earlier.",
+        "Do you have any plans for the upcoming weekend?",
+        "I completely forgot to mention something important.",
+        "We should probably get going if we want to be on time.",
+        "I didn't expect the movie to be quite so emotional.",
+        "The restaurant around the corner serves excellent pasta.",
+        "I've been meaning to ask you about your new project.",
+        "It might rain later, so don't forget your umbrella.",
+        "The traffic was absolutely terrible this morning.",
+        "I'd recommend the chocolate cake; it's delicious.",
+        "Have you ever considered traveling to New Zealand?",
+        "The meeting has been rescheduled to next Thursday."
+      ]
+    },
+    
+    "emotions": {
+      "description": "Sentences designed to elicit emotional expression",
+      "prompts": [
+        "I can't believe you actually did that! That's amazing!",
+        "I'm so sorry to hear about what happened.",
+        "This is the happiest day of my entire life!",
+        "I'm really worried about the situation.",
+        "What a pleasant surprise to see you here!",
+        "I'm absolutely furious about this decision.",
+        "That's the funniest thing I've heard all week!",
+        "I'm feeling a bit under the weather today.",
+        "Congratulations! You've earned this success!",
+        "I'm deeply grateful for all your help.",
+        "How incredibly disappointing this turned out to be.",
+        "I'm so excited I can barely contain myself!"
+      ]
+    },
+    
+    "questions": {
+      "description": "Question sentences for intonation practice",
+      "prompts": [
+        "What time does the store open tomorrow?",
+        "Have you finished your homework yet?",
+        "Where did you put my car keys?",
+        "Why didn't anyone tell me about this earlier?",
+        "How long have you been waiting here?",
+        "Is there anything else I can help you with?",
+        "Do you think it's going to rain today?",
+        "Which one of these would you prefer?",
+        "When are you planning to come back?",
+        "Would you like some more coffee?",
+        "Who's responsible for this mess?",
+        "Are you absolutely certain about that?"
+      ]
+    },
+    
+    "numbers_dates": {
+      "description": "Sentences with numbers and dates for clarity",
+      "prompts": [
+        "The meeting is scheduled for March 15th, 2024.",
+        "My phone number is five five five, one two three four.",
+        "The total comes to forty-seven dollars and ninety-nine cents.",
+        "She was born on the twenty-third of June, nineteen eighty-five.",
+        "The flight departs at six forty-five in the morning.",
+        "We need exactly three hundred and twenty-seven units.",
+        "The address is fourteen twenty-one Oak Street.",
+        "The deadline is December thirty-first at midnight.",
+        "The recipe calls for two and a half cups of flour.",
+        "My appointment is at three fifteen this afternoon."
+      ]
+    },
+    
+    "technical": {
+      "description": "Technical and professional vocabulary",
+      "prompts": [
+        "The algorithm processes data in real-time.",
+        "Please configure the network settings appropriately.",
+        "The pharmaceutical compound showed promising results.",
+        "The infrastructure requires significant investment.",
+        "The methodology was thoroughly peer-reviewed.",
+        "The electromagnetic spectrum includes visible light.",
+        "The constitutional amendment was ratified unanimously.",
+        "The biodegradable materials decompose naturally.",
+        "The cardiovascular system pumps blood efficiently.",
+        "The telecommunications industry continues to evolve."
+      ]
+    }
+  },
+  
+  "phoneme_coverage_map": {
+    "p": ["plosives", "pangrams"],
+    "b": ["plosives", "pangrams"],
+    "t": ["plosives", "pangrams"],
+    "d": ["plosives", "pangrams"],
+    "k": ["plosives", "pangrams"],
+    "g": ["plosives", "pangrams"],
+    "tʃ": ["affricates"],
+    "dʒ": ["affricates"],
+    "f": ["fricatives"],
+    "v": ["fricatives"],
+    "θ": ["fricatives"],
+    "ð": ["fricatives"],
+    "s": ["fricatives", "pangrams"],
+    "z": ["fricatives", "pangrams"],
+    "ʃ": ["fricatives"],
+    "ʒ": ["fricatives"],
+    "h": ["fricatives"],
+    "m": ["nasals"],
+    "n": ["nasals"],
+    "ŋ": ["nasals"],
+    "l": ["liquids_glides"],
+    "r": ["liquids_glides"],
+    "w": ["liquids_glides"],
+    "j": ["liquids_glides"],
+    "iː": ["vowels_monophthongs"],
+    "ɪ": ["vowels_monophthongs"],
+    "e": ["vowels_monophthongs"],
+    "æ": ["vowels_monophthongs"],
+    "ɑː": ["vowels_monophthongs"],
+    "ɒ": ["vowels_monophthongs"],
+    "ɔː": ["vowels_monophthongs"],
+    "ʊ": ["vowels_monophthongs"],
+    "uː": ["vowels_monophthongs"],
+    "ʌ": ["vowels_monophthongs"],
+    "ə": ["vowels_monophthongs"],
+    "ɜː": ["vowels_monophthongs"],
+    "eɪ": ["vowels_diphthongs"],
+    "aɪ": ["vowels_diphthongs"],
+    "ɔɪ": ["vowels_diphthongs"],
+    "aʊ": ["vowels_diphthongs"],
+    "əʊ": ["vowels_diphthongs"],
+    "ɪə": ["vowels_diphthongs"],
+    "eə": ["vowels_diphthongs"],
+    "ʊə": ["vowels_diphthongs"]
+  }
+}
