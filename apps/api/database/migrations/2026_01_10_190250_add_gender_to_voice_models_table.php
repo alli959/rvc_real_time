@@ -12,9 +12,7 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('voice_models', function (Blueprint $table) {
-            if (!Schema::hasColumn('voice_models', 'image_path')) {
-                $table->string('image_path')->nullable()->after('description');
-            }
+            $table->string('gender')->nullable()->after('image_path');
         });
     }
 
@@ -24,7 +22,7 @@ return new class extends Migration
     public function down(): void
     {
         Schema::table('voice_models', function (Blueprint $table) {
-            $table->dropColumn('image_path');
+            $table->dropColumn('gender');
         });
     }
 };
