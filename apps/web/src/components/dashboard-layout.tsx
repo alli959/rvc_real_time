@@ -143,7 +143,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <button
               onClick={() => setModelsDropdownOpen(!modelsDropdownOpen)}
               className={`w-full flex items-center justify-between px-3 py-2 rounded-lg transition-colors ${
-                pathname === '/dashboard/models' || pathname === '/models'
+                pathname.startsWith('/dashboard/models')
                   ? 'bg-primary-600/20 text-primary-400'
                   : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
               }`}
@@ -158,10 +158,22 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             {modelsDropdownOpen && (
               <div className="ml-4 pl-4 border-l border-gray-700 space-y-1">
                 <Link
-                  href="/dashboard/models"
+                  href="/dashboard/models?tab=community"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
-                    pathname === '/dashboard/models'
+                    pathname === '/dashboard/models' && (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'community')
+                      ? 'bg-primary-600/20 text-primary-400'
+                      : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
+                  }`}
+                >
+                  <Users className="h-4 w-4" />
+                  Community Models
+                </Link>
+                <Link
+                  href="/dashboard/models?tab=my-models"
+                  onClick={() => setMobileMenuOpen(false)}
+                  className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
+                    pathname === '/dashboard/models' && (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'my-models')
                       ? 'bg-primary-600/20 text-primary-400'
                       : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
                   }`}
@@ -170,16 +182,16 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
                   My Models
                 </Link>
                 <Link
-                  href="/models?tab=community"
+                  href="/dashboard/models?tab=shared"
                   onClick={() => setMobileMenuOpen(false)}
                   className={`flex items-center gap-3 px-3 py-2 rounded-lg transition-colors text-sm ${
-                    pathname === '/models'
+                    pathname === '/dashboard/models' && (typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('tab') === 'shared')
                       ? 'bg-primary-600/20 text-primary-400'
                       : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
                   }`}
                 >
                   <Users className="h-4 w-4" />
-                  Community Models
+                  Shared with Me
                 </Link>
               </div>
             )}
@@ -199,9 +211,10 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           ))}
         </nav>
 
-        <div className="p-4 border-t border-gray-800">
-          <div className="flex items-center gap-3 mb-4">
-            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center">
+        {/* User Section - Sticky at bottom */}
+        <div className="mt-auto p-4 border-t border-gray-800 bg-gray-900/95">
+          <div className="flex items-center gap-3 mb-3">
+            <div className="w-10 h-10 rounded-full bg-primary-600 flex items-center justify-center flex-shrink-0">
               <span className="font-semibold">{user?.name?.charAt(0).toUpperCase()}</span>
             </div>
             <div className="flex-1 min-w-0">
@@ -211,7 +224,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
           </div>
           <button
             onClick={handleLogout}
-            className="flex items-center gap-2 text-gray-400 hover:text-white transition-colors w-full"
+            className="flex items-center gap-2 text-red-400 hover:text-red-300 hover:bg-red-500/10 transition-colors w-full px-3 py-2 rounded-lg"
           >
             <LogOut className="h-4 w-4" />
             Sign out
@@ -220,8 +233,8 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
       </aside>
 
       {/* Main Content */}
-      <main className="flex-1 p-4 lg:p-8 overflow-x-hidden flex flex-col">
-        <div className="max-w-6xl mx-auto flex-1">
+      <main className="flex-1 p-4 lg:p-8 overflow-x-hidden flex flex-col min-w-0">
+        <div className="w-full max-w-6xl mx-auto flex-1">
           {children}
         </div>
         <div className="hidden lg:block mt-8">

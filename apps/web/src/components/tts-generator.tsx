@@ -2,6 +2,8 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuthStore } from '@/lib/store';
+import { ModelSelector } from '@/components/model-selector';
+import { VoiceModel } from '@/lib/api';
 import { 
   Loader2, 
   Download, 
@@ -205,12 +207,6 @@ interface Voice {
   supports_styles?: boolean;
 }
 
-interface VoiceModel {
-  id: number;
-  name: string;
-  category: string;
-}
-
 interface TTSGeneratorProps {
   preSelectedModelId?: number;
   hideModelSelector?: boolean;
@@ -226,12 +222,12 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
   
   // Language and gender for auto-selection
   const [selectedLanguage, setSelectedLanguage] = useState('');
-  const [selectedGender, setSelectedGender] = useState('');
+  const [selectedGender, setSelectedGender] = useState('Male'); // Default to Male
   
   // Voice conversion options (always enabled)
   // Defaults optimized for maximum voice model similarity
-  const [voiceModels, setVoiceModels] = useState<VoiceModel[]>([]);
-  const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | ''>(preSelectedModelId || '');
+  const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | null>(preSelectedModelId || null);
+  const [selectedVoiceModelData, setSelectedVoiceModelData] = useState<VoiceModel | null>(null);
   const [indexRatio, setIndexRatio] = useState(0.75); // Higher = more like target voice model
   const [pitchShift, setPitchShift] = useState(0); // Default 0 (no pitch change)
   const [convertEffect, setConvertEffect] = useState('');
@@ -278,7 +274,6 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
   useEffect(() => {
     if (!isHydrated || !token) return;
     fetchVoices();
-    fetchVoiceModels();
   }, [isHydrated, token]);
   
   // Set default language
@@ -303,21 +298,6 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
       }
     } catch (err) {
       console.error('Failed to fetch voices:', err);
-    }
-  };
-
-  const fetchVoiceModels = async () => {
-    if (!token) return;
-    try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/voice-models`, {
-        headers: { Authorization: `Bearer ${token}` },
-      });
-      if (response.ok) {
-        const data = await response.json();
-        setVoiceModels(data.data || []);
-      }
-    } catch (err) {
-      console.error('Failed to fetch voice models:', err);
     }
   };
 
@@ -454,10 +434,13 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
     }
   }, [audioUrl]);
 
+  // Check if gender should be locked to model's gender
+  const modelHasGender = selectedVoiceModelData?.gender ? true : false;
+
   return (
     <div className="space-y-6">
       {/* Language & Gender Selection */}
-      <div className="grid grid-cols-2 gap-4">
+      <div className={`grid gap-4 ${modelHasGender ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <div>
           <label className="block text-sm font-medium mb-2 text-gray-200">Language</label>
           <select
@@ -473,18 +456,20 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
             ))}
           </select>
         </div>
-        <div>
-          <label className="block text-sm font-medium mb-2 text-gray-200">Gender</label>
-          <select
-            className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-            value={selectedGender}
-            onChange={(e) => setSelectedGender(e.target.value)}
-          >
-            <option value="">Any</option>
-            <option value="Female">Female</option>
-            <option value="Male">Male</option>
-          </select>
-        </div>
+        {!modelHasGender && (
+          <div>
+            <label className="block text-sm font-medium mb-2 text-gray-200">Gender</label>
+            <select
+              className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+              value={selectedGender}
+              onChange={(e) => setSelectedGender(e.target.value)}
+            >
+              <option value="">Any</option>
+              <option value="Female">Female</option>
+              <option value="Male">Male</option>
+            </select>
+          </div>
+        )}
       </div>
       
       {/* Auto-selected voice display */}
@@ -605,21 +590,19 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
         </h3>
         
         {!hideModelSelector && (
-          <div>
-            <label className="block text-sm font-medium mb-2 text-gray-200">Voice Model</label>
-            <select
-              className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-2.5 text-white focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-              value={selectedVoiceModel}
-              onChange={(e) => setSelectedVoiceModel(e.target.value ? Number(e.target.value) : '')}
-            >
-              <option value="">Select a voice model...</option>
-              {voiceModels.map((model) => (
-                <option key={model.id} value={model.id}>
-                  {model.name} ({model.category})
-                </option>
-              ))}
-            </select>
-          </div>
+          <ModelSelector
+            value={selectedVoiceModel}
+            onChange={(id, model) => {
+              setSelectedVoiceModel(id);
+              setSelectedVoiceModelData(model || null);
+              // Auto-set gender from model if it has one
+              if (model?.gender) {
+                setSelectedGender(model.gender);
+              }
+            }}
+            placeholder="Select a voice model..."
+            accentColor="primary"
+          />
         )}
         
         <div>

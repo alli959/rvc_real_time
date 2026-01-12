@@ -4,6 +4,7 @@ import { useState, useRef, useCallback } from 'react';
 import { useDropzone } from 'react-dropzone';
 import { useAuthStore } from '@/lib/store';
 import { audioProcessingApi } from '@/lib/api';
+import { AudioPlayer } from '@/components/audio-player';
 import {
   Upload,
   FileAudio,
@@ -346,32 +347,24 @@ export function VoiceConvertUpload({ selectedModelId, modelName, onConversionCom
           <div className="text-center space-y-6">
             {recordedAudio && (
               <div className="space-y-4">
-                <div className="p-4 bg-gray-800 rounded-lg">
-                  <FileAudio className="h-8 w-8 mx-auto text-green-400 mb-2" />
-                  <p className="text-white font-medium">{recordedAudio.name}</p>
-                  <div className="flex justify-center gap-2 mt-3">
-                    <button
-                      onClick={() => togglePlay(recordedAudio.url)}
-                      className="flex items-center gap-2 px-4 py-2 bg-gray-700 rounded-lg hover:bg-gray-600 transition-colors"
-                    >
-                      {playingUrl === recordedAudio.url && isPlaying ? (
-                        <Square className="h-4 w-4" />
-                      ) : (
-                        <Play className="h-4 w-4" />
-                      )}
-                      {playingUrl === recordedAudio.url && isPlaying ? 'Stop' : 'Play'}
-                    </button>
-                    <button
-                      onClick={() => {
-                        URL.revokeObjectURL(recordedAudio.url);
-                        setRecordedAudio(null);
-                      }}
-                      className="flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
-                    >
-                      <Trash2 className="h-4 w-4" />
-                      Delete
-                    </button>
-                  </div>
+                <AudioPlayer
+                  url={recordedAudio.url}
+                  name={recordedAudio.name}
+                  subtitle="Recorded audio"
+                  icon={<FileAudio className="h-5 w-5" />}
+                  showDownload={false}
+                />
+                <div className="flex justify-center">
+                  <button
+                    onClick={() => {
+                      URL.revokeObjectURL(recordedAudio.url);
+                      setRecordedAudio(null);
+                    }}
+                    className="flex items-center gap-2 px-4 py-2 bg-red-500/20 text-red-400 rounded-lg hover:bg-red-500/30 transition-colors"
+                  >
+                    <Trash2 className="h-4 w-4" />
+                    Delete Recording
+                  </button>
                 </div>
                 <p className="text-sm text-gray-400">
                   Record again to replace
@@ -485,40 +478,19 @@ export function VoiceConvertUpload({ selectedModelId, modelName, onConversionCom
         <div className="space-y-3">
           <h4 className="font-medium text-white flex items-center gap-2">
             <CheckCircle2 className="h-5 w-5 text-green-400" />
-            Result
+            Results
           </h4>
 
           {results.map((result, index) => (
-            <div
+            <AudioPlayer
               key={index}
-              className="flex items-center justify-between p-4 bg-gray-800 rounded-lg"
-            >
-              <div className="flex items-center gap-3">
-                <Sparkles className="h-5 w-5 text-primary-400" />
-                <div>
-                  <p className="text-white font-medium">{result.name}</p>
-                  <p className="text-xs text-gray-400">Converted audio</p>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <button
-                  onClick={() => togglePlay(result.url)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  {playingUrl === result.url && isPlaying ? (
-                    <Square className="h-5 w-5" />
-                  ) : (
-                    <Play className="h-5 w-5" />
-                  )}
-                </button>
-                <button
-                  onClick={() => downloadResult(result)}
-                  className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-lg transition-colors"
-                >
-                  <Download className="h-5 w-5" />
-                </button>
-              </div>
-            </div>
+              url={result.url}
+              name={result.name}
+              subtitle="Converted"
+              icon={<Sparkles className="h-5 w-5" />}
+              onDownload={() => downloadResult(result)}
+              showDownload={true}
+            />
           ))}
         </div>
       )}
