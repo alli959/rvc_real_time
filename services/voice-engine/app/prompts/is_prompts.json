@@ -1,0 +1,316 @@
+{
+  "language": "is",
+  "language_name": "Icelandic",
+  "total_prompts": 150,
+  "description": "Icelandic language prompts for voice model training. Organized by phoneme categories to ensure comprehensive coverage of Icelandic-specific sounds.",
+  
+  "categories": {
+    "basic_greetings": {
+      "description": "Common greetings and everyday phrases",
+      "prompts": [
+        "Góðan daginn, hvernig hefur þú það?",
+        "Takk fyrir síðast, það var gaman að hitta þig.",
+        "Sæll og blessaður, komdu sæll.",
+        "Bless bless, sjáumst seinna.",
+        "Vertu sæl og blessuð.",
+        "Hvað segirðu gott?",
+        "Allt gott hjá mér, takk fyrir að spyrja.",
+        "Góða nótt og sofðu vel.",
+        "Til hamingju með afmælið!",
+        "Gleðileg jól og farsælt nýtt ár!"
+      ]
+    },
+    
+    "aspirated_plosives": {
+      "description": "Sentences emphasizing Icelandic aspirated plosives (pʰ, tʰ, cʰ, kʰ)",
+      "phonemes_covered": ["pʰ", "tʰ", "cʰ", "kʰ"],
+      "prompts": [
+        "Pabbi keypti potta og pönnu.",
+        "Ketill er fullur af kaffi.",
+        "Tómatur er rauður og þroskaður.",
+        "Kötturinn klifrar upp á kirkjuþakið.",
+        "Pottur og panna í púkanum.",
+        "Tíu toppar á tölunum.",
+        "Kettlingurinn klifrar á köttum.",
+        "Púkinn þykist vera góður í puksi.",
+        "Kötturinn kettlar á kistunum.",
+        "Tröllin tróða torfinu traustlega."
+      ]
+    },
+    
+    "unaspirated_plosives": {
+      "description": "Sentences with unaspirated plosives (p, t, c, k)",
+      "phonemes_covered": ["p", "t", "c", "k"],
+      "prompts": [
+        "Bókin er á borðinu.",
+        "Dagurinn er langur og ljós.",
+        "Gjörðu svo vel að sitja.",
+        "Gamli hundurinn geltir.",
+        "Barnið borðar brauð með smjöri.",
+        "Drengurinn dansaði við dótturina.",
+        "Glugginn er opinn og gott loft.",
+        "Brúðkaupsveislan var glæsileg."
+      ]
+    },
+    
+    "dental_fricatives": {
+      "description": "Sentences emphasizing þ (θ) and ð sounds",
+      "phonemes_covered": ["θ", "ð"],
+      "prompts": [
+        "Þetta þarf þrjátíu þúsund þræði.",
+        "Það er gott veður í dag.",
+        "Þú þarft að þvo þér hendurnar.",
+        "Það er þungt að þiðna þetta.",
+        "Þrír þrestir þráðu þrætu.",
+        "Að þvo þér tennurnar þrisvar á dag.",
+        "Þeir þurfa að þakka þeirra vinum.",
+        "Þessi þáttur er þægilegur.",
+        "Þungur þrælshlutur þrýstir á þolinmæði.",
+        "Það er þögult og þunglyndislegt.",
+        "Þetta þýðir þó ekki þunglyndi.",
+        "Þú þarft að þola þetta þolinmóðlega."
+      ]
+    },
+    
+    "other_fricatives": {
+      "description": "Sentences with f, v, s, ç, x, h sounds",
+      "phonemes_covered": ["f", "v", "s", "ç", "x", "h"],
+      "prompts": [
+        "Fiskurinn syndir í fjörðinum.",
+        "Veðrið er vont og vindur.",
+        "Sjórinn syngur sína sögu.",
+        "Hvað heitir þessi hestur?",
+        "Fljótt og vel er best.",
+        "Hver er þetta? Hvernig á ég að vita?",
+        "Sólin skín og svalaði sumri.",
+        "Hvar er húsið á hæðinni?",
+        "Veggurinn var mjög votur.",
+        "Fólk finnur alltaf fleira að segja.",
+        "Hvernig hefurðu það í dag?",
+        "Snjórinn sígur sígandi á svæðið."
+      ]
+    },
+    
+    "nasals": {
+      "description": "Sentences emphasizing nasal consonants (m, n, ɲ, ŋ)",
+      "phonemes_covered": ["m", "n", "ɲ", "ŋ"],
+      "prompts": [
+        "Morgunmaturinn er tilbúinn.",
+        "Núna er nóg komið.",
+        "Mengið er mjög menguð.",
+        "Nótt og næði í náttúrunni.",
+        "Mamma má aldrei missa af mér.",
+        "Náttúran er ósnortin og náttúruleg.",
+        "Maðurinn man margar minningar.",
+        "Norðurljósin nærðu hámarki.",
+        "Ungur engill í enginu.",
+        "Langur gangur í gegnum gönguna."
+      ]
+    },
+    
+    "liquids": {
+      "description": "Sentences with l and r sounds",
+      "phonemes_covered": ["l", "r"],
+      "prompts": [
+        "Rigning og rigning allt árið.",
+        "Ljósmóðirin las ljóð fyrir litlu barnið.",
+        "Rauður rós rennur í ránið.",
+        "Líf og lof, ljós og lækur.",
+        "Rokkaði og rúllaði niður rásina.",
+        "Léttir og liðlegir dansarar.",
+        "Risastór réttur af ristað lamb.",
+        "Lögreglan leysti lögreglumálið.",
+        "Runnar af rauðberjarunnum.",
+        "Litlu ljósin logðu í loftinu."
+      ]
+    },
+    
+    "special_vowels": {
+      "description": "Sentences emphasizing Icelandic special vowels (ʏ, œ, æ, ö)",
+      "phonemes_covered": ["ʏ", "œ"],
+      "prompts": [
+        "Göngum saman yfir fjöllin.",
+        "Sýndu mér yndislega hluti.",
+        "Fjörður er fullt af fiskum.",
+        "Yndisleg útsýni yfir ána.",
+        "Börn byggja borgar úr sandi.",
+        "Höfuðborgin er Reykjavík.",
+        "Stöðugt og styrkur er nauðsynlegt.",
+        "Götu og göngustígar eru góðir.",
+        "Nýtt ár með nýjum tækifærum.",
+        "Jólasveinar koma í desember."
+      ]
+    },
+    
+    "diphthongs": {
+      "description": "Sentences emphasizing Icelandic diphthongs (ei, au, ou, ai)",
+      "phonemes_covered": ["ei", "au", "ou", "ai"],
+      "prompts": [
+        "Heill og heilbrigður, hreinn og hraustur.",
+        "Laukur og lauk í laufinu.",
+        "Sou og sauðir á sléttunni.",
+        "Aí og ei í íslensku.",
+        "Reiðum hestum að reiknistofu.",
+        "Gaukur gól í gróðri.",
+        "Nótt og dagur, sólsetur og sólris.",
+        "Bein og beint, beita og beiting.",
+        "Tauið er taugið í tónlistinni.",
+        "Meiri og minna, meira eða minna."
+      ]
+    },
+    
+    "long_vowels": {
+      "description": "Sentences with long vowels",
+      "phonemes_covered": ["iː", "eː", "aː", "ɔː", "uː"],
+      "prompts": [
+        "Ís og íþróttir eru íslenskar.",
+        "Étum og drukku é og ö.",
+        "Ár og aldur, ásamt ættingjum.",
+        "Ósk og óður í óskabörnunum.",
+        "Úr og urðu, útsýnið er úrvals.",
+        "Mín og mínar, mínúturnar líða.",
+        "Sér og sérstakur séans.",
+        "Tár og tárfellt tímabil.",
+        "Óður í óvissu, ótrúlegt.",
+        "Úlfur úti á úthaga."
+      ]
+    },
+    
+    "nature_weather": {
+      "description": "Nature and weather vocabulary",
+      "prompts": [
+        "Veðrið er hlýtt og sólskin.",
+        "Rigning og þoka á fjöllum.",
+        "Jökullinn bráðnar í sólskininu.",
+        "Norðurljósin dansa á himni.",
+        "Eldfjall gýs við hreyfingu jarðar.",
+        "Geysir spýtir heitu vatni.",
+        "Fossar falla frá fjöllum.",
+        "Sjórinn er stormsamur í dag.",
+        "Snjókoma og frostið heldur áfram.",
+        "Vindur þýtur um vík og vogaÍ."
+      ]
+    },
+    
+    "daily_life": {
+      "description": "Everyday life sentences",
+      "prompts": [
+        "Ég fer á vinnuna klukkan átta.",
+        "Við borðum kvöldmat saman á kvöldin.",
+        "Börnin fara í skólann á morgnana.",
+        "Hundurinn þarf að fara í gönguferð.",
+        "Við keyptum nýjan bíl í gær.",
+        "Maturinn var mjög góður í matsalnum.",
+        "Ég þarf að fara í búðina að versla.",
+        "Við horfðum á sjónvarpið í gærkvöldi.",
+        "Læknirinn sagði mér að hvílast.",
+        "Tölvan mín virkar ekki almennilega."
+      ]
+    },
+    
+    "numbers_dates": {
+      "description": "Numbers and dates in Icelandic",
+      "prompts": [
+        "Í dag er fimmtudagur, tíundi janúar.",
+        "Klukkan er hálfnáð eður þúsund.",
+        "Mánudaginn tuttugasta og þriðja.",
+        "Árið tvö þúsund tuttugu og fjögur.",
+        "Eitt, tvö, þrjú, fjögur, fimm.",
+        "Sex, sjö, átta, níu, tíu.",
+        "Hundrað og fimmtíu krónur.",
+        "Þrjú þúsund og fimmhundruð.",
+        "Fyrsti júní, þjóðhátíðardagur.",
+        "Jólasveinar koma þrettán dögum fyrir jól."
+      ]
+    },
+    
+    "questions": {
+      "description": "Question sentences for intonation",
+      "prompts": [
+        "Hvar er næsta leið til sjávar?",
+        "Hvað kostar þessi vara?",
+        "Hvenær kemur strætó?",
+        "Hvernig á ég að komast þangað?",
+        "Hver er þetta á myndinni?",
+        "Af hverju gerðir þú það?",
+        "Getur þú hjálpað mér?",
+        "Má ég fá reikning?",
+        "Ertu búinn að borða?",
+        "Viltu koma með mér?"
+      ]
+    },
+    
+    "emotions": {
+      "description": "Emotional expressions",
+      "prompts": [
+        "Ég er svo ánægður að hitta þig!",
+        "Þetta er svo sorglegt að heyra.",
+        "Vá, þetta er ótrúlega fallegt!",
+        "Ég er mjög pirruð núna.",
+        "Þetta er svo spennandi!",
+        "Ég er mjög þakklátur fyrir hjálpina.",
+        "Hvað er ég hamingjusöm!",
+        "Þetta er mjög vonbrigði.",
+        "Ég er stoltur af þér!",
+        "Þetta gerir mig mjög glaðan."
+      ]
+    }
+  },
+  
+  "phoneme_coverage_map": {
+    "p": ["unaspirated_plosives"],
+    "t": ["unaspirated_plosives"],
+    "c": ["unaspirated_plosives"],
+    "k": ["unaspirated_plosives"],
+    "pʰ": ["aspirated_plosives"],
+    "tʰ": ["aspirated_plosives"],
+    "cʰ": ["aspirated_plosives"],
+    "kʰ": ["aspirated_plosives"],
+    "f": ["other_fricatives"],
+    "v": ["other_fricatives"],
+    "θ": ["dental_fricatives"],
+    "ð": ["dental_fricatives"],
+    "s": ["other_fricatives"],
+    "ç": ["other_fricatives"],
+    "x": ["other_fricatives"],
+    "h": ["other_fricatives"],
+    "m": ["nasals"],
+    "n": ["nasals"],
+    "ɲ": ["nasals"],
+    "ŋ": ["nasals"],
+    "l": ["liquids"],
+    "r": ["liquids"],
+    "iː": ["long_vowels"],
+    "ɪ": ["special_vowels"],
+    "eː": ["long_vowels"],
+    "ɛ": ["special_vowels"],
+    "aː": ["long_vowels"],
+    "a": ["special_vowels"],
+    "ɔː": ["long_vowels"],
+    "ɔ": ["special_vowels"],
+    "uː": ["long_vowels"],
+    "ʏ": ["special_vowels"],
+    "œ": ["special_vowels"],
+    "ei": ["diphthongs"],
+    "au": ["diphthongs"],
+    "ou": ["diphthongs"],
+    "ai": ["diphthongs"]
+  },
+  
+  "notes": {
+    "pronunciation_tips": [
+      "þ is pronounced like English 'th' in 'think'",
+      "ð is pronounced like English 'th' in 'this'",
+      "ll is pronounced like 'tl' or 'dl'",
+      "nn after á, í, ó, ú, ý, æ, au, ei is pronounced as 'dn'",
+      "Aspirated consonants (p, t, k) have a puff of air",
+      "Stress is almost always on the first syllable"
+    ],
+    "difficult_sounds": [
+      "The 'hv' combination (pronounced like 'kv')",
+      "The double 'll' (lateral fricative)",
+      "Pre-aspirated stops (hp, ht, hk)",
+      "The vowel ö (similar to German ö)"
+    ]
+  }
+}
