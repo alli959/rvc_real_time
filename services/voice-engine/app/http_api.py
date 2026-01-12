@@ -2,9 +2,13 @@
 HTTP API Server for Voice Engine
 
 Provides REST API endpoints for:
-- Text-to-Speech (TTS) generation using Edge TTS with emotion support
+- Text-to-Speech (TTS) generation using Bark (with native emotions) or Edge TTS (with audio effects fallback)
 - Voice conversion using RVC models
 - Health checks and model listing
+
+Emotion Support:
+- Bark TTS: Native support for [laughter], [sighs], [gasps], etc.
+- Edge TTS: Audio processing effects to simulate emotions (pitch, rate, tremolo, etc.)
 """
 
 from __future__ import annotations
@@ -24,6 +28,19 @@ import soundfile as sf
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
+
+# Import enhanced TTS service
+try:
+    from app.tts_service import (
+        generate_tts,
+        is_bark_available,
+        preload_bark_models,
+        BARK_AVAILABLE
+    )
+    TTS_SERVICE_AVAILABLE = True
+except ImportError:
+    TTS_SERVICE_AVAILABLE = False
+    BARK_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 
@@ -88,11 +105,28 @@ def set_model_manager(mm, params):
 
 class TTSRequest(BaseModel):
     """TTS generation request"""
-    text: str = Field(..., description="Text to convert to speech", max_length=5000)
+    text: str = Field(..., description="Text to convert to speech", max_length=10000)
     voice: str = Field(default="en-US-GuyNeural", description="Edge TTS voice ID")
     style: str = Field(default="default", description="Speaking style/emotion")
     rate: str = Field(default="+0%", description="Speech rate adjustment")
     pitch: str = Field(default="+0Hz", description="Pitch adjustment")
+    # Bark TTS option (native emotion/sound effects support)
+    use_bark: bool = Field(default=True, description="Use Bark TTS for native emotion support (falls back to Edge TTS if unavailable)")
+    bark_speaker: str = Field(default="default", description="Bark speaker preset (default, male1, male2, female1, female2, dramatic, calm)")
+    # Multi-voice generation support
+    include_segments: Optional[List[dict]] = Field(default=None, description="List of segments with different voice models: [{text, voice_model_id, model_path, index_path, f0_up_key, index_rate}]")
+
+
+class MultiVoiceSegment(BaseModel):
+    """A segment for multi-voice generation"""
+    text: str = Field(..., description="Text for this segment")
+    voice: str = Field(default=None, description="Override TTS voice for this segment")
+    voice_model_id: Optional[int] = Field(default=None, description="Voice model ID for RVC conversion")
+    model_path: Optional[str] = Field(default=None, description="Path to .pth model file")
+    index_path: Optional[str] = Field(default=None, description="Path to .index file")
+    f0_up_key: int = Field(default=0, description="Pitch shift for this segment")
+    index_rate: float = Field(default=0.75, description="Index rate for this segment")
+    rate: Optional[str] = Field(default=None, description="Override speech rate for this segment")
 
 
 class TTSResponse(BaseModel):
@@ -594,10 +628,19 @@ def parse_emotion_tags(text: str) -> List[Dict]:
     - [laugh] - Sound effects (self-closing)
     - *laughing* - Action asterisks
     - (sigh) - Parenthetical actions
+    - <speed rate="-20%">slow text</speed> - Speed control
+    - <include voice_model_id="123">other voice text</include> - Multi-voice
     
-    Returns list of segments: [{'text': str, 'emotion': str or None}, ...]
+    Returns list of segments: [{'text': str, 'emotion': str or None, 'rate': str or None, 'include': dict or None}, ...]
     """
     segments = []
+    
+    # First, handle <speed> tags - extract them before other processing
+    # Pattern: <speed rate="value">text</speed> or <speed value="value">text</speed>
+    speed_pattern = r'<speed\s+(?:rate|value)=["\']?([^"\'>\s]+)["\']?\s*>(.*?)</speed>'
+    
+    # Pattern: <include ...attributes...>text</include>
+    include_pattern = r'<include\s+([^>]+)>(.*?)</include>'
     
     # Pattern for [emotion] text [/emotion] or [emotion/]
     tag_pattern = r'\[(\w+)\](.*?)\[/\1\]|\[(\w+)/?\]'
@@ -606,8 +649,8 @@ def parse_emotion_tags(text: str) -> List[Dict]:
     # Pattern for (action)
     paren_pattern = r'\((\w+)\)'
     
-    # Combined pattern to find all emotion markers
-    combined_pattern = r'\[(\w+)\](.*?)\[/\1\]|\[(\w+)/?\]|\*(\w+)\*|\((\w+)\)'
+    # Combined pattern to find all emotion markers plus speed and include tags
+    combined_pattern = r'<speed\s+(?:rate|value)=["\']?([^"\'>\s]+)["\']?\s*>(.*?)</speed>|<include\s+([^>]+)>(.*?)</include>|\[(\w+)\](.*?)\[/\5\]|\[(\w+)/?\]|\*(\w+)\*|\((\w+)\)'
     
     last_end = 0
     
@@ -616,32 +659,65 @@ def parse_emotion_tags(text: str) -> List[Dict]:
         if match.start() > last_end:
             plain_text = text[last_end:match.start()].strip()
             if plain_text:
-                segments.append({'text': plain_text, 'emotion': None})
+                segments.append({'text': plain_text, 'emotion': None, 'rate': None, 'include': None})
         
         # Determine which pattern matched
-        if match.group(1) and match.group(2):  # [emotion]text[/emotion]
-            emotion = match.group(1).lower()
+        if match.group(1) and match.group(2):  # <speed rate="value">text</speed>
+            rate_value = match.group(1)
             inner_text = match.group(2).strip()
+            # Ensure rate has +/- prefix and % suffix
+            if not rate_value.startswith(('+', '-')):
+                rate_value = f"+{rate_value}" if not rate_value.startswith('-') else rate_value
+            if not rate_value.endswith('%'):
+                rate_value = f"{rate_value}%"
             if inner_text:
-                segments.append({'text': inner_text, 'emotion': emotion})
-        elif match.group(3):  # [emotion] or [emotion/] - self-closing/sound effect
-            emotion = match.group(3).lower()
+                segments.append({'text': inner_text, 'emotion': None, 'rate': rate_value, 'include': None})
+        elif match.group(3) and match.group(4):  # <include attributes>text</include>
+            attrs_str = match.group(3)
+            inner_text = match.group(4).strip()
+            # Parse attributes like voice_model_id="123" model_path="..." etc
+            include_attrs = {}
+            attr_pattern = r'(\w+)=["\']?([^"\'>\s]+)["\']?'
+            for attr_match in re.finditer(attr_pattern, attrs_str):
+                key = attr_match.group(1)
+                value = attr_match.group(2)
+                # Convert numeric values
+                if key in ['voice_model_id', 'f0_up_key']:
+                    try:
+                        value = int(value)
+                    except ValueError:
+                        pass
+                elif key == 'index_rate':
+                    try:
+                        value = float(value)
+                    except ValueError:
+                        pass
+                include_attrs[key] = value
+            if inner_text:
+                segments.append({'text': inner_text, 'emotion': None, 'rate': None, 'include': include_attrs})
+        elif match.group(5) and match.group(6):  # [emotion]text[/emotion]
+            emotion = match.group(5).lower()
+            inner_text = match.group(6).strip()
+            if inner_text:
+                segments.append({'text': inner_text, 'emotion': emotion, 'rate': None, 'include': None})
+        elif match.group(7):  # [emotion] or [emotion/] - self-closing/sound effect
+            emotion = match.group(7).lower()
             if emotion in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[emotion], 'emotion': emotion})
+                segments.append({'text': SOUND_REPLACEMENTS[emotion], 'emotion': emotion, 'rate': None, 'include': None})
             else:
                 # Just an emotion marker, apply to next segment
                 pass
-        elif match.group(4):  # *action*
-            action = match.group(4).lower()
+        elif match.group(8):  # *action*
+            action = match.group(8).lower()
             if action in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action})
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': None})
             elif action in EMOTION_PRESETS:
                 # It's an emotion, mark but no text
                 pass
-        elif match.group(5):  # (action)
-            action = match.group(5).lower()
+        elif match.group(9):  # (action)
+            action = match.group(9).lower()
             if action in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action})
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': None})
         
         last_end = match.end()
     
@@ -649,11 +725,11 @@ def parse_emotion_tags(text: str) -> List[Dict]:
     if last_end < len(text):
         remaining = text[last_end:].strip()
         if remaining:
-            segments.append({'text': remaining, 'emotion': None})
+            segments.append({'text': remaining, 'emotion': None, 'rate': None, 'include': None})
     
     # If no segments were found, return the original text
     if not segments:
-        segments.append({'text': text, 'emotion': None})
+        segments.append({'text': text, 'emotion': None, 'rate': None, 'include': None})
     
     return segments
 
@@ -710,6 +786,7 @@ async def generate_tts_audio(
     - [happy]Hello![/happy] - Tagged sections with emotions
     - [laugh] or *laugh* or (laugh) - Sound effects
     - [sad]I'm so sorry[/sad] - Sad tone
+    - <speed rate="-30%">Slow speech</speed> - Speed control
     
     Returns:
         Tuple of (audio_bytes, sample_rate)
@@ -730,17 +807,39 @@ async def generate_tts_audio(
         segments = parse_emotion_tags(text)
         logger.info(f"Parsed {len(segments)} segment(s) from text")
         
-        # If we have multiple segments or emotions, process each separately
-        if len(segments) > 1 or (segments and segments[0].get('emotion')):
+        # Check if we have any segments with special handling needed
+        has_special_segments = len(segments) > 1 or any(
+            seg.get('emotion') or seg.get('rate') or seg.get('include') 
+            for seg in segments
+        )
+        
+        if has_special_segments:
             audio_chunks = []
             target_sr = None
             
             for i, segment in enumerate(segments):
                 segment_text = segment['text']
                 emotion = segment.get('emotion')
+                segment_rate = segment.get('rate')  # Override rate from <speed> tag
+                include_info = segment.get('include')
                 
-                # Get prosody for this emotion
-                seg_rate, seg_pitch = get_emotion_prosody(emotion, rate, pitch)
+                # Skip include segments - they'll be handled separately with voice conversion
+                if include_info:
+                    # For include segments, we still generate TTS but mark them for later conversion
+                    segment['needs_conversion'] = True
+                
+                # Determine the rate for this segment
+                if segment_rate:
+                    # Use the rate from <speed> tag
+                    seg_rate = segment_rate
+                    seg_pitch = pitch  # Keep original pitch
+                    # Still apply emotion prosody on top of custom rate
+                    if emotion:
+                        _, emotion_pitch = get_emotion_prosody(emotion, "+0%", pitch)
+                        seg_pitch = emotion_pitch
+                else:
+                    # Get prosody for this emotion
+                    seg_rate, seg_pitch = get_emotion_prosody(emotion, rate, pitch)
                 
                 # Get audio effects for this emotion
                 effects = get_emotion_effects(emotion)
@@ -768,14 +867,19 @@ async def generate_tts_audio(
                     if effects:
                         audio = apply_audio_effects(audio, target_sr, effects)
                     
-                    audio_chunks.append(audio)
+                    # Store segment info for potential include processing
+                    audio_chunks.append({
+                        'audio': audio,
+                        'include': include_info,
+                        'text': segment_text
+                    })
                 finally:
                     if os.path.exists(tmp_path):
                         os.unlink(tmp_path)
             
             # Concatenate all audio chunks
             if audio_chunks:
-                combined_audio = np.concatenate(audio_chunks)
+                combined_audio = np.concatenate([chunk['audio'] for chunk in audio_chunks])
                 wav_buffer = io.BytesIO()
                 sf.write(wav_buffer, combined_audio, target_sr, format='WAV')
                 wav_buffer.seek(0)
@@ -1233,23 +1337,293 @@ async def apply_effects_endpoint(request: ApplyEffectsRequest):
 
 @app.post("/tts", response_model=TTSResponse)
 async def text_to_speech(request: TTSRequest):
-    """Generate speech from text using Edge TTS"""
+    """
+    Generate speech from text with emotion and sound effect support.
+    
+    Supports two TTS engines:
+    1. **Bark TTS** (if available): Native support for emotions and sounds
+       - [laughter], [laughs], [sighs], [gasps], [clears throat]
+       - ♪ for singing, CAPS for emphasis
+       - ... or — for hesitations
+    
+    2. **Edge TTS** (fallback): Audio processing to simulate emotions
+       - Prosody adjustments (rate, pitch) per emotion
+       - Audio effects (tremolo, reverb, distortion, etc.)
+    
+    Tag formats:
+    - [happy]text[/happy] - Emotion-wrapped text
+    - [laugh] or *laugh* - Sound effects
+    - <speed rate="-30%">slow text</speed> - Speed control
+    """
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
     
-    audio_bytes, sample_rate = await generate_tts_audio(
-        text=request.text,
-        voice=request.voice,
-        style=request.style,
-        rate=request.rate,
-        pitch=request.pitch
-    )
+    try:
+        # Use the new TTS service if available
+        if TTS_SERVICE_AVAILABLE:
+            audio_bytes, sample_rate = await generate_tts(
+                text=request.text,
+                voice=request.voice,
+                rate=request.rate,
+                pitch=request.pitch,
+                use_bark=request.use_bark,
+                bark_speaker=request.bark_speaker
+            )
+        else:
+            # Fallback to original generate_tts_audio function
+            audio_bytes, sample_rate = await generate_tts_audio(
+                text=request.text,
+                voice=request.voice,
+                style=request.style,
+                rate=request.rate,
+                pitch=request.pitch
+            )
+        
+        return TTSResponse(
+            audio=base64.b64encode(audio_bytes).decode('utf-8'),
+            sample_rate=sample_rate,
+            format="wav"
+        )
+    except Exception as e:
+        logger.exception(f"TTS generation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"TTS generation failed: {str(e)}")
+
+
+class TTSCapabilitiesResponse(BaseModel):
+    """TTS capabilities response"""
+    bark_available: bool = Field(description="Whether Bark TTS is available (native emotions)")
+    edge_tts_available: bool = Field(default=True, description="Whether Edge TTS is available (fallback)")
+    supported_emotions: List[str] = Field(description="List of supported emotion tags")
+    supported_sounds: List[str] = Field(description="List of supported sound effect tags")
+    bark_speakers: List[str] = Field(description="Available Bark speaker presets")
+    recommendation: str = Field(description="Recommendation for best results")
+
+
+@app.get("/tts/capabilities", response_model=TTSCapabilitiesResponse)
+async def get_tts_capabilities():
+    """
+    Get information about TTS capabilities and supported emotions/sounds.
     
-    return TTSResponse(
-        audio=base64.b64encode(audio_bytes).decode('utf-8'),
-        sample_rate=sample_rate,
-        format="wav"
+    Returns whether Bark (native emotions) or Edge TTS (audio processing) is being used,
+    along with lists of supported emotion and sound effect tags.
+    """
+    emotions = [
+        'happy', 'excited', 'cheerful', 'joyful',
+        'sad', 'melancholy', 'depressed', 'disappointed',
+        'angry', 'furious', 'annoyed', 'frustrated',
+        'calm', 'peaceful', 'relaxed', 'neutral',
+        'surprised', 'shocked', 'amazed',
+        'scared', 'terrified', 'anxious', 'nervous',
+        'whisper', 'shouting', 'sarcastic', 'romantic',
+        'serious', 'playful', 'dramatic', 'mysterious',
+        'robot', 'spooky', 'ethereal', 'phone', 'radio',
+        'megaphone', 'echo', 'underwater'
+    ]
+    
+    sounds = [
+        'laugh', 'laughing', 'giggle', 'chuckle', 'snicker', 'cackle',
+        'cry', 'crying', 'sob', 'sniff',
+        'gasp', 'scream', 'shriek',
+        'groan', 'moan', 'sigh', 'yawn',
+        'cough', 'sneeze', 'hiccup', 'burp', 'gulp', 'slurp',
+        'growl', 'hiss', 'hum', 'whistle', 'shush', 'kiss', 'blow',
+        'pant', 'breathe', 'inhale', 'exhale',
+        'stutter', 'mumble', 'stammer',
+        'hmm', 'thinking', 'uhh', 'umm',
+        'clap', 'snap', 'wow', 'ooh', 'ahh', 'ugh', 'eww',
+        'yay', 'boo', 'woohoo', 'ow', 'ouch', 'phew', 'tsk', 'psst'
+    ]
+    
+    bark_speakers = ['default', 'male1', 'male2', 'female1', 'female2', 'dramatic', 'calm']
+    
+    if TTS_SERVICE_AVAILABLE and BARK_AVAILABLE:
+        recommendation = "Bark TTS is active! Your emotions and sound effects like [laugh], [sigh], [gasp] will be natively rendered without reading the tags."
+    else:
+        recommendation = "Using Edge TTS with audio processing. Emotions are simulated via pitch/rate changes and audio effects. For native emotion support, install Bark: pip install git+https://github.com/suno-ai/bark.git"
+    
+    return TTSCapabilitiesResponse(
+        bark_available=TTS_SERVICE_AVAILABLE and BARK_AVAILABLE,
+        edge_tts_available=True,
+        supported_emotions=emotions,
+        supported_sounds=sounds,
+        bark_speakers=bark_speakers,
+        recommendation=recommendation
     )
+
+
+class MultiVoiceTTSRequest(BaseModel):
+    """Multi-voice TTS generation request with include segment support"""
+    text: str = Field(..., description="Text with optional <include> tags for multi-voice generation", max_length=10000)
+    voice: str = Field(default="en-US-GuyNeural", description="Default Edge TTS voice ID")
+    style: str = Field(default="default", description="Speaking style/emotion")
+    rate: str = Field(default="+0%", description="Default speech rate adjustment")
+    pitch: str = Field(default="+0Hz", description="Pitch adjustment")
+    # Default voice conversion settings
+    default_model_path: Optional[str] = Field(default=None, description="Default model path for main voice")
+    default_index_path: Optional[str] = Field(default=None, description="Default index path for main voice")
+    default_f0_up_key: int = Field(default=0, description="Default pitch shift")
+    default_index_rate: float = Field(default=0.75, description="Default index rate")
+    # Include segment voice model mappings (voice_model_id -> paths)
+    voice_model_mappings: Optional[Dict[str, dict]] = Field(default=None, description="Mapping of voice_model_id to {model_path, index_path}")
+
+
+class MultiVoiceTTSResponse(BaseModel):
+    """Multi-voice TTS response"""
+    audio: str = Field(..., description="Base64 encoded WAV audio")
+    sample_rate: int = Field(default=24000)
+    format: str = Field(default="wav")
+    segments_processed: int = Field(default=1, description="Number of segments processed")
+    include_segments_used: int = Field(default=0, description="Number of include segments with different voices")
+
+
+@app.post("/tts/multi-voice", response_model=MultiVoiceTTSResponse)
+async def multi_voice_tts(request: MultiVoiceTTSRequest):
+    """
+    Generate multi-voice TTS with support for <include> tags.
+    
+    Each <include voice_model_id="X">text</include> segment will be:
+    1. Generated with TTS
+    2. Converted using the specified voice model
+    3. Concatenated with other segments
+    
+    The main text (outside include tags) uses the default voice and model.
+    """
+    global model_manager
+    
+    if not request.text.strip():
+        raise HTTPException(status_code=400, detail="Text is required")
+    
+    try:
+        import edge_tts
+        import librosa
+        
+        # Parse segments including <include> tags
+        segments = parse_emotion_tags(request.text)
+        logger.info(f"Multi-voice TTS: Parsed {len(segments)} segment(s)")
+        
+        audio_chunks = []
+        target_sr = 24000
+        include_count = 0
+        
+        for i, segment in enumerate(segments):
+            segment_text = segment['text']
+            emotion = segment.get('emotion')
+            segment_rate = segment.get('rate') or request.rate
+            include_info = segment.get('include')
+            
+            # Fix rate format
+            if segment_rate and not segment_rate.startswith(('+', '-')):
+                segment_rate = f"+{segment_rate}"
+            
+            # Get prosody adjustments
+            seg_rate, seg_pitch = get_emotion_prosody(emotion, segment_rate, request.pitch)
+            
+            # Get audio effects
+            effects = get_emotion_effects(emotion)
+            
+            logger.info(f"Segment {i+1}: emotion={emotion}, rate={seg_rate}, include={include_info is not None}")
+            
+            # Generate TTS for this segment
+            communicate = edge_tts.Communicate(segment_text, request.voice, rate=seg_rate, pitch=seg_pitch)
+            
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as tmp_file:
+                tmp_path = tmp_file.name
+            
+            try:
+                await communicate.save(tmp_path)
+                audio, sr = librosa.load(tmp_path, sr=None, mono=True)
+                
+                if sr != target_sr:
+                    audio = librosa.resample(audio, orig_sr=sr, target_sr=target_sr)
+                
+                # Apply emotion effects
+                if effects:
+                    audio = apply_audio_effects(audio, target_sr, effects)
+                
+                # Determine which voice model to use for conversion
+                model_path = None
+                index_path = None
+                f0_up_key = request.default_f0_up_key
+                index_rate = request.default_index_rate
+                
+                if include_info:
+                    include_count += 1
+                    # Use include-specific model if available
+                    voice_model_id = str(include_info.get('voice_model_id', ''))
+                    if voice_model_id and request.voice_model_mappings and voice_model_id in request.voice_model_mappings:
+                        mapping = request.voice_model_mappings[voice_model_id]
+                        model_path = mapping.get('model_path')
+                        index_path = mapping.get('index_path')
+                    elif include_info.get('model_path'):
+                        model_path = include_info.get('model_path')
+                        index_path = include_info.get('index_path')
+                    
+                    # Override pitch and index rate if specified
+                    if 'f0_up_key' in include_info:
+                        f0_up_key = include_info['f0_up_key']
+                    if 'index_rate' in include_info:
+                        index_rate = include_info['index_rate']
+                else:
+                    # Use default model for main voice
+                    model_path = request.default_model_path
+                    index_path = request.default_index_path
+                
+                # Apply voice conversion if model is specified
+                if model_path and model_manager:
+                    # Resample to 16kHz for RVC
+                    audio_16k = librosa.resample(audio, orig_sr=target_sr, target_sr=16000)
+                    
+                    # Load model
+                    success = model_manager.load_model(model_path, index_path)
+                    if success:
+                        from app.model_manager import RVCInferParams
+                        params = RVCInferParams(
+                            f0_up_key=f0_up_key,
+                            index_rate=index_rate,
+                            protect=0.35,
+                            rms_mix_rate=0.25,
+                        )
+                        
+                        converted = model_manager.infer(audio_16k.astype(np.float32), params=params)
+                        if converted is not None and len(converted) > 0:
+                            # Resample back to target_sr
+                            audio = librosa.resample(converted.astype(np.float32), orig_sr=16000, target_sr=target_sr)
+                            logger.info(f"Segment {i+1}: Voice conversion applied")
+                
+                audio_chunks.append(audio)
+                
+            finally:
+                if os.path.exists(tmp_path):
+                    os.unlink(tmp_path)
+        
+        # Concatenate all audio
+        if audio_chunks:
+            combined = np.concatenate(audio_chunks)
+            
+            # Normalize
+            max_val = np.max(np.abs(combined))
+            if max_val > 0.95:
+                combined = combined * (0.95 / max_val)
+            
+            wav_buffer = io.BytesIO()
+            sf.write(wav_buffer, combined, target_sr, format='WAV')
+            wav_buffer.seek(0)
+            
+            return MultiVoiceTTSResponse(
+                audio=base64.b64encode(wav_buffer.read()).decode('utf-8'),
+                sample_rate=target_sr,
+                format="wav",
+                segments_processed=len(segments),
+                include_segments_used=include_count
+            )
+        else:
+            raise HTTPException(status_code=500, detail="No audio generated")
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Multi-voice TTS failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Multi-voice TTS failed: {str(e)}")
 
 
 # Quality presets for voice conversion
