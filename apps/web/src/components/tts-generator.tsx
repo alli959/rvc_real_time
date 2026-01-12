@@ -19,7 +19,10 @@ import {
   Music,
   Mic,
   Volume2,
-  X
+  X,
+  Gauge,
+  Users,
+  Plus
 } from 'lucide-react';
 
 // Emotion/Style categories with their tags
@@ -199,6 +202,27 @@ const VOICE_CONVERSION_EFFECTS = [
   { value: 'whisper', label: '🤫 Whisper' },
 ];
 
+// Speed presets for quick selection
+const SPEED_PRESETS = [
+  { value: '-50%', label: 'Very Slow', icon: '🐢' },
+  { value: '-30%', label: 'Slow', icon: '🐌' },
+  { value: '-15%', label: 'Slightly Slow', icon: '🚶' },
+  { value: '+0%', label: 'Normal', icon: '🏃' },
+  { value: '+15%', label: 'Slightly Fast', icon: '🚴' },
+  { value: '+30%', label: 'Fast', icon: '🏎️' },
+  { value: '+50%', label: 'Very Fast', icon: '⚡' },
+];
+
+// Interface for include segments (multi-voice)
+interface IncludeSegment {
+  id: string;
+  text: string;
+  voiceModelId: number | null;
+  voiceModelName: string;
+  f0UpKey: number;
+  indexRate: number;
+}
+
 interface Voice {
   id: string;
   name: string;
@@ -223,6 +247,19 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
   // Language and gender for auto-selection
   const [selectedLanguage, setSelectedLanguage] = useState('');
   const [selectedGender, setSelectedGender] = useState('Male'); // Default to Male
+  
+  // Speech rate/speed control
+  const [speechRate, setSpeechRate] = useState('+0%');
+  const [showSpeedModal, setShowSpeedModal] = useState(false);
+  const [speedTagRate, setSpeedTagRate] = useState('-30%');
+  
+  // Bark TTS toggle (native emotions vs faster Edge TTS)
+  const [useBark, setUseBark] = useState(true);
+  
+  // Multi-voice/include segments
+  const [includeSegments, setIncludeSegments] = useState<IncludeSegment[]>([]);
+  const [showIncludeModal, setShowIncludeModal] = useState(false);
+  const [editingIncludeSegment, setEditingIncludeSegment] = useState<IncludeSegment | null>(null);
   
   // Voice conversion options (always enabled)
   // Defaults optimized for maximum voice model similarity
@@ -274,13 +311,20 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
   useEffect(() => {
     if (!isHydrated || !token) return;
     fetchVoices();
+    fetchTTSCapabilities();
   }, [isHydrated, token]);
+  
+  // TTS capabilities state
+  const [ttsCapabilities, setTTSCapabilities] = useState<{
+    bark_available: boolean;
+    recommendation: string;
+  } | null>(null);
   
   // Set default language
   useEffect(() => {
     if (languages.length > 0 && !selectedLanguage) {
       // Default to English (US)
-      const english = languages.find(lang => lang.includes('English'));
+      const english = languages.find(lang => lang.includes('English (US)'));
       if (english) setSelectedLanguage(english);
       else setSelectedLanguage(languages[0]);
     }
@@ -298,6 +342,21 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
       }
     } catch (err) {
       console.error('Failed to fetch voices:', err);
+    }
+  };
+
+  const fetchTTSCapabilities = async () => {
+    if (!token) return;
+    try {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/tts/capabilities`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (response.ok) {
+        const data = await response.json();
+        setTTSCapabilities(data);
+      }
+    } catch (err) {
+      console.error('Failed to fetch TTS capabilities:', err);
     }
   };
 
@@ -335,6 +394,75 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
     
     setShowEmotionPicker(false);
   }, [text]);
+  
+  // Insert speed tag at cursor
+  const insertSpeedTag = useCallback((rate: string) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = text;
+    const selectedText = currentText.substring(start, end);
+    
+    // Wrap selected text in speed tag, or insert empty tag
+    const insertText = selectedText 
+      ? `<speed rate="${rate}">${selectedText}</speed>`
+      : `<speed rate="${rate}"></speed>`;
+    
+    const newText = currentText.substring(0, start) + insertText + currentText.substring(end);
+    setText(newText);
+    
+    // Position cursor inside the tag if no text was selected
+    setTimeout(() => {
+      textarea.focus();
+      if (!selectedText) {
+        const newPos = start + `<speed rate="${rate}">`.length;
+        textarea.setSelectionRange(newPos, newPos);
+      } else {
+        const newPos = start + insertText.length;
+        textarea.setSelectionRange(newPos, newPos);
+      }
+    }, 0);
+    
+    setShowSpeedModal(false);
+  }, [text]);
+  
+  // Insert include tag for multi-voice
+  const insertIncludeTag = useCallback((segment: IncludeSegment) => {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const currentText = text;
+    
+    // Build the include tag with all parameters
+    let attrs = `voice_model_id="${segment.voiceModelId}"`;
+    if (segment.f0UpKey !== 0) {
+      attrs += ` f0_up_key="${segment.f0UpKey}"`;
+    }
+    if (segment.indexRate !== 0.75) {
+      attrs += ` index_rate="${segment.indexRate}"`;
+    }
+    
+    const insertText = `<include ${attrs}>${segment.text}</include>`;
+    
+    const newText = currentText.substring(0, start) + insertText + currentText.substring(end);
+    setText(newText);
+    
+    // Track the segment
+    setIncludeSegments(prev => [...prev, { ...segment, id: Date.now().toString() }]);
+    
+    setTimeout(() => {
+      textarea.focus();
+      const newPos = start + insertText.length;
+      textarea.setSelectionRange(newPos, newPos);
+    }, 0);
+    
+    setShowIncludeModal(false);
+    setEditingIncludeSegment(null);
+  }, [text]);
 
   const handleGenerate = async () => {
     if (!text.trim() || !selectedVoice) {
@@ -355,10 +483,12 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
       const payload: any = {
         text: text.trim(),
         voice: selectedVoice.id,
+        rate: speechRate, // Include speech rate
         convert_voice: true,
         voice_model_id: selectedVoiceModel,
         index_rate: indexRatio,
         f0_up_key: pitchShift,
+        use_bark: useBark, // Use Bark TTS for native emotions (slower but better)
       };
       
       // Add effect to apply after conversion
@@ -439,6 +569,54 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
 
   return (
     <div className="space-y-6">
+      {/* TTS Engine Status */}
+      {ttsCapabilities && (
+        <div className={`flex items-center gap-3 p-3 rounded-lg border ${
+          ttsCapabilities.bark_available 
+            ? (useBark ? 'bg-green-500/10 border-green-500/30' : 'bg-blue-500/10 border-blue-500/30')
+            : 'bg-yellow-500/10 border-yellow-500/30'
+        }`}>
+          <div className={`w-2 h-2 rounded-full ${
+            ttsCapabilities.bark_available 
+              ? (useBark ? 'bg-green-500' : 'bg-blue-500')
+              : 'bg-yellow-500'
+          } animate-pulse`} />
+          <div className="flex-1">
+            <p className={`text-sm font-medium ${
+              ttsCapabilities.bark_available 
+                ? (useBark ? 'text-green-400' : 'text-blue-400')
+                : 'text-yellow-400'
+            }`}>
+              {ttsCapabilities.bark_available 
+                ? (useBark 
+                    ? '🎭 Bark TTS - Native Emotions (Slower, ~15-30s)' 
+                    : '⚡ Edge TTS - Fast Mode (Audio Effects)')
+                : '⚙️ Edge TTS with Audio Processing'}
+            </p>
+            <p className="text-xs text-gray-400 mt-0.5">
+              {ttsCapabilities.bark_available 
+                ? (useBark 
+                    ? 'Sound effects like [laugh], [sigh], [gasp] will be naturally rendered. First generation may take longer.' 
+                    : 'Faster generation with simulated emotions via audio processing.')
+                : 'Emotions simulated via pitch/rate changes and audio effects.'}
+            </p>
+          </div>
+          {/* Bark Toggle Switch */}
+          {ttsCapabilities.bark_available && (
+            <label className="relative inline-flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={useBark}
+                onChange={(e) => setUseBark(e.target.checked)}
+                className="sr-only peer"
+              />
+              <div className="w-11 h-6 bg-gray-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-purple-500 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-green-600"></div>
+              <span className="ml-2 text-xs text-gray-400">{useBark ? 'Bark' : 'Fast'}</span>
+            </label>
+          )}
+        </div>
+      )}
+
       {/* Language & Gender Selection */}
       <div className={`grid gap-4 ${modelHasGender ? 'grid-cols-1' : 'grid-cols-2'}`}>
         <div>
@@ -487,25 +665,51 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
       <div>
         <div className="flex items-center justify-between mb-2">
           <label className="block text-sm font-medium text-gray-200">Text to Speak</label>
-          <button
-            onClick={() => setShowEmotionPicker(true)}
-            className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
-          >
-            <Sparkles className="h-4 w-4" />
-            Add Emotion / Effect
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowSpeedModal(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+            >
+              <Gauge className="h-4 w-4" />
+              Add Speed Tag
+            </button>
+            <button
+              onClick={() => {
+                setEditingIncludeSegment({
+                  id: '',
+                  text: '',
+                  voiceModelId: null,
+                  voiceModelName: '',
+                  f0UpKey: 0,
+                  indexRate: 0.75,
+                });
+                setShowIncludeModal(true);
+              }}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+            >
+              <Users className="h-4 w-4" />
+              Add Voice
+            </button>
+            <button
+              onClick={() => setShowEmotionPicker(true)}
+              className="flex items-center gap-2 px-3 py-1.5 text-sm rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+            >
+              <Sparkles className="h-4 w-4" />
+              Add Emotion / Effect
+            </button>
+          </div>
         </div>
         
         <textarea
           ref={textareaRef}
           className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-3 min-h-[150px] font-mono text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
-          placeholder="Enter text... Use [emotion]text[/emotion] tags or click 'Add Emotion' to add expressive styles!"
+          placeholder="Enter text... Use [emotion]text[/emotion] tags, <speed rate='-30%'>slow text</speed>, or <include voice_model_id='123'>other voice</include>"
           value={text}
           onChange={(e) => setText(e.target.value)}
         />
         
         <p className="text-xs text-gray-500 mt-1">
-          Example: Hello! [cheerful]I&apos;m so happy to see you![/cheerful] [laugh] How are you today?
+          Example: Hello! [cheerful]I&apos;m so happy![/cheerful] [laugh] &lt;speed rate=&quot;-30%&quot;&gt;This is slower.&lt;/speed&gt;
         </p>
       </div>
 
@@ -581,6 +785,248 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false }: 
           </div>
         </div>
       )}
+
+      {/* Speed Tag Modal */}
+      {showSpeedModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-md overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+                <Gauge className="h-5 w-5 text-cyan-500" />
+                Add Speed Control
+              </h2>
+              <button
+                onClick={() => setShowSpeedModal(false)}
+                className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            {/* Speed Slider */}
+            <div className="p-4 space-y-4">
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-200">
+                  Speed: {speedTagRate}
+                </label>
+                <input
+                  type="range"
+                  value={parseInt(speedTagRate)}
+                  onChange={(e) => {
+                    const val = parseInt(e.target.value);
+                    setSpeedTagRate(val >= 0 ? `+${val}%` : `${val}%`);
+                  }}
+                  min={-50}
+                  max={50}
+                  step={5}
+                  className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+                />
+                <div className="flex justify-between text-xs text-gray-500 mt-1">
+                  <span>🐢 Very Slow</span>
+                  <span>Normal</span>
+                  <span>Very Fast ⚡</span>
+                </div>
+              </div>
+              
+              {/* Quick Presets */}
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-200">Quick Presets</label>
+                <div className="grid grid-cols-4 gap-2">
+                  {SPEED_PRESETS.map((preset) => (
+                    <button
+                      key={preset.value}
+                      onClick={() => setSpeedTagRate(preset.value)}
+                      className={`flex flex-col items-center gap-1 p-2 rounded-lg border transition-all ${
+                        speedTagRate === preset.value
+                          ? 'border-cyan-500 bg-cyan-500/20 text-white'
+                          : 'border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-300'
+                      }`}
+                    >
+                      <span className="text-lg">{preset.icon}</span>
+                      <span className="text-xs">{preset.label}</span>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              
+              <p className="text-xs text-gray-500">
+                Select text first, then add speed tag to wrap it. Or insert an empty tag and type inside.
+              </p>
+            </div>
+            
+            {/* Footer */}
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-700">
+              <button
+                onClick={() => setShowSpeedModal(false)}
+                className="px-4 py-2 rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => insertSpeedTag(speedTagRate)}
+                className="px-4 py-2 rounded-lg bg-cyan-600 hover:bg-cyan-700 text-white transition-colors"
+              >
+                Insert Speed Tag
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Include Voice Modal (Multi-voice) */}
+      {showIncludeModal && editingIncludeSegment && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70">
+          <div className="bg-gray-900 border border-gray-700 rounded-xl shadow-2xl w-full max-w-lg overflow-hidden">
+            {/* Header */}
+            <div className="flex items-center justify-between p-4 border-b border-gray-700">
+              <h2 className="flex items-center gap-2 text-lg font-semibold text-white">
+                <Users className="h-5 w-5 text-pink-500" />
+                Add Another Voice
+              </h2>
+              <button
+                onClick={() => {
+                  setShowIncludeModal(false);
+                  setEditingIncludeSegment(null);
+                }}
+                className="p-1 rounded-lg hover:bg-gray-700 text-gray-400 hover:text-white transition-colors"
+              >
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+            
+            <div className="p-4 space-y-4">
+              {/* Voice Model Selection */}
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-200">
+                  Voice Model for this segment
+                </label>
+                <ModelSelector
+                  value={editingIncludeSegment.voiceModelId}
+                  onChange={(id, model) => {
+                    setEditingIncludeSegment(prev => prev ? {
+                      ...prev,
+                      voiceModelId: id,
+                      voiceModelName: model?.name || ''
+                    } : null);
+                  }}
+                  placeholder="Select a different voice model..."
+                  accentColor="primary"
+                />
+              </div>
+              
+              {/* Text Input */}
+              <div>
+                <label className="block text-sm font-medium mb-2 text-gray-200">
+                  Text for this voice
+                </label>
+                <textarea
+                  className="w-full rounded-lg border border-gray-600 bg-gray-800 px-4 py-3 min-h-[100px] text-sm text-white placeholder-gray-500 focus:ring-2 focus:ring-pink-500 focus:border-transparent"
+                  placeholder="Enter the text this voice should say..."
+                  value={editingIncludeSegment.text}
+                  onChange={(e) => setEditingIncludeSegment(prev => prev ? { ...prev, text: e.target.value } : null)}
+                />
+              </div>
+              
+              {/* Advanced Options */}
+              <div className="space-y-3">
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-200">
+                    Pitch Shift: {editingIncludeSegment.f0UpKey > 0 ? '+' : ''}{editingIncludeSegment.f0UpKey} semitones
+                  </label>
+                  <input
+                    type="range"
+                    value={editingIncludeSegment.f0UpKey}
+                    onChange={(e) => setEditingIncludeSegment(prev => prev ? { ...prev, f0UpKey: parseInt(e.target.value) } : null)}
+                    min={-12}
+                    max={12}
+                    step={1}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                  />
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-gray-200">
+                    Index Ratio: {editingIncludeSegment.indexRate.toFixed(2)}
+                  </label>
+                  <input
+                    type="range"
+                    value={editingIncludeSegment.indexRate}
+                    onChange={(e) => setEditingIncludeSegment(prev => prev ? { ...prev, indexRate: parseFloat(e.target.value) } : null)}
+                    min={0}
+                    max={1}
+                    step={0.05}
+                    className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-pink-500"
+                  />
+                </div>
+              </div>
+              
+              <p className="text-xs text-gray-500">
+                This will insert: <code className="bg-gray-800 px-1 rounded">&lt;include voice_model_id=&quot;...&quot;&gt;text&lt;/include&gt;</code>
+              </p>
+            </div>
+            
+            {/* Footer */}
+            <div className="flex justify-end gap-2 p-4 border-t border-gray-700">
+              <button
+                onClick={() => {
+                  setShowIncludeModal(false);
+                  setEditingIncludeSegment(null);
+                }}
+                className="px-4 py-2 rounded-lg border border-gray-600 bg-gray-800 hover:bg-gray-700 text-white transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => {
+                  if (editingIncludeSegment.voiceModelId && editingIncludeSegment.text.trim()) {
+                    insertIncludeTag(editingIncludeSegment);
+                  }
+                }}
+                disabled={!editingIncludeSegment.voiceModelId || !editingIncludeSegment.text.trim()}
+                className="px-4 py-2 rounded-lg bg-pink-600 hover:bg-pink-700 disabled:bg-gray-700 disabled:cursor-not-allowed text-white transition-colors"
+              >
+                Insert Voice Segment
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Speech Speed Control */}
+      <div className="border border-gray-700 rounded-lg p-4 space-y-3">
+        <h3 className="font-medium text-white flex items-center gap-2">
+          <Gauge className="h-5 w-5 text-cyan-400" />
+          Speech Speed
+        </h3>
+        
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Base Speed: {speechRate}
+          </label>
+          <input
+            type="range"
+            value={parseInt(speechRate)}
+            onChange={(e) => {
+              const val = parseInt(e.target.value);
+              setSpeechRate(val >= 0 ? `+${val}%` : `${val}%`);
+            }}
+            min={-50}
+            max={50}
+            step={5}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-cyan-500"
+          />
+          <div className="flex justify-between text-xs text-gray-500 mt-1">
+            <span>🐢 Slower (-50%)</span>
+            <span>Normal</span>
+            <span>Faster (+50%) ⚡</span>
+          </div>
+        </div>
+        
+        <p className="text-xs text-gray-500">
+          This affects all text. Use &lt;speed rate=&quot;...&quot;&gt; tags for per-section speed control.
+        </p>
+      </div>
 
       {/* Voice Conversion Options - Always visible */}
       <div className="border border-gray-700 rounded-lg p-4 space-y-4">
