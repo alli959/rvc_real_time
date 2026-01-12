@@ -213,6 +213,8 @@ services:
       - api_storage:/var/www/html/storage
       # Mount local models directory for scanning
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Mount API source code for development
+      - ../../apps/api/app:/var/www/html/app
     networks:
       - morphvox
 
@@ -242,6 +244,9 @@ services:
       AWS_BUCKET: ${AWS_BUCKET:-morphvox}
       AWS_ENDPOINT: http://minio:9000
       VOICE_ENGINE_URL: http://voice-engine:8001
+    volumes:
+      # Mount API source code for development
+      - ../../apps/api/app:/var/www/html/app
     networks:
       - morphvox
 
@@ -298,12 +303,16 @@ services:
       DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
       LOG_LEVEL: INFO
     volumes:
+      # Mount app source code for development
+      - ../../services/voice-engine/app:/app/app
       # Mount local models directory directly (bind mount)
       - ../../services/voice-engine/assets/models:/app/assets/models
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
       # Mount UVR5 weights for vocal separation
       - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
+      # Mount Bark TTS models (~13GB, downloaded via setup.sh or scripts/download_bark_assets.sh)
+      - ../../services/voice-engine/assets/bark:/app/assets/bark
       # Share API storage models with voice-engine for scanning
       - api_storage:/shared/api_storage:ro
     deploy:
