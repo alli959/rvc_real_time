@@ -199,6 +199,14 @@ services:
       VOICE_MODELS_S3_PREFIX: models
       VOICE_MODELS_S3_URL_EXPIRATION: 60
       
+      # OAuth credentials
+      GOOGLE_CLIENT_ID: ${GOOGLE_CLIENT_ID}
+      GOOGLE_CLIENT_SECRET: ${GOOGLE_CLIENT_SECRET}
+      GOOGLE_REDIRECT_URI: https://${DOMAIN}/api/oauth/google/callback
+      GITHUB_CLIENT_ID: ${GITHUB_CLIENT_ID}
+      GITHUB_CLIENT_SECRET: ${GITHUB_CLIENT_SECRET}
+      GITHUB_REDIRECT_URI: https://${DOMAIN}/api/oauth/github/callback
+      
       # Trusted proxies for Nginx
       TRUSTED_PROXIES: "*"
     volumes:
@@ -296,6 +304,8 @@ services:
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
       # Mount UVR5 weights for vocal separation
       - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
+      # Share API storage models with voice-engine for scanning
+      - api_storage:/shared/api_storage:ro
     deploy:
       resources:
         reservations:
