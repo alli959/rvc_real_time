@@ -68,6 +68,8 @@ export interface VoiceModel {
   name: string;
   description: string | null;
   image_path: string | null;  // Cover image path
+  image_url: string | null;   // Full URL to image
+  gender: string | null;      // Optional: Male/Female for TTS auto-selection
 
   // Ownership
   user_id: number | null; // null = system model
@@ -102,6 +104,15 @@ export interface VoiceModel {
   // Stats
   usage_count: number;
   download_count: number;
+
+  // Language readiness scores (from trainer scan)
+  en_readiness_score?: number | null;
+  en_phoneme_coverage?: number | null;
+  en_missing_phonemes?: string[] | null;
+  is_readiness_score?: number | null;
+  is_phoneme_coverage?: number | null;
+  is_missing_phonemes?: string[] | null;
+  language_scanned_at?: string | null;
 
   // URLs (optional, may be included by API)
   download_url?: string | null;
@@ -167,12 +178,12 @@ export const authApi = {
 
   // OAuth methods
   getOAuthUrl: async (provider: 'google' | 'github'): Promise<{ url: string }> => {
-    const response = await api.get(`/auth/${provider}/redirect`);
+    const response = await api.get(`/oauth/${provider}/redirect`);
     return response.data;
   },
 
   handleOAuthCallback: async (provider: 'google' | 'github', code: string) => {
-    const response = await api.post(`/auth/${provider}/callback`, { code });
+    const response = await api.post(`/oauth/${provider}/callback`, { code });
     return response.data;
   },
 };
@@ -646,3 +657,378 @@ export const youtubeApi = {
     return response.data;
   },
 };
+
+// =============================================================================
+// Trainer / Language Readiness API
+// =============================================================================
+
+export interface LanguageReadiness {
+  readiness_score: number | null;
+  phoneme_coverage: number | null;
+  missing_phonemes: string[] | null;
+}
+
+export interface ModelLanguageScores {
+  model_id: number;
+  name: string;
+  languages: {
+    en: LanguageReadiness;
+    is: LanguageReadiness;
+  };
+  full_results?: Record<string, unknown>;
+  scanned_at: string | null;
+}
+
+export interface ScanModelResponse {
+  success: boolean;
+  model: {
+    id: number;
+    name: string;
+    en_readiness_score: number | null;
+    en_phoneme_coverage: number | null;
+    en_missing_phonemes: string[] | null;
+    is_readiness_score: number | null;
+    is_phoneme_coverage: number | null;
+    is_missing_phonemes: string[] | null;
+    language_scanned_at: string | null;
+  };
+}
+
+export interface ScanAllModelsResponse {
+  success: boolean;
+  results: {
+    total: number;
+    scanned: number;
+    failed: number;
+    skipped: number;
+  };
+}
+
+export interface TrainerHealthResponse {
+  available: boolean;
+  languages: string[];
+}
+
+export interface GapAnalysisResponse {
+  language: string;
+  model_id: number;
+  missing_phonemes: string[];
+  coverage_percentage: number;
+  suggested_prompts: Array<{
+    text: string;
+    phonemes: string[];
+    category: string;
+  }>;
+}
+
+export interface PhonemeInfo {
+  language: string;
+  phonemes: string[];
+  count: number;
+}
+
+export interface WizardSession {
+  session_id: string;
+  language: string;
+  exp_name: string;
+  status: 'created' | 'in_progress' | 'paused' | 'completed' | 'cancelled';
+  total_prompts: number;
+  completed_prompts: number;
+  current_prompt_index: number;
+  progress_percentage: number;
+}
+
+export interface WizardPrompt {
+  index: number;
+  text: string;
+  phonemes: string[];
+  category?: string;
+  ipa_text?: string;
+  is_recorded?: boolean;
+  is_skipped?: boolean;
+  // Alternative field names from API
+  prompt_text?: string;
+  prompt_id?: string;
+}
+
+export interface InferenceTestResult {
+  model_path: string;
+  model_name: string;
+  overall_score: number;
+  language_scores: {
+    [language: string]: {
+      overall_score: number;
+      pitch_stability: number;
+      audio_clarity: number;
+      artifact_score: number;
+      tests_run: number;
+      tests_passed: number;
+    };
+  };
+  test_details: Array<{
+    sentence: string;
+    success: boolean;
+    quality_score?: number;
+    pitch_stability?: number;
+    audio_clarity?: number;
+    artifact_score?: number;
+    duration_seconds?: number;
+    error?: string;
+  }>;
+  recommendations: string[];
+}
+
+export const trainerApi = {
+  /**
+   * Check trainer API health
+   */
+  health: async (): Promise<TrainerHealthResponse> => {
+    const response = await api.get('/trainer/health');
+    return response.data;
+  },
+
+  /**
+   * Get available languages
+   */
+  getLanguages: async (): Promise<string[]> => {
+    const response = await api.get('/trainer/languages');
+    return response.data.languages;
+  },
+
+  /**
+   * Scan a model for language readiness
+   */
+  scanModel: async (modelId: number | string, languages: string[] = ['en', 'is']): Promise<ScanModelResponse> => {
+    const response = await api.post(`/trainer/scan/${modelId}`, { languages });
+    return response.data;
+  },
+
+  /**
+   * Scan all models (admin only)
+   */
+  scanAllModels: async (languages: string[] = ['en', 'is']): Promise<ScanAllModelsResponse> => {
+    const response = await api.post('/admin/voice-models/scan-all', { languages });
+    return response.data;
+  },
+
+  /**
+   * Get model readiness without rescanning
+   */
+  getReadiness: async (modelId: number | string): Promise<ModelLanguageScores> => {
+    const response = await api.get(`/trainer/readiness/${modelId}`);
+    return response.data;
+  },
+
+  /**
+   * Analyze gaps for a model
+   */
+  analyzeGaps: async (modelId: number | string, language: string): Promise<GapAnalysisResponse> => {
+    const response = await api.post(`/trainer/gaps/${modelId}`, { language });
+    return response.data;
+  },
+
+  /**
+   * Test a model using inference
+   * 
+   * Runs test sentences through the model to assess quality.
+   * Useful for models without training data.
+   */
+  testModelInference: async (
+    modelId: number | string, 
+    languages: string[] = ['en'],
+    testSentences?: string[],
+    voice?: string
+  ): Promise<{ success: boolean; model_id: number; model_name: string; results: InferenceTestResult }> => {
+    const response = await api.post(`/trainer/test/${modelId}`, {
+      languages,
+      test_sentences: testSentences,
+      voice: voice || 'en-US-GuyNeural',
+    });
+    return response.data;
+  },
+
+  /**
+   * Get phonemes for a language
+   */
+  getPhonemes: async (language: string): Promise<PhonemeInfo> => {
+    const response = await api.get(`/trainer/phonemes/${language}`);
+    return response.data;
+  },
+
+  /**
+   * Get prompts for a language
+   */
+  getPrompts: async (language: string) => {
+    const response = await api.get(`/trainer/prompts/${language}`);
+    return response.data;
+  },
+
+  /**
+   * Get prompts for specific phonemes
+   */
+  getPromptsForPhonemes: async (language: string, phonemes: string[]) => {
+    const response = await api.post(`/trainer/prompts/${language}/for-phonemes`, { phonemes });
+    return response.data;
+  },
+
+  // Wizard session methods
+  createWizardSession: async (language: string, expName: string, promptCount?: number, targetPhonemes?: string[]): Promise<WizardSession> => {
+    const response = await api.post('/trainer/wizard/sessions', {
+      language,
+      exp_name: expName,
+      prompt_count: promptCount,
+      target_phonemes: targetPhonemes,
+    });
+    return response.data;
+  },
+
+  getWizardSession: async (sessionId: string): Promise<WizardSession> => {
+    const response = await api.get(`/trainer/wizard/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  startWizardSession: async (sessionId: string): Promise<WizardSession> => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/start`);
+    return response.data;
+  },
+
+  getWizardPrompt: async (sessionId: string): Promise<WizardPrompt> => {
+    const response = await api.get(`/trainer/wizard/sessions/${sessionId}/prompt`);
+    const data = response.data;
+    
+    // Normalize the response - API may return nested prompt object
+    const prompt = data.prompt || data;
+    
+    return {
+      index: prompt.index ?? data.current_index ?? 0,
+      text: prompt.text || prompt.prompt_text || '',
+      phonemes: prompt.phonemes || prompt.phonemes_covered || [],
+      category: prompt.category,
+      ipa_text: prompt.ipa_text,
+      is_recorded: prompt.is_recorded,
+      is_skipped: prompt.is_skipped,
+    };
+  },
+
+  submitRecording: async (sessionId: string, audioBase64: string, sampleRate?: number, autoAdvance?: boolean, format?: string) => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/submit`, {
+      audio: audioBase64,
+      sample_rate: sampleRate,
+      auto_advance: autoAdvance,
+      format: format,
+    });
+    return response.data;
+  },
+
+  wizardNext: async (sessionId: string) => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/next`);
+    return response.data;
+  },
+
+  wizardPrevious: async (sessionId: string) => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/previous`);
+    return response.data;
+  },
+
+  wizardSkip: async (sessionId: string) => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/skip`);
+    return response.data;
+  },
+
+  completeWizardSession: async (sessionId: string) => {
+    const response = await api.post(`/trainer/wizard/sessions/${sessionId}/complete`);
+    return response.data;
+  },
+
+  cancelWizardSession: async (sessionId: string) => {
+    const response = await api.delete(`/trainer/wizard/sessions/${sessionId}`);
+    return response.data;
+  },
+
+  /**
+   * Upload audio file directly to training dataset
+   */
+  uploadAudio: async (expName: string, audioBase64: string, label: string, language?: string) => {
+    // Convert base64 to blob for file upload
+    const byteCharacters = atob(audioBase64);
+    const byteNumbers = new Array(byteCharacters.length);
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i);
+    }
+    const byteArray = new Uint8Array(byteNumbers);
+    const blob = new Blob([byteArray], { type: 'audio/wav' });
+    
+    // Create form data
+    const formData = new FormData();
+    formData.append('exp_name', expName);
+    formData.append('files[]', blob, `${label}.wav`);
+    if (language) {
+      formData.append('language', language);
+    }
+    
+    const response = await api.post('/trainer/upload', formData, {
+      headers: {
+        'Content-Type': 'multipart/form-data',
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Start a training job
+   */
+  startTraining: async (
+    expName: string, 
+    language: string,
+    config?: {
+      sample_rate?: number;
+      f0_method?: string;
+      epochs?: number;
+      batch_size?: number;
+    }
+  ): Promise<{ job_id: string; status: string; message: string }> => {
+    const response = await api.post('/trainer/start', {
+      exp_name: expName,
+      language,
+      config,
+    });
+    return response.data;
+  },
+
+  /**
+   * Get training job status
+   */
+  trainingStatus: async (jobId: string): Promise<{
+    job_id: string;
+    status: string;
+    progress: number;
+    status_message?: string;
+    error?: string;
+  }> => {
+    const response = await api.get(`/trainer/jobs/${jobId}`);
+    return response.data;
+  },
+
+  /**
+   * List all training jobs
+   */
+  listTrainingJobs: async (): Promise<Array<{
+    job_id: string;
+    exp_name: string;
+    status: string;
+    progress: number;
+    created_at: string;
+  }>> => {
+    const response = await api.get('/trainer/jobs');
+    return response.data;
+  },
+
+  /**
+   * Cancel a training job
+   */
+  cancelTraining: async (jobId: string): Promise<{ success: boolean; message: string }> => {
+    const response = await api.post(`/trainer/jobs/${jobId}/cancel`);
+    return response.data;
+  },
+};
+
