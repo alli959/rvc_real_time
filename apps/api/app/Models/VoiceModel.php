@@ -21,6 +21,7 @@ class VoiceModel extends Model
         'slug',
         'description',
         'image_path',   // path to model avatar/cover image
+        'gender',       // optional: male, female (for TTS default selection)
         'avatar',
         'engine',
         'visibility',   // public, private, unlisted
@@ -46,6 +47,23 @@ class VoiceModel extends Model
         'download_count',
         'has_consent',
         'consent_notes',
+
+        // Language readiness scores
+        'en_readiness_score',
+        'en_phoneme_coverage',
+        'en_missing_phonemes',
+        'is_readiness_score',
+        'is_phoneme_coverage',
+        'is_missing_phonemes',
+        'language_scan_results',
+        'language_scanned_at',
+
+        // Inference test results
+        'inference_test_score',
+        'inference_test_results',
+        'inference_tested_at',
+        'en_inference_score',
+        'is_inference_score',
     ];
 
     protected $casts = [
@@ -59,6 +77,21 @@ class VoiceModel extends Model
         'size_bytes' => 'integer',
         'usage_count' => 'integer',
         'download_count' => 'integer',
+        // Language readiness
+        'en_readiness_score' => 'decimal:2',
+        'en_phoneme_coverage' => 'decimal:2',
+        'en_missing_phonemes' => 'array',
+        'is_readiness_score' => 'decimal:2',
+        'is_phoneme_coverage' => 'decimal:2',
+        'is_missing_phonemes' => 'array',
+        'language_scan_results' => 'array',
+        'language_scanned_at' => 'datetime',
+        // Inference test results
+        'inference_test_score' => 'decimal:2',
+        'inference_test_results' => 'array',
+        'inference_tested_at' => 'datetime',
+        'en_inference_score' => 'decimal:2',
+        'is_inference_score' => 'decimal:2',
     ];
 
     protected $hidden = [
@@ -69,6 +102,7 @@ class VoiceModel extends Model
         'model_file',
         'index_file',
         'size',
+        'image_url',
     ];
 
     /**
@@ -85,6 +119,24 @@ class VoiceModel extends Model
     public function getIndexFileAttribute(): ?string
     {
         return $this->index_path ? basename($this->index_path) : null;
+    }
+
+    /**
+     * Get the full URL to the model image
+     */
+    public function getImageUrlAttribute(): ?string
+    {
+        if (!$this->image_path) {
+            return null;
+        }
+
+        // If it's already a full URL, return as-is
+        if (str_starts_with($this->image_path, 'http')) {
+            return $this->image_path;
+        }
+
+        // Return URL via public storage
+        return url('storage/' . $this->image_path);
     }
 
     /**

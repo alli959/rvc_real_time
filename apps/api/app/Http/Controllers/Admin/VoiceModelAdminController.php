@@ -5,8 +5,10 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\User;
 use App\Models\VoiceModel;
+use App\Services\TrainerService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Storage;
 
 class VoiceModelAdminController extends Controller
 {
@@ -77,20 +79,45 @@ class VoiceModelAdminController extends Controller
         $validated = $request->validate([
             'name' => ['required', 'string', 'max:255'],
             'description' => ['nullable', 'string', 'max:2000'],
+            'gender' => ['nullable', 'in:Male,Female'],
             'visibility' => ['required', 'in:public,private,unlisted'],
             'is_active' => ['nullable', 'boolean'],
             'is_featured' => ['nullable', 'boolean'],
             'tags' => ['nullable', 'string', 'max:500'],
+            'image' => ['nullable', 'image', 'mimes:jpeg,png,jpg,gif,webp', 'max:5120'], // 5MB max
         ]);
 
-        $voiceModel->update([
+        $updateData = [
             'name' => $validated['name'],
             'description' => $validated['description'],
+            'gender' => $validated['gender'] ?? null,
             'visibility' => $validated['visibility'],
             'is_active' => $request->boolean('is_active'),
             'is_featured' => $request->boolean('is_featured'),
             'tags' => $validated['tags'] ? array_map('trim', explode(',', $validated['tags'])) : null,
-        ]);
+        ];
+
+        // Handle image upload
+        if ($request->hasFile('image')) {
+            // Delete old image if exists
+            if ($voiceModel->image_path && Storage::disk('public')->exists($voiceModel->image_path)) {
+                Storage::disk('public')->delete($voiceModel->image_path);
+            }
+
+            // Store new image
+            $path = $request->file('image')->store('model-images', 'public');
+            $updateData['image_path'] = $path;
+        }
+
+        // Handle image removal
+        if ($request->boolean('remove_image') && $voiceModel->image_path) {
+            if (Storage::disk('public')->exists($voiceModel->image_path)) {
+                Storage::disk('public')->delete($voiceModel->image_path);
+            }
+            $updateData['image_path'] = null;
+        }
+
+        $voiceModel->update($updateData);
 
         return redirect()->route('admin.models.edit', $voiceModel)->with('status', 'Model updated.');
     }
@@ -134,5 +161,127 @@ class VoiceModelAdminController extends Controller
         $voiceModel->permittedUsers()->sync($sync);
 
         return redirect()->route('admin.models.access.edit', $voiceModel)->with('status', 'Access updated.');
+    }
+
+    public function scanAllLanguages(Request $request, TrainerService $trainerService)
+    {
+        try {
+            // Get all models with paths
+            $models = VoiceModel::whereNotNull('model_path')
+                ->where('status', 'ready')
+                ->get();
+
+            $scannedCount = 0;
+            $failedCount = 0;
+
+            foreach ($models as $model) {
+                try {
+                    $result = $trainerService->scanAndUpdateModel($model);
+                    if ($result) {
+                        $scannedCount++;
+                    } else {
+                        $failedCount++;
+                    }
+                } catch (\Exception $e) {
+                    $failedCount++;
+                }
+            }
+
+            return redirect()->route('admin.models.index')->with('status', 
+                "Language scan completed. Scanned: {$scannedCount}, Failed: {$failedCount}"
+            );
+        } catch (\Exception $e) {
+            return redirect()->route('admin.models.index')->with('error', 
+                'Failed to scan models: ' . $e->getMessage()
+            );
+        }
+    }
+
+    public function scanModelLanguages(Request $request, VoiceModel $voiceModel, TrainerService $trainerService)
+    {
+        try {
+            $result = $trainerService->scanAndUpdateModel($voiceModel);
+            
+            // Refresh model to get updated values
+            $voiceModel->refresh();
+
+            if ($result) {
+                return redirect()->route('admin.models.edit', $voiceModel)->with('status', 
+                    "Language scan completed. EN: " . number_format($voiceModel->en_readiness_score ?? 0, 1) . "%, IS: " . number_format($voiceModel->is_readiness_score ?? 0, 1) . "%"
+                );
+            }
+
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Failed to scan model languages.'
+            );
+        } catch (\Exception $e) {
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Scan failed: ' . $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Transfer ownership of a model to a user.
+     * 
+     * This grants the user full ownership of the model,
+     * allowing them to edit, manage, and delete it.
+     */
+    public function transferOwnership(Request $request, VoiceModel $voiceModel)
+    {
+        $validated = $request->validate([
+            'user_id' => ['nullable', 'exists:users,id'],
+        ]);
+
+        $newUserId = $validated['user_id'];
+
+        // If clearing ownership (setting to system model)
+        if (!$newUserId) {
+            $voiceModel->update(['user_id' => null]);
+            return redirect()->route('admin.models.edit', $voiceModel)->with('status', 
+                'Model ownership cleared. Model is now a system model.'
+            );
+        }
+
+        $newOwner = User::find($newUserId);
+        
+        if (!$newOwner) {
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'User not found.'
+            );
+        }
+
+        $voiceModel->update(['user_id' => $newOwner->id]);
+
+        return redirect()->route('admin.models.edit', $voiceModel)->with('status', 
+            "Ownership transferred to {$newOwner->name} ({$newOwner->email})."
+        );
+    }
+
+    /**
+     * Test model using inference (without training data).
+     */
+    public function testModelInference(Request $request, VoiceModel $voiceModel, TrainerService $trainerService)
+    {
+        try {
+            $languages = $request->input('languages', ['en']);
+            
+            $result = $trainerService->testModelInference($voiceModel, $languages);
+
+            if ($result) {
+                $overallScore = $result['overall_score'] ?? 0;
+                return redirect()->route('admin.models.edit', $voiceModel)->with('status', 
+                    "Inference test completed. Overall score: " . number_format($overallScore, 1) . "%"
+                );
+            }
+
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Inference test failed. Model may not be compatible.'
+            );
+        } catch (\Exception $e) {
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Inference test failed: ' . $e->getMessage()
+            );
+        }
     }
 }

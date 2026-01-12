@@ -148,26 +148,43 @@ class VoiceModelController extends Controller
     }
 
     /**
-     * Get user's own models
+     * Get user's own models and models shared with them
+     * Admins get all models
      */
     public function myModels(Request $request)
     {
-        if($request->user()->hasRole('admin')) {
-            // Admins can see all models
-            $query = response()->json(VoiceModel::all());
-        }
-        if(!$request->user()) {
+        if (!$request->user()) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
-        $query = VoiceModel::ownedBy($request->user()->id);
+        $user = $request->user();
+        $isAdmin = $user->hasRole('admin');
+
+        if ($isAdmin) {
+            // Admins can see all models
+            $query = VoiceModel::query();
+        } else {
+            // Regular users see models they own OR have been shared with them
+            $query = VoiceModel::where(function ($q) use ($user) {
+                $q->where('user_id', $user->id)
+                  ->orWhereHas('permittedUsers', function ($sub) use ($user) {
+                      $sub->where('users.id', $user->id);
+                  });
+            });
+        }
 
         // Include pending models for owner
         $sortBy = $request->get('sort', 'created_at');
         $sortDir = $request->get('direction', 'desc');
         $query->orderBy($sortBy, $sortDir);
 
-        $models = $query->paginate($request->get('per_page', 20));
+        $models = $query->with('user:id,name')->paginate($request->get('per_page', 20));
+
+        // Add is_owned flag to each model
+        $models->getCollection()->transform(function ($model) use ($user) {
+            $model->is_owned = $model->user_id === $user->id;
+            return $model;
+        });
 
         return response()->json($models);
     }
@@ -232,8 +249,8 @@ class VoiceModelController extends Controller
         $validated = $request->validate([
             'name' => 'required|string|max:255',
             'description' => 'nullable|string|max:5000',
-            'engine' => 'required|in:rvc,tts',
-            'visibility' => 'required|in:public,private,unlisted',
+            'engine' => 'nullable|in:rvc,tts',
+            'visibility' => 'nullable|in:public,private,unlisted',
             'tags' => 'nullable|array',
             'tags.*' => 'string|max:50',
             'has_consent' => 'boolean',
@@ -243,8 +260,10 @@ class VoiceModelController extends Controller
 
         $model = VoiceModel::create([
             ...$validated,
+            'engine' => $validated['engine'] ?? 'rvc',
+            'visibility' => $validated['visibility'] ?? 'private',
             'user_id' => $request->user()->id,
-            'storage_type' => 's3', // User uploads go to S3
+            'storage_type' => 'local', // Start with local for training
             'status' => 'pending',
         ]);
 

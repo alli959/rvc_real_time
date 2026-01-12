@@ -65,8 +65,15 @@ class VoiceModelPolicy
      */
     public function create(User $user): bool
     {
-        // Must have upload permission
-        return $user->hasPermissionTo('upload_models');
+        // Any authenticated user can create models
+        // Admins and users with upload permission
+        if ($user->hasRole('admin')) {
+            return true;
+        }
+        
+        // Check permission without guard restriction
+        return $user->permissions->contains('name', 'upload_models') 
+            || $user->roles->flatMap->permissions->contains('name', 'upload_models');
     }
 
     /**

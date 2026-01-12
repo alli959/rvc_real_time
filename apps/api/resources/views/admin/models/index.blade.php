@@ -4,14 +4,23 @@
 @section('header', 'Voice Models')
 
 @section('header-actions')
-<form method="POST" action="{{ route('admin.models.sync') }}" class="inline">
-  @csrf
-  <input type="hidden" name="prune" value="1">
-  <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg text-sm font-medium transition-colors">
-    <i data-lucide="refresh-cw" class="w-4 h-4"></i>
-    Sync Storage Models
-  </button>
-</form>
+<div class="flex items-center gap-2">
+  <form method="POST" action="{{ route('admin.models.scan-languages') }}" class="inline" id="scan-all-form">
+    @csrf
+    <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 bg-accent-600 hover:bg-accent-700 rounded-lg text-sm font-medium transition-colors" id="scan-all-btn">
+      <i data-lucide="languages" class="w-4 h-4"></i>
+      Scan All Languages
+    </button>
+  </form>
+  <form method="POST" action="{{ route('admin.models.sync') }}" class="inline">
+    @csrf
+    <input type="hidden" name="prune" value="1">
+    <button type="submit" class="inline-flex items-center gap-2 px-4 py-2 bg-primary-600 hover:bg-primary-700 rounded-lg text-sm font-medium transition-colors">
+      <i data-lucide="refresh-cw" class="w-4 h-4"></i>
+      Sync Storage Models
+    </button>
+  </form>
+</div>
 @endsection
 
 @section('content')
@@ -67,9 +76,9 @@
           <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Model</th>
           <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Type</th>
           <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Owner</th>
+          <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Lang Scores</th>
           <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Visibility</th>
           <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Status</th>
-          <th class="text-left px-6 py-4 text-sm font-medium text-gray-400">Last Synced</th>
           <th class="text-right px-6 py-4 text-sm font-medium text-gray-400">Actions</th>
         </tr>
       </thead>
@@ -79,8 +88,12 @@
           <td class="px-6 py-4 text-sm text-gray-500">{{ $model->id }}</td>
           <td class="px-6 py-4">
             <div class="flex items-center gap-3">
-              <div class="w-10 h-10 bg-gray-800 rounded-lg flex items-center justify-center">
-                <i data-lucide="audio-waveform" class="w-5 h-5 text-gray-500"></i>
+              <div class="w-12 h-12 bg-gray-800 rounded-lg flex items-center justify-center overflow-hidden flex-shrink-0">
+                @if($model->image_path)
+                  <img src="{{ $model->image_url }}" alt="{{ $model->name }}" class="w-full h-full object-cover" />
+                @else
+                  <i data-lucide="audio-waveform" class="w-5 h-5 text-gray-500"></i>
+                @endif
               </div>
               <div>
                 <p class="text-sm font-medium">{{ $model->name }}</p>
@@ -98,6 +111,35 @@
               {{ $model->user->name }}
             @else
               <span class="text-gray-600">—</span>
+            @endif
+          </td>
+          <td class="px-6 py-4">
+            @if($model->language_scanned_at)
+              <div class="flex items-center gap-2 text-xs">
+                <div class="flex items-center gap-1">
+                  <span class="font-medium">EN:</span>
+                  <span class="px-1.5 py-0.5 rounded 
+                    @if($model->en_readiness_score >= 80) bg-green-500/10 text-green-400
+                    @elseif($model->en_readiness_score >= 50) bg-yellow-500/10 text-yellow-400
+                    @else bg-red-500/10 text-red-400
+                    @endif">
+                    {{ number_format($model->en_readiness_score ?? 0, 0) }}%
+                  </span>
+                </div>
+                <div class="flex items-center gap-1">
+                  <span class="font-medium">IS:</span>
+                  <span class="px-1.5 py-0.5 rounded 
+                    @if($model->is_readiness_score >= 80) bg-green-500/10 text-green-400
+                    @elseif($model->is_readiness_score >= 50) bg-yellow-500/10 text-yellow-400
+                    @else bg-red-500/10 text-red-400
+                    @endif">
+                    {{ number_format($model->is_readiness_score ?? 0, 0) }}%
+                  </span>
+                </div>
+              </div>
+              <p class="text-[10px] text-gray-600 mt-0.5">{{ $model->language_scanned_at->diffForHumans() }}</p>
+            @else
+              <span class="text-gray-600 text-xs">Not scanned</span>
             @endif
           </td>
           <td class="px-6 py-4">
