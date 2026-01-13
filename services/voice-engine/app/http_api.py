@@ -2981,6 +2981,192 @@ async def unload_bark_models():
     return {"success": True, "message": "Bark TTS models unloaded"}
 
 
+@app.post("/cache/unload-rvc")
+async def unload_rvc_model():
+    """
+    Unload current RVC voice model to free ~300-500MB of memory.
+    
+    The model will need to be reloaded before next conversion.
+    HuBERT and RMVPE remain loaded as they're shared across all models.
+    """
+    global model_manager
+    import gc
+    
+    if model_manager is None:
+        return {"success": False, "message": "No model manager initialized"}
+    
+    model_name = model_manager.model_name
+    if model_name is None:
+        return {"success": True, "message": "No RVC model was loaded"}
+    
+    model_manager.unload_model()
+    
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    
+    return {"success": True, "message": f"RVC model '{model_name}' unloaded"}
+
+
+@app.post("/cache/unload-all")
+async def unload_all_models():
+    """
+    Unload ALL models to free maximum memory (~4-5GB).
+    
+    This unloads:
+    - Bark TTS models (~1.5GB)
+    - Current RVC voice model (~300-500MB)
+    - UVR5/vocal separation models (~500MB each)
+    
+    HuBERT and RMVPE remain loaded as they're required for any RVC operation.
+    All models will be reloaded on next use.
+    """
+    global model_manager
+    import gc
+    
+    results = {
+        "bark": False,
+        "rvc": False,
+        "uvr5": False
+    }
+    messages = []
+    
+    # Unload Bark
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        cache.unload_bark()
+        results["bark"] = True
+        messages.append("Bark unloaded via cache")
+    except Exception:
+        pass
+    
+    try:
+        from bark.generation import clean_models
+        clean_models()
+        results["bark"] = True
+        messages.append("Bark unloaded via clean_models()")
+    except Exception:
+        pass
+    
+    # Unload RVC model
+    if model_manager and model_manager.model_name:
+        model_name = model_manager.model_name
+        model_manager.unload_model()
+        results["rvc"] = True
+        messages.append(f"RVC model '{model_name}' unloaded")
+    
+    # Clear UVR5 from model cache
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        # Clear all UVR5 models
+        with cache._lock:
+            uvr5_keys = list(cache._uvr5_models.keys())
+            for key in uvr5_keys:
+                del cache._uvr5_models[key]
+                cache._uvr5_evictions += 1
+            cache._uvr5_lru.clear()
+        if uvr5_keys:
+            results["uvr5"] = True
+            messages.append(f"UVR5 models cleared: {uvr5_keys}")
+    except Exception as e:
+        messages.append(f"UVR5 cleanup error: {e}")
+    
+    # Force garbage collection
+    gc.collect()
+    gc.collect()
+    
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+            torch.cuda.synchronize()
+    except ImportError:
+        pass
+    
+    return {
+        "success": any(results.values()),
+        "unloaded": results,
+        "messages": messages
+    }
+
+
+@app.get("/memory/status")
+async def memory_status():
+    """
+    Get detailed memory usage information.
+    
+    Returns current process memory usage and breakdown of loaded models.
+    """
+    import gc
+    
+    result = {
+        "process_memory_mb": 0,
+        "gpu_memory_mb": 0,
+        "loaded_models": {
+            "hubert": True,  # Always loaded after startup
+            "rmvpe": True,   # Always loaded after startup  
+            "bark": False,
+            "rvc_model": None,
+            "uvr5_models": []
+        },
+        "estimated_model_memory_mb": 0
+    }
+    
+    # Get process memory
+    try:
+        with open('/proc/self/status', 'r') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    result["process_memory_mb"] = int(line.split()[1]) / 1024
+                    break
+    except Exception:
+        pass
+    
+    # Get GPU memory
+    try:
+        import torch
+        if torch.cuda.is_available():
+            result["gpu_memory_mb"] = torch.cuda.memory_allocated() / 1024 / 1024
+    except Exception:
+        pass
+    
+    # Check Bark status
+    try:
+        from bark import generation
+        if hasattr(generation, 'models') and generation.models:
+            result["loaded_models"]["bark"] = True
+            result["estimated_model_memory_mb"] += 1500  # ~1.5GB for Bark
+    except Exception:
+        pass
+    
+    # Check RVC model
+    global model_manager
+    if model_manager and model_manager.model_name:
+        result["loaded_models"]["rvc_model"] = model_manager.model_name
+        result["estimated_model_memory_mb"] += 350  # ~350MB per RVC model
+    
+    # Check UVR5/cache
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        stats = cache.get_stats()
+        result["loaded_models"]["uvr5_models"] = stats.get("uvr5_models", [])
+        result["estimated_model_memory_mb"] += len(stats.get("uvr5_models", [])) * 500
+    except Exception:
+        pass
+    
+    # Base overhead (HuBERT + RMVPE + torch/fairseq)
+    result["estimated_model_memory_mb"] += 2300  # ~2.3GB base
+    
+    return result
+
+
 # =============================================================================
 # Run Server
 # =============================================================================
