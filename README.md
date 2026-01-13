@@ -14,7 +14,7 @@ MorphVox is a comprehensive AI voice conversion platform featuring:
 - **🔧 API Backend** - Laravel API for user management, model registry, and job processing
 - **🎤 Voice Engine** - Python RVC service for real-time voice conversion
 - **📦 S3 Storage** - MinIO for scalable object storage with presigned URLs
-- **🗣️ Text-to-Speech** - Edge TTS integration with 50+ voices and emotion/style support
+- **🗣️ Text-to-Speech** - Bark TTS (neural) + Edge TTS (50+ voices) with emotion support
 - **🎵 Audio Processing** - Voice conversion, vocal separation (UVR5), and voice swap
 - **🎶 Song Remix** - Split vocals from instrumentals and swap voices in songs
 - **👤 Admin Panel** - Full administration dashboard at admin.morphvox.net

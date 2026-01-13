@@ -1,272 +1,267 @@
-# RVC Real-Time Voice Conversion - Project Summary
+# MorphVox Platform - Project Summary
 
 ## Project Overview
 
-This is a complete implementation of a real-time voice conversion application using RVC (Retrieval-based Voice Conversion) models. The project is designed for:
-- Fast, real-time audio processing
-- Modular, extensible architecture
-- Multiple deployment options
-- Easy containerization
+MorphVox is a comprehensive AI voice conversion platform built as a full-stack monorepo. It evolved from a standalone RVC voice conversion tool into a complete platform featuring:
+
+- **Web Application** - Modern Next.js frontend for model browsing and voice processing
+- **Laravel API Backend** - User auth, model registry, job processing, and admin panel
+- **Voice Engine** - Python service for RVC inference, TTS, and audio processing
+- **Infrastructure** - Docker Compose stack with MariaDB, Redis, MinIO S3 storage
 
 ## Implemented Features
 
-### Core Functionality
-- ✅ Real-time audio streaming (input/output)
-- ✅ Chunk-based audio processing with configurable overlap
-- ✅ Efficient feature extraction (mel spectrograms, F0, MFCC)
-- ✅ Dynamic model loading and management
-- ✅ GPU/CPU automatic detection and usage
-- ✅ Crossfade processing for smooth audio transitions
+### Platform Features
+- ✅ User authentication with OAuth (Google, GitHub)
+- ✅ Role-based permissions (user, premium, creator, admin)
+- ✅ Voice model registry with public/private models
+- ✅ Job queue with full history tracking
+- ✅ Admin panel at admin.morphvox.net
+- ✅ User role request system
+- ✅ S3 storage with presigned URLs
 
-### Streaming API
-- ✅ WebSocket server for JSON-based communication
-- ✅ TCP Socket server for raw audio streaming
+### Voice Engine Features
+- ✅ RVC voice conversion with WebUI model compatibility
+- ✅ Text-to-Speech (Bark TTS + Edge TTS with 50+ voices)
+- ✅ Emotion tags and audio effects (reverb, echo, pitch)
+- ✅ Vocal separation using UVR5 (HP3, HP5 models)
+- ✅ Voice swap in songs (song remix)
+- ✅ Multi-voice TTS support
+- ✅ Voice detection (count speakers in audio)
+- ✅ YouTube audio download integration
+
+### API & Streaming
+- ✅ RESTful HTTP API (port 8001)
+- ✅ WebSocket server for real-time streaming (port 8765)
 - ✅ Multiple concurrent client support
-- ✅ Ping/pong heartbeat mechanism
+- ✅ GPU/CUDA automatic detection
 
 ### Deployment
-- ✅ Docker containerization
-- ✅ Docker Compose configuration
-- ✅ Health checks
-- ✅ Environment variable configuration
-
-### Documentation
-- ✅ Comprehensive README with usage examples
-- ✅ API documentation
-- ✅ Installation instructions
-- ✅ Example client code
-- ✅ Troubleshooting guide
+- ✅ Docker containerization for all services
+- ✅ Docker Compose for development and production
+- ✅ Nginx reverse proxy with SSL/Let's Encrypt
+- ✅ Health checks and environment configuration
 
 ## Project Structure
 
 ```
-rvc_real_time/
-├── app/                          # Core application modules
-│   ├── __init__.py              # Package initialization
-│   ├── audio_stream.py          # Audio I/O streaming (PyAudio)
-│   ├── chunk_processor.py       # Chunk-based processing
-│   ├── config.py                # Configuration management
-│   ├── feature_extraction.py    # Feature extraction (librosa)
-│   ├── model_manager.py         # Model loading/inference (PyTorch)
-│   └── streaming_api.py         # WebSocket & Socket servers
-├── assets/
-│   └── models/                  # RVC model storage
-│       └── README.md            # Model directory documentation
-├── examples/                     # Example client implementations
-│   ├── README.md                # Examples documentation
-│   ├── socket_client.py         # TCP socket client example
-│   └── websocket_client.py      # WebSocket client example
-├── tests/                        # Test scripts
-│   ├── README.md                # Testing documentation
-│   └── validate.py              # Structure validation script
-├── .env.example                 # Environment variables template
-├── .gitignore                   # Git ignore rules
-├── docker-compose.yml           # Docker Compose configuration
-├── Dockerfile                   # Container definition
-├── main.py                      # Application entry point
-├── PROJECT_SUMMARY.md          # This file
-├── README.md                    # Main documentation
-├── requirements.txt             # Python dependencies
-└── setup.sh                     # Quick setup script
+morphvox/
+├── apps/
+│   ├── api/                      # Laravel 11 Backend
+│   │   ├── app/Http/Controllers/
+│   │   ├── app/Services/
+│   │   ├── routes/api.php
+│   │   └── config/
+│   │
+│   └── web/                      # Next.js 14 Frontend
+│       └── src/app/
+│
+├── services/
+│   └── voice-engine/             # Python Voice Engine
+│       ├── app/
+│       │   ├── core/             # Config, logging, exceptions
+│       │   ├── models/           # Pydantic request/response schemas
+│       │   ├── services/         # Business logic layer
+│       │   │   ├── voice_conversion/
+│       │   │   ├── audio_analysis/
+│       │   │   ├── tts/
+│       │   │   └── youtube/
+│       │   └── routers/          # FastAPI route handlers
+│       ├── rvc/                  # RVC pipeline
+│       ├── assets/               # Models, weights
+│       └── main.py
+│
+├── packages/
+│   ├── sdk-js/                   # JavaScript/TypeScript SDK
+│   ├── sdk-python/               # Python SDK
+│   └── shared/                   # OpenAPI schemas
+│
+├── infra/
+│   └── compose/                  # Docker Compose configs
+│       ├── docker-compose.yml
+│       └── docker-compose.prod.yml
+│
+├── docs/
+│   └── ARCHITECTURE.md
+│
+└── scripts/                      # Setup and utility scripts
 ```
 
 ## Technology Stack
 
-### Core Libraries
-- **NumPy** - Array processing
+### Frontend (apps/web)
+- **Next.js 14** - React framework with App Router
+- **TailwindCSS** - Styling
+- **TanStack Query** - Data fetching
+- **Zustand** - State management
+
+### Backend (apps/api)
+- **Laravel 11** - PHP framework
+- **Laravel Sanctum** - API authentication
+- **Spatie Permission** - Role-based access control
+- **Laravel Queue** - Background job processing
+
+### Voice Engine (services/voice-engine)
+- **FastAPI** - HTTP API framework
 - **PyTorch** - Model inference and GPU support
-- **PyAudio** - Real-time audio I/O
-- **Librosa** - Audio feature extraction
-- **SoundFile** - Audio file I/O
+- **Bark** - Neural text-to-speech
+- **Edge TTS** - Microsoft TTS API
+- **UVR5** - Vocal separation
+- **yt-dlp** - YouTube audio download
 
-### Networking
-- **WebSockets** - Real-time communication
-- **asyncio** - Asynchronous I/O
-
-### Deployment
+### Infrastructure
 - **Docker** - Containerization
-- **Docker Compose** - Multi-container orchestration
+- **MariaDB/PostgreSQL** - Database
+- **Redis** - Cache and job queue
+- **MinIO** - S3-compatible object storage
+- **Nginx** - Reverse proxy with SSL
 
 ## Architecture
 
-### Processing Pipeline
+### System Architecture
 ```
-Audio Input → AudioStream → ChunkProcessor → FeatureExtractor → 
-ModelManager → ChunkProcessor → AudioStream → Audio Output
+┌─────────────┐    ┌─────────────┐    ┌──────────────────────────┐
+│   Next.js   │───▶│   Laravel   │───▶│     Voice Engine         │
+│   WebUI     │    │    API      │    │  (FastAPI + RVC + TTS)   │
+│  (port 3000)│◀───│ (port 8080) │◀───│  HTTP: 8001, WS: 8765    │
+└─────────────┘    └──────┬──────┘    └────────────┬─────────────┘
+                         │                         │
+                  ┌──────┴──────┐                  │
+                  │  MariaDB    │                  │
+                  │  Redis      │                  │
+                  │  MinIO S3   │◀─────────────────┘
+                  └─────────────┘
 ```
 
-### Key Components
+### Voice Engine Architecture
+```
+HTTP Request → Router → Service → Model/Inference → Response
+                 │
+                 └── Thin handlers, business logic in services
+```
 
-1. **AudioStream** (`audio_stream.py`)
-   - Manages PyAudio streams
-   - Queue-based buffering
-   - Threaded processing loop
+### Key Services
 
-2. **FeatureExtractor** (`feature_extraction.py`)
-   - Mel spectrogram extraction
-   - Pitch (F0) detection
-   - MFCC computation
-   - Feature normalization
+1. **Voice Conversion** (`services/voice_conversion/`)
+   - Model discovery and loading
+   - RVC pipeline integration
+   - Index-based similarity search
 
-3. **ModelManager** (`model_manager.py`)
-   - Model loading from checkpoints
-   - GPU/CPU device management
-   - Inference optimization
-   - Model switching
+2. **Text-to-Speech** (`services/tts/`)
+   - Bark TTS (neural, emotion support)
+   - Edge TTS (50+ voices)
+   - Audio effects (reverb, echo, pitch)
+   - Multi-voice synthesis
 
-4. **ChunkProcessor** (`chunk_processor.py`)
-   - Overlap handling
-   - Crossfade processing
-   - Latency calculation
-   - Buffer management
+3. **Audio Analysis** (`services/audio_analysis/`)
+   - Voice detection (speaker count)
+   - Vocal separation (UVR5)
+   - Audio feature extraction
 
-5. **StreamingAPI** (`streaming_api.py`)
-   - WebSocket server (port 8765)
-   - TCP Socket server (port 9876)
-   - Client management
-   - Message encoding/decoding
+4. **YouTube Integration** (`services/youtube/`)
+   - Audio search and download
+   - Caching for repeated requests
 
-## Usage Modes
+## Usage
 
-### 1. API Mode (Default)
-Runs WebSocket and Socket servers for remote clients:
+### Docker Compose (Recommended)
 ```bash
+cd infra/compose
+cp .env.example .env
+docker compose up -d
+```
+
+### Voice Engine Only
+```bash
+cd services/voice-engine
+pip install -r requirements.txt
 python main.py --mode api
 ```
 
-### 2. Streaming Mode
-Real-time local audio I/O processing:
+### Development
 ```bash
-python main.py --mode streaming --model your_model.pth
-```
+# API
+cd apps/api && composer install && php artisan serve
 
-### 3. Local Mode
-Process audio files:
-```bash
-python main.py --mode local --input in.wav --output out.wav --model your_model.pth
+# WebUI  
+cd apps/web && npm install && npm run dev
+
+# Voice Engine
+cd services/voice-engine && python main.py --mode api
 ```
 
 ## Configuration
 
-All settings can be configured via:
-- Environment variables (see `.env.example`)
-- Command-line arguments
-- Default values in `app/config.py`
+Environment variables are configured via `.env.example` files in:
+- `infra/compose/.env.example` - Docker Compose stack
+- `apps/api/.env.example` - Laravel API
+- `services/voice-engine/.env.example` - Voice Engine
 
-Key settings:
-- Sample rate (default: 16000 Hz)
-- Chunk size (default: 1024 samples)
-- Overlap (default: 256 samples)
-- WebSocket/Socket ports
-- Model directory
+Key settings include database credentials, S3 storage, OAuth keys, and service URLs.
 
-## Testing
+## Service Ports
 
-### Structure Validation
-```bash
-python tests/validate.py
-```
+| Service | Port | Description |
+|---------|------|-------------|
+| WebUI | 3000 | Next.js frontend |
+| API | 8080 | Laravel backend |
+| Voice Engine HTTP | 8001 | File-based API |
+| Voice Engine WS | 8765 | Real-time streaming |
+| MariaDB | 3306 | Database |
+| Redis | 6379 | Cache/Queue |
+| MinIO API | 9000 | S3 storage |
+| MinIO Console | 9001 | Storage admin |
 
-This validates:
-- ✓ Directory structure
-- ✓ Python syntax
-- ✓ Documentation completeness
+## User Roles & Permissions
 
-### Manual Testing
-```bash
-# Terminal 1: Start server
-python main.py --mode api
-
-# Terminal 2: Test WebSocket client
-python examples/websocket_client.py
-
-# Terminal 3: Test Socket client
-python examples/socket_client.py
-```
-
-## Docker Deployment
-
-### Build
-```bash
-docker build -t rvc-real-time .
-```
-
-### Run
-```bash
-docker run -p 8765:8765 -p 9876:9876 -v $(pwd)/assets/models:/app/assets/models rvc-real-time
-```
-
-### Docker Compose
-```bash
-docker-compose up
-```
-
-## Performance Characteristics
-
-- **Latency**: ~64ms (configurable via chunk size)
-- **Throughput**: Real-time processing at 16 kHz
-- **Memory**: Efficient chunk-based processing
-- **GPU Support**: Automatic CUDA detection
-- **Scalability**: Multiple concurrent clients
+| Role | Permissions |
+|------|-------------|
+| guest | View public models |
+| user | + Use TTS, create jobs |
+| premium | + Upload models, extended usage |
+| creator | + Train models |
+| admin | Full platform access |
 
 ## Future Enhancements
 
-Potential improvements:
+- [ ] Model training pipeline (in progress - see TRAINER_DESIGN.md)
+- [ ] Real-time WebRTC streaming
+- [ ] Subscription billing
+- [ ] Model marketplace
 - [ ] Additional RVC model architectures
-- [ ] Web UI for model management
 - [ ] Performance monitoring dashboard
-- [ ] Multi-channel audio support
-- [ ] Advanced post-processing effects
-- [ ] Model fine-tuning interface
-- [ ] REST API endpoint
-- [ ] Metrics and logging aggregation
 
 ## Development Guidelines
 
+### Voice Engine Structure
+```
+routers/   → Thin HTTP handlers (validation, response formatting)
+services/  → Business logic (reusable, testable)
+models/    → Pydantic schemas (request/response validation)
+core/      → Infrastructure (config, logging, exceptions)
+```
+
 ### Adding New Features
-1. Follow modular structure in `app/`
-2. Update configuration in `app/config.py`
-3. Add documentation to README.md
-4. Create example usage if applicable
-5. Update validation tests
+1. Create models in `app/models/`
+2. Implement business logic in `app/services/`
+3. Add HTTP handlers in `app/routers/`
+4. Register router in `main.py`
 
 ### Code Style
 - Follow existing patterns
-- Use type hints where applicable
+- Use type hints (Pydantic models)
 - Add docstrings to public functions
-- Keep modules focused and single-purpose
+- Keep services stateless when possible
 
-### Testing
-- Validate structure with `tests/validate.py`
-- Test all modes (streaming, api, local)
-- Verify Docker builds
-- Test with example clients
+## Documentation
 
-## Known Limitations
-
-1. **PyAudio Installation**: May require system-level audio libraries
-2. **Model Compatibility**: Placeholder model structure for demonstration
-3. **Single Processing Thread**: One processing thread per audio stream
-4. **No Authentication**: API servers have no built-in authentication
-
-## Troubleshooting
-
-See the main README.md for detailed troubleshooting of:
-- PyAudio installation issues
-- CUDA/GPU setup
-- Docker networking
-- Audio device configuration
-
-## License
-
-MIT License - See LICENSE file for details
-
-## Contact
-
-For issues, questions, or contributions, please use the GitHub repository issue tracker.
+- [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Full system architecture
+- [services/voice-engine/README.md](services/voice-engine/README.md) - Voice Engine docs
+- [apps/api/README.md](apps/api/README.md) - Laravel API docs
+- [infra/COMMANDS.md](infra/COMMANDS.md) - Deployment commands
 
 ---
 
-**Project Status**: ✅ Complete and Ready for Deployment
+**Project Status**: ✅ Active Development
 
-All core features have been implemented according to the requirements. The application is modular, well-documented, containerized, and ready for production use or further development.
+The platform is deployed at [morphvox.net](https://morphvox.net) with ongoing feature development.
