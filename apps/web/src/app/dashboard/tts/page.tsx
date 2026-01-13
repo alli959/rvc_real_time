@@ -1,10 +1,19 @@
 'use client';
 
+import { useState } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { TTSGenerator } from '@/components/tts-generator';
-import { Volume2 as SpeakerWaveIcon, Gauge, Users, Sparkles } from 'lucide-react';
+import { TTSGenerator, getFullFeatureExample } from '@/components/tts-generator';
+import { Volume2 as SpeakerWaveIcon, Gauge, Users, Sparkles, Copy, Check } from 'lucide-react';
 
 export default function TTSPage() {
+  const [selectedLanguage, setSelectedLanguage] = useState('');
+  const [copiedFullExample, setCopiedFullExample] = useState(false);
+
+  // Handle language change from child component
+  const handleLanguageChange = (language: string) => {
+    setSelectedLanguage(language);
+  };
+
   return (
     <DashboardLayout>
       <div className="max-w-4xl mx-auto space-y-6">
@@ -36,7 +45,7 @@ export default function TTSPage() {
 
         {/* TTS Generator */}
         <div className="bg-gray-900 border border-gray-800 rounded-lg p-6">
-          <TTSGenerator />
+          <TTSGenerator onLanguageChange={handleLanguageChange} />
         </div>
 
         {/* Feature Cards */}
@@ -121,19 +130,31 @@ export default function TTSPage() {
 
         {/* Example */}
         <div className="bg-gray-900/50 border border-gray-800 rounded-lg p-4">
-          <h3 className="font-medium text-white mb-3">Example with all features</h3>
-          <code className="block text-xs text-gray-300 bg-gray-800 p-3 rounded-lg whitespace-pre-wrap">
-{`[cheerful]Hello everyone![/cheerful] [laugh]
-
-<speed rate="-20%">Let me explain this slowly and carefully.</speed>
-
-[serious]Now, this is very important.[/serious]
-
-<include voice_model_id="123">
-  Hi! I'm a different character speaking now!
-</include>
-
-[whisper]And this is a secret...[/whisper] [gasp]`}
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="font-medium text-white">Example with all features</h3>
+            <button
+              onClick={() => {
+                navigator.clipboard.writeText(getFullFeatureExample(selectedLanguage));
+                setCopiedFullExample(true);
+                setTimeout(() => setCopiedFullExample(false), 2000);
+              }}
+              className="flex items-center gap-1.5 px-2.5 py-1.5 text-xs rounded-lg border border-gray-700 bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white transition-colors"
+            >
+              {copiedFullExample ? (
+                <>
+                  <Check className="h-3.5 w-3.5 text-green-400" />
+                  <span className="text-green-400">Copied!</span>
+                </>
+              ) : (
+                <>
+                  <Copy className="h-3.5 w-3.5" />
+                  <span>Copy</span>
+                </>
+              )}
+            </button>
+          </div>
+          <code className="block text-xs text-gray-300 bg-gray-800 p-3 rounded-lg whitespace-pre-wrap break-all">
+            {getFullFeatureExample(selectedLanguage)}
           </code>
         </div>
       </div>

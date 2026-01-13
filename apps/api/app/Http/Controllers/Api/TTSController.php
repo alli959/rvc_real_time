@@ -367,7 +367,7 @@ class TTSController extends Controller
      * - [laugh] or *laugh* or (laugh) - Sound effects
      * - [whisper]Secret[/whisper] - Special effects
      * - <speed rate="-30%">Slow text</speed> - Speed control
-     * - <include voice_model_id="123">Other voice</include> - Multi-voice
+     * - <include voice_model_id="5">Other voice</include> - Multi-voice
      */
     public function generate(Request $request)
     {

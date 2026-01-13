@@ -142,6 +142,13 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ------------------------------------------------------------------
+    // Voice Detection
+    // ------------------------------------------------------------------
+    Route::prefix('voice-count')->group(function () {
+        Route::post('/detect', [AudioProcessingController::class, 'detectVoices']);
+    });
+
+    // ------------------------------------------------------------------
     // YouTube Song Search & Download
     // ------------------------------------------------------------------
     Route::prefix('youtube')->group(function () {

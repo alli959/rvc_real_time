@@ -160,8 +160,18 @@ class ModelManager:
                 matches = list(self.model_dir.rglob(p.name))
                 logger.info(f"rglob matches: {matches}")
                 if matches:
-                    model_file = matches[0]
-                    logger.info(f"Model file found by rglob: {model_file}")
+                    # If we have the parent directory hint from the original path, prefer that match
+                    # e.g., if model_path was "/storage/models/jokull-0.4/G_570.pth", prefer match in jokull-0.4
+                    expected_parent = p.parent.name if p.parent.name else None
+                    if expected_parent and len(matches) > 1:
+                        for m in matches:
+                            if expected_parent.lower() in str(m.parent).lower():
+                                model_file = m
+                                logger.info(f"Model file found by rglob (preferred parent '{expected_parent}'): {model_file}")
+                                break
+                    if not model_file:
+                        model_file = matches[0]
+                        logger.info(f"Model file found by rglob: {model_file}")
                 else:
                     logger.error(f"Model file not found: {model_path} (tried: {model_file})")
                     return False

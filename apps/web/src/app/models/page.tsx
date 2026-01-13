@@ -452,7 +452,14 @@ function ModelsPageContent() {
                     <TTSGenerator preSelectedModelId={selectedModel.id} hideModelSelector={true} />
                   )}
                   {activeWorkflowTab === 'remix' && (
-                    <SongRemixUpload selectedModelId={selectedModel.id} modelName={selectedModel.name} />
+                    <SongRemixUpload 
+                      selectedModelId={selectedModel.id} 
+                      modelName={selectedModel.name}
+                      availableModels={[
+                        ...communityModels.map(m => ({ id: m.id, name: m.name })),
+                        ...myModels.map(m => ({ id: m.id, name: m.name })),
+                      ].filter((m, i, arr) => arr.findIndex(x => x.id === m.id) === i)}
+                    />
                   )}
                 </div>
               </div>
