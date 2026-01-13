@@ -62,8 +62,16 @@ morphvox/
 ├── services/
 │   ├── voice-engine/           # RVC Inference Service
 │   │   ├── app/
-│   │   ├── rvc/
-│   │   ├── infer/
+│   │   │   ├── core/           # Config, logging, exceptions
+│   │   │   ├── models/         # Pydantic request/response schemas
+│   │   │   ├── services/       # Business logic layer
+│   │   │   │   ├── voice_conversion/
+│   │   │   │   ├── audio_analysis/
+│   │   │   │   ├── tts/
+│   │   │   │   └── youtube/
+│   │   │   └── routers/        # FastAPI route handlers
+│   │   ├── rvc/                # RVC pipeline (vendored)
+│   │   ├── assets/             # Models, weights
 │   │   └── main.py
 │   │
 │   ├── trainer/                # Model Training (future)
@@ -118,14 +126,35 @@ Modern React frontend with:
 
 ### 3. Voice Engine (`services/voice-engine`)
 
-Python service for RVC inference:
+Python service for voice conversion and audio processing:
+
+**API Endpoints:**
 - **HTTP API** (port 8001): File-based inference
 - **WebSocket** (port 8765): Real-time streaming
 
-Supports:
+**Modular Architecture:**
+```
+app/
+├── core/           # Infrastructure (config, logging, exceptions)
+├── models/         # Pydantic schemas (TTS, conversion, audio, youtube)
+├── services/       # Business logic
+│   ├── voice_conversion/  # RVC model management
+│   ├── audio_analysis/    # Voice detection, vocal separation
+│   ├── tts/               # Bark TTS, Edge TTS, audio effects
+│   └── youtube/           # YouTube search/download with caching
+└── routers/        # FastAPI HTTP handlers
+```
+
+**Supported Features:**
+- RVC voice conversion with WebUI model compatibility
 - Multiple F0 methods (rmvpe, pm, harvest, dio)
 - Index-based similarity search
-- Batch processing
+- Bark TTS (neural, emotion support)
+- Edge TTS (50+ voices)
+- UVR5 vocal separation (HP3, HP5 models)
+- Voice detection (speaker count)
+- Audio effects (reverb, echo, pitch shift)
+- YouTube audio download
 
 ### 4. Storage (MinIO)
 
@@ -270,8 +299,7 @@ See the OpenAPI specification in `packages/shared/openapi.yaml` for full API doc
 
 ## Future Enhancements
 
-- [ ] Model training pipeline
+- [ ] Model training pipeline (in progress - see TRAINER_DESIGN.md)
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription/token billing
 - [ ] Model marketplace
-- [ ] Multi-language TTS integration
