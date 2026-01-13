@@ -155,3 +155,6 @@ temp/
 # Dependencies
 vendor/
 node_modules/
+
+huggingface/
+suno/

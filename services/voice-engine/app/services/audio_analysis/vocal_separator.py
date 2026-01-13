@@ -3,6 +3,8 @@ UVR5 Vocal Separator Service
 
 Provides vocal/instrumental separation using UVR5 models.
 Supports HP3 (all vocals) and HP5 (main vocal only) models.
+
+Uses ModelCache for memory-efficient model management with LRU eviction.
 """
 
 import os
@@ -17,7 +19,15 @@ import librosa
 
 logger = logging.getLogger(__name__)
 
-# Lazy-loaded model cache
+# Import model cache for memory management
+try:
+    from app.services.model_cache import get_model_cache
+    MODEL_CACHE_AVAILABLE = True
+except ImportError:
+    MODEL_CACHE_AVAILABLE = False
+    logger.warning("ModelCache not available, using legacy caching")
+
+# Legacy cache (used if ModelCache not available)
 _uvr_model = None
 _model_name = None
 
@@ -96,22 +106,41 @@ def separate_vocals(
     model_path = get_uvr5_model_path(model_name)
     logger.info(f"Using UVR5 model: {model_path}")
     
-    # Load or reload model if needed
-    if _uvr_model is None or _model_name != model_name:
-        logger.info(f"Loading UVR5 model: {model_name}")
-        _uvr_model = AudioPre(
-            agg=agg,
-            model_path=model_path,
-            device=device,
-            is_half=is_half
+    # Use ModelCache if available for memory-efficient loading
+    if MODEL_CACHE_AVAILABLE:
+        cache = get_model_cache()
+        
+        def load_uvr5():
+            return AudioPre(
+                agg=agg,
+                model_path=model_path,
+                device=device,
+                is_half=is_half
+            )
+        
+        uvr_model = cache.get_uvr5_model(
+            name=model_name,
+            loader=load_uvr5,
+            size_estimate_mb=250.0  # UVR5 models are ~200-300MB in memory
         )
-        _model_name = model_name
+    else:
+        # Legacy: Load or reload model if needed
+        if _uvr_model is None or _model_name != model_name:
+            logger.info(f"Loading UVR5 model: {model_name}")
+            _uvr_model = AudioPre(
+                agg=agg,
+                model_path=model_path,
+                device=device,
+                is_half=is_half
+            )
+            _model_name = model_name
+        uvr_model = _uvr_model
     
     # Prepare audio: must be stereo at 44100Hz
     audio = _prepare_audio_for_uvr5(audio, sample_rate)
     
     # Process through UVR5 (uses temp files)
-    return _run_uvr5_separation(audio, model_name)
+    return _run_uvr5_separation(audio, model_name, uvr_model)
 
 
 def _prepare_audio_for_uvr5(audio: np.ndarray, sample_rate: int) -> np.ndarray:
@@ -144,11 +173,10 @@ def _prepare_audio_for_uvr5(audio: np.ndarray, sample_rate: int) -> np.ndarray:
 
 def _run_uvr5_separation(
     audio: np.ndarray, 
-    model_name: str
+    model_name: str,
+    uvr_model
 ) -> Tuple[np.ndarray, np.ndarray]:
     """Run UVR5 separation using temporary files."""
-    global _uvr_model
-    
     target_sr = 44100
     
     # Save to temp file (UVR5 works with files)
@@ -166,7 +194,7 @@ def _run_uvr5_separation(
         try:
             # Run separation
             is_hp3 = "HP3" in model_name
-            _uvr_model._path_audio_(
+            uvr_model._path_audio_(
                 tmp_input_path,
                 ins_root=instrumental_dir,
                 vocal_root=vocals_dir,

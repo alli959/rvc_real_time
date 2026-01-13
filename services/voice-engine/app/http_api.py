@@ -2783,6 +2783,205 @@ async def process_audio(request: AudioProcessRequest):
 
 
 # =============================================================================
+# Model Cache Management Endpoints
+# =============================================================================
+
+class CacheStatsResponse(BaseModel):
+    """Response model for cache statistics."""
+    rvc_models_loaded: int
+    uvr5_models_loaded: int
+    bark_loaded: bool
+    rvc_models: List[str]
+    uvr5_models: List[str]
+    cache_hits: int
+    cache_misses: int
+    rvc_loads: int
+    rvc_evictions: int
+    uvr5_loads: int
+    uvr5_evictions: int
+    estimated_memory_mb: float
+
+
+class ClearCacheRequest(BaseModel):
+    """Request model for clearing cache."""
+    clear_rvc: bool = Field(default=True, description="Clear RVC models from cache")
+    clear_uvr5: bool = Field(default=True, description="Clear UVR5 models from cache")
+    clear_bark: bool = Field(default=False, description="Unload Bark TTS models")
+
+
+class ClearCacheResponse(BaseModel):
+    """Response model for cache clearing."""
+    success: bool
+    message: str
+    memory_freed_estimate_mb: float
+
+
+@app.get("/cache/stats", response_model=CacheStatsResponse)
+async def get_cache_stats():
+    """
+    Get model cache statistics.
+    
+    Shows which models are currently loaded, memory estimates, and cache hit/miss rates.
+    Useful for monitoring memory usage and optimizing model loading.
+    """
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        stats = cache.get_stats()
+        
+        return CacheStatsResponse(
+            rvc_models_loaded=stats['rvc_models_loaded'],
+            uvr5_models_loaded=stats['uvr5_models_loaded'],
+            bark_loaded=stats['bark_loaded'],
+            rvc_models=stats['rvc_models'],
+            uvr5_models=stats['uvr5_models'],
+            cache_hits=stats['cache_hits'],
+            cache_misses=stats['cache_misses'],
+            rvc_loads=stats['rvc_loads'],
+            rvc_evictions=stats['rvc_evictions'],
+            uvr5_loads=stats['uvr5_loads'],
+            uvr5_evictions=stats['uvr5_evictions'],
+            estimated_memory_mb=cache.get_memory_estimate_mb()
+        )
+    except ImportError:
+        # ModelCache not available - return defaults
+        return CacheStatsResponse(
+            rvc_models_loaded=1 if model_manager and model_manager.model_name else 0,
+            uvr5_models_loaded=0,
+            bark_loaded=BARK_AVAILABLE,
+            rvc_models=[model_manager.model_name] if model_manager and model_manager.model_name else [],
+            uvr5_models=[],
+            cache_hits=0,
+            cache_misses=0,
+            rvc_loads=0,
+            rvc_evictions=0,
+            uvr5_loads=0,
+            uvr5_evictions=0,
+            estimated_memory_mb=0.0
+        )
+
+
+@app.post("/cache/clear", response_model=ClearCacheResponse)
+async def clear_cache(request: ClearCacheRequest):
+    """
+    Clear models from cache to free memory.
+    
+    Use this when memory is running low. Models will be reloaded on next use.
+    
+    Options:
+    - clear_rvc: Clear all RVC voice models from cache
+    - clear_uvr5: Clear UVR5 vocal separation models
+    - clear_bark: Unload Bark TTS models (~1.5GB)
+    """
+    import gc
+    
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        
+        memory_before = cache.get_memory_estimate_mb()
+        
+        if request.clear_rvc or request.clear_uvr5 or request.clear_bark:
+            if request.clear_rvc and request.clear_uvr5 and request.clear_bark:
+                cache.clear_all()
+                message = "All models cleared from cache"
+            else:
+                messages = []
+                if request.clear_rvc:
+                    for name in list(cache._rvc_cache.keys()):
+                        cache._evict_rvc_model(name, reason="manual clear")
+                    messages.append("RVC models")
+                if request.clear_uvr5:
+                    for name in list(cache._uvr5_cache.keys()):
+                        cache._evict_uvr5_model(name, reason="manual clear")
+                    messages.append("UVR5 models")
+                if request.clear_bark:
+                    cache.unload_bark()
+                    messages.append("Bark TTS")
+                message = f"Cleared: {', '.join(messages)}"
+        else:
+            message = "No cache types selected for clearing"
+        
+        # Force garbage collection
+        gc.collect()
+        try:
+            import torch
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except ImportError:
+            pass
+        
+        memory_after = cache.get_memory_estimate_mb()
+        
+        return ClearCacheResponse(
+            success=True,
+            message=message,
+            memory_freed_estimate_mb=max(0, memory_before - memory_after)
+        )
+        
+    except ImportError:
+        # ModelCache not available - try to clear Bark manually
+        if request.clear_bark:
+            try:
+                from bark.generation import clean_models
+                clean_models()
+                gc.collect()
+                return ClearCacheResponse(
+                    success=True,
+                    message="Bark TTS unloaded (ModelCache not available)",
+                    memory_freed_estimate_mb=1500.0
+                )
+            except Exception as e:
+                return ClearCacheResponse(
+                    success=False,
+                    message=f"Failed to unload Bark: {str(e)}",
+                    memory_freed_estimate_mb=0.0
+                )
+        
+        return ClearCacheResponse(
+            success=False,
+            message="ModelCache not available",
+            memory_freed_estimate_mb=0.0
+        )
+
+
+@app.post("/cache/unload-bark")
+async def unload_bark_models():
+    """
+    Unload Bark TTS models to free ~1.5GB of memory.
+    
+    Bark will be reloaded automatically on next TTS request that uses it.
+    Use this when you need to free memory and don't need TTS immediately.
+    """
+    import gc
+    
+    try:
+        from app.services.model_cache import get_model_cache
+        cache = get_model_cache()
+        cache.unload_bark()
+    except ImportError:
+        pass
+    
+    # Also try direct Bark cleanup
+    try:
+        from bark.generation import clean_models
+        clean_models()
+        logger.info("Bark models unloaded via clean_models()")
+    except (ImportError, AttributeError) as e:
+        logger.warning(f"Could not call bark.clean_models: {e}")
+    
+    gc.collect()
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except ImportError:
+        pass
+    
+    return {"success": True, "message": "Bark TTS models unloaded"}
+
+
+# =============================================================================
 # Run Server
 # =============================================================================
 

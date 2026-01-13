@@ -35,6 +35,14 @@ from app.services.youtube import (
     download_youtube_audio,
 )
 
+# Model Cache
+from app.services.model_cache import (
+    ModelCache,
+    CacheConfig,
+    get_model_cache,
+    configure_model_cache,
+)
+
 __all__ = [
     # Voice Conversion
     "ModelManager",
@@ -55,4 +63,9 @@ __all__ = [
     "YouTubeSearchResult",
     "search_youtube",
     "download_youtube_audio",
+    # Model Cache
+    "ModelCache",
+    "CacheConfig",
+    "get_model_cache",
+    "configure_model_cache",
 ]
