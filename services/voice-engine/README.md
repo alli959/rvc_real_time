@@ -1,102 +1,140 @@
-# RVC Real-Time Voice Conversion
+# Voice Engine
 
-Real-time voice conversion application using **RVC (Retrieval-based Voice Conversion)** models, compatible with **WebUI-trained `.pth` models** (v1/v2) + optional **retrieval `.index`**. Supports:
-
-- **local**: process audio files
-- **api**: WebSocket + TCP socket servers for remote clients
-- **streaming**: real microphone/speaker loopback via PyAudio (requires a working system audio device)
-
-> **Important:** `streaming` mode requires a real, working audio input/output device. In WSL/headless/Docker without audio passthrough, it will fail with ALSA/PyAudio errors.
-
----
+Real-time voice conversion service using **RVC (Retrieval-based Voice Conversion)** models. Part of the MorphVox platform.
 
 ## Features
 
-- 🎤 **Real-time Audio Processing** (PyAudio I/O in `streaming`)
-- 🔄 **Chunk-based Processing** with configurable chunk size
-- 🎯 **WebUI model compatibility** (`.pth` + `config.json`, v1/v2)
-- 🧠 **HuBERT feature extraction** (required)
-- 🎼 **RMVPE pitch extraction** (recommended; required if `F0_METHOD=rmvpe`)
-- 🧲 **Retrieval index support** (`.index`) with blend control (`INDEX_RATE`)
-- 🌐 **HTTP API** - RESTful endpoints for file-based conversion
-- 🌐 **WebSocket API** - Real-time streaming via WebSocket server
-- 🔌 **TCP Socket** - Raw socket server for direct integration
-- 🎵 **Vocal Separation** - UVR5 for vocals/instrumental separation
-- ⚡ **GPU support** (CUDA auto-detect; inference runs on GPU when available)
+- 🎤 **RVC Voice Conversion** - High-quality voice cloning with WebUI-trained models
+- 🗣️ **Text-to-Speech** - Multiple backends (Bark, Edge TTS) with emotion support
+- 🎵 **Vocal Separation** - UVR5 for isolating vocals from instrumentals  
+- 🔍 **Voice Detection** - Detect number of simultaneous voices in audio
+- 🌐 **HTTP/WebSocket API** - RESTful endpoints and real-time streaming
+- ⚡ **GPU Acceleration** - CUDA support for fast inference
 
 ---
 
-## Directory Structure
+## Project Structure
 
 ```
-
-rvc_real_time/
+voice-engine/
 ├── app/
-│   ├── audio_stream.py
-│   ├── model_manager.py
-│   ├── chunk_processor.py
-│   ├── streaming_api.py
-│   └── config.py
-├── rvc/                        # vendored RVC pipeline + models
+│   ├── core/                   # Core infrastructure
+│   │   ├── config.py           # Configuration classes
+│   │   ├── logging.py          # Logging setup
+│   │   └── exceptions.py       # Custom exceptions
+│   │
+│   ├── models/                 # Pydantic request/response schemas
+│   │   ├── tts.py              # TTS models
+│   │   ├── conversion.py       # Voice conversion models
+│   │   ├── audio.py            # Audio processing models
+│   │   ├── youtube.py          # YouTube models
+│   │   └── common.py           # Shared models
+│   │
+│   ├── services/               # Business logic layer
+│   │   ├── voice_conversion/   # RVC model management
+│   │   ├── audio_analysis/     # Voice detection, vocal separation
+│   │   ├── tts/                # Text-to-speech backends
+│   │   └── youtube/            # YouTube search/download
+│   │
+│   ├── routers/                # FastAPI route handlers
+│   │   ├── health.py           # Health check endpoints
+│   │   ├── tts.py              # TTS endpoints
+│   │   ├── conversion.py       # Voice conversion endpoints
+│   │   ├── youtube.py          # YouTube endpoints
+│   │   └── audio.py            # Audio processing endpoints
+│   │
+│   ├── http_api.py             # Main FastAPI application (legacy)
+│   └── streaming_api.py        # WebSocket/Socket servers
+│
+├── rvc/                        # RVC pipeline (vendored)
 ├── assets/
-│   ├── models/                 # .pth model folders (often include config.json, optional .index)
-│   ├── hubert/                 # hubert_base.pt
-│   └── rmvpe/                  # rmvpe.pt
+│   ├── models/                 # Voice model files (.pth, .index)
+│   ├── hubert/                 # HuBERT base model
+│   ├── rmvpe/                  # RMVPE pitch extraction
+│   ├── uvr5_weights/           # UVR5 vocal separation models
+│   └── bark/                   # Bark TTS models (optional)
+│
+├── main.py                     # Entry point
 ├── requirements.txt
-├── Dockerfile
-├── main.py
-└── README.md
+└── Dockerfile
 ```
+
 ---
 
-## Installation
+## Quick Start
 
-### Local Installation
-
-1) Clone:
+### Installation
 
 ```bash
-git clone https://github.com/alli959/rvc_real_time.git
-cd rvc_real_time
-````
+# Clone and enter directory
+cd services/voice-engine
 
-2. Install system dependencies:
-
-**Ubuntu/Debian:**
-```bash
-sudo apt-get install ffmpeg espeak-ng libespeak-ng-dev portaudio19-dev
-```
-
-**macOS:**
-```bash
-brew install ffmpeg espeak portaudio
-```
-
-**Windows:**
-- Download ffmpeg from https://ffmpeg.org/download.html
-- Download espeak from http://espeak.sourceforge.net/download.html
-
-3. Create venv + install deps:
-
-```bash
+# Create virtual environment
 python -m venv venv
-source venv/bin/activate
+source venv/bin/activate  # or `venv\Scripts\activate` on Windows
+
+# Install dependencies
 pip install -r requirements.txt
+
+# Download required assets
+./scripts/download_rvc_assets.sh
 ```
 
-4. Provide required assets:
+### Run the API Server
 
-#### Required: HuBERT
+```bash
+# Start HTTP API on port 8001
+python main.py --mode api --http-port 8001
 
-Place:
-
+# Or with Docker
+docker-compose up voice-engine
 ```
-assets/hubert/hubert_base.pt
+
+### API Endpoints
+
+| Endpoint | Method | Description |
+|----------|--------|-------------|
+| `/health` | GET | Health check |
+| `/tts` | POST | Generate speech from text |
+| `/tts/capabilities` | GET | List available voices/emotions |
+| `/convert` | POST | Convert voice using RVC model |
+| `/convert/models` | GET | List available voice models |
+| `/youtube/search` | POST | Search YouTube for songs |
+| `/youtube/download` | POST | Download audio from YouTube |
+| `/audio/process` | POST | Process audio (separation, effects) |
+| `/audio/voice-count/detect` | POST | Detect number of voices |
+
+### Example: Voice Conversion
+
+```python
+import requests
+import base64
+
+# Read input audio
+with open("input.wav", "rb") as f:
+    audio_b64 = base64.b64encode(f.read()).decode()
+
+# Convert voice
+response = requests.post("http://localhost:8001/convert", json={
+    "audio": audio_b64,
+    "model_id": 1,
+    "f0_up_key": 0,
+    "index_rate": 0.5,
+})
+
+# Save output
+with open("output.wav", "wb") as f:
+    f.write(base64.b64decode(response.json()["audio"]))
 ```
 
-or set `HUBERT_PATH` to a file path.
+### Example: Text-to-Speech with Emotions
 
-#### Required for RMVPE pitch (`rmvpe`)
+```python
+response = requests.post("http://localhost:8001/tts", json={
+    "text": "[happy]Hello world![/happy] [laugh] That's funny!",
+    "voice": "en-US-JennyNeural",
+})
+```
 
 Place:
 
