@@ -117,21 +117,24 @@ def run_streaming_mode(config: AppConfig):
         logger.info("No default model configured for warmup.")
     logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
     
-    # Preload Bark TTS models (~13GB on first run, then cached)
-    try:
-        from app.tts_service import setup_bark_cache, BARK_AVAILABLE
-        if BARK_AVAILABLE:
-            from bark.generation import preload_models
-            logger.info("Preloading Bark TTS models (this may take a while on first run)...")
-            bark_start = time.time()
-            preload_models()
-            logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
-        else:
-            logger.info("Bark TTS not available - skipping preload")
-    except ImportError as e:
-        logger.info(f"Bark TTS not installed - skipping preload: {e}")
-    except Exception as e:
-        logger.warning(f"Failed to preload Bark models: {e}")
+    # NOTE: Bark TTS models are now lazy-loaded on first TTS request
+    # Set PRELOAD_BARK=1 to preload at startup (uses ~1.5GB extra memory)
+    import os
+    if os.environ.get("PRELOAD_BARK", "0") == "1":
+        try:
+            from app.tts_service import setup_bark_cache, BARK_AVAILABLE
+            if BARK_AVAILABLE:
+                from bark.generation import preload_models
+                logger.info("Preloading Bark TTS models (PRELOAD_BARK=1)...")
+                bark_start = time.time()
+                preload_models()
+                logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
+        except ImportError as e:
+            logger.info(f"Bark TTS not installed - skipping preload: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to preload Bark models: {e}")
+    else:
+        logger.info("Bark TTS will lazy-load on first use (saves ~1.5GB startup memory)")
     
     # Create stream processor
     stream_processor = StreamProcessor(
@@ -213,22 +216,26 @@ def run_api_mode(config: AppConfig):
         logger.info("No default model configured for warmup.")
     logger.info(f"Model warmup time: {time.time() - warmup_start:.2f} seconds. Success: {warmup_success}")
     
-    # Preload Bark TTS models (~13GB on first run, then cached)
-    # First, set up paths to use local models if they exist
-    try:
-        from app.tts_service import setup_bark_cache, BARK_AVAILABLE
-        if BARK_AVAILABLE:
-            from bark.generation import preload_models
-            logger.info("Preloading Bark TTS models (this may take a while on first run)...")
-            bark_start = time.time()
-            preload_models()
-            logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
-        else:
-            logger.info("Bark TTS not available - skipping preload")
-    except ImportError as e:
-        logger.info(f"Bark TTS not installed - skipping preload: {e}")
-    except Exception as e:
-        logger.warning(f"Failed to preload Bark models: {e}")
+    # NOTE: Bark TTS models are now lazy-loaded on first TTS request
+    # This saves ~1.5GB of memory at startup. The first TTS request will be slower (~18s)
+    # but subsequent requests will be fast since models stay loaded until cache eviction.
+    # To preload Bark (trade startup memory for faster first TTS), set PRELOAD_BARK=1
+    import os
+    if os.environ.get("PRELOAD_BARK", "0") == "1":
+        try:
+            from app.tts_service import setup_bark_cache, BARK_AVAILABLE
+            if BARK_AVAILABLE:
+                from bark.generation import preload_models
+                logger.info("Preloading Bark TTS models (PRELOAD_BARK=1)...")
+                bark_start = time.time()
+                preload_models()
+                logger.info(f"Bark TTS models loaded in {time.time() - bark_start:.2f} seconds")
+        except ImportError as e:
+            logger.info(f"Bark TTS not installed - skipping preload: {e}")
+        except Exception as e:
+            logger.warning(f"Failed to preload Bark models: {e}")
+    else:
+        logger.info("Bark TTS will lazy-load on first use (saves ~1.5GB startup memory)")
     
     # Create stream processor
     stream_processor = StreamProcessor(
