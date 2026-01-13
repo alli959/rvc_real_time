@@ -168,10 +168,21 @@ class VC:
         gin_channels = int(m.get("gin_channels", 256))
         sr = int(tgt_sr)
 
-        # Only build config if not already present in checkpoint
+        # Check if checkpoint has a valid inference config format
+        # Training checkpoints have a different format where element 3 is a list (resblock_kernel_sizes)
+        # Valid inference format: [spec_channels, segment_size, inter_channels, hidden_channels, filter_channels, n_heads, n_layers, kernel_size, p_dropout, ...]
+        # Training format: [filter_channels, n_heads, n_layers, resblock_kernel_sizes(list), resblock_dilation_sizes(list), ...]
+        use_checkpoint_config = False
         if "config" in self.cpt and isinstance(self.cpt["config"], list) and len(self.cpt["config"]) >= 17:
-            # Use existing config from checkpoint
-            logger.info(f"Using config from checkpoint: sr={self.cpt['config'][-1]}")
+            # Check if this looks like a valid inference config (element 3 should be hidden_channels int, not resblock_kernel_sizes list)
+            if len(self.cpt["config"]) > 3 and isinstance(self.cpt["config"][3], (int, float)):
+                use_checkpoint_config = True
+                logger.info(f"Using config from checkpoint: sr={self.cpt['config'][-1]}")
+            else:
+                logger.info(f"Detected training checkpoint format (config[3] is list), rebuilding config from config.json")
+        
+        if use_checkpoint_config:
+            pass  # Config already set in self.cpt["config"]
         else:
             self.cpt["config"] = [
                 spec_channels,

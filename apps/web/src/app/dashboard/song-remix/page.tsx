@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { audioProcessingApi, youtubeApi, VoiceModel, YouTubeSearchResult } from '@/lib/api';
+import { audioProcessingApi, youtubeApi, voiceDetectionApi, voiceModelsApi, VoiceModel, YouTubeSearchResult, VoiceModelConfig } from '@/lib/api';
 import { ModelSelector } from '@/components/model-selector';
 import { AudioPlayer } from '@/components/audio-player';
 import { useDropzone } from 'react-dropzone';
@@ -24,6 +24,11 @@ import {
   Trash2,
   Search,
   Clock,
+  Users,
+  User,
+  Info,
+  Plus,
+  Minus,
 } from 'lucide-react';
 
 type Tab = 'upload' | 'youtube';
@@ -79,8 +84,52 @@ export default function SongRemixPage() {
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
   const [f0UpKey, setF0UpKey] = useState(0);
   const [indexRate, setIndexRate] = useState(0.75);
+  const [voice1ExtractionMode, setVoice1ExtractionMode] = useState<'main' | 'all'>('main'); // Lead voice extraction mode
+  
+  // Vocal extraction mode (for split mode) - default to Lead Only
+  const [removeAllVocals, setRemoveAllVocals] = useState(false);
+  
+  // Multi-voice swap settings
+  const [voiceCount, setVoiceCount] = useState(1); // Number of voice layers (1-4)
+  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null; f0UpKey: number; extractionMode: 'main' | 'all' }[]>([]);
+  const [availableModels, setAvailableModels] = useState<VoiceModel[]>([]);
+  
+  // Voice detection state
+  const [voiceDetection, setVoiceDetection] = useState<{
+    voiceCount: number;
+    confidence: number;
+    method: string;
+  } | null>(null);
+  const [isDetectingVoices, setIsDetectingVoices] = useState(false);
   
   const audioRef = useRef<HTMLAudioElement | null>(null);
+
+  // Load available models for multi-voice selection
+  useEffect(() => {
+    const loadModels = async () => {
+      try {
+        const [allModelsRes, myModelsRes] = await Promise.all([
+          voiceModelsApi.list({ per_page: 200 }),
+          voiceModelsApi.myModels({ per_page: 100 }).catch(() => ({ data: [] })),
+        ]);
+        
+        const allModels = allModelsRes.data || [];
+        const userModels = myModelsRes.data || [];
+        
+        // Combine all models and deduplicate by ID
+        const combinedModels = [...userModels, ...allModels];
+        const uniqueModels = combinedModels.filter((m, i, arr) => 
+          arr.findIndex(x => x.id === m.id) === i
+        );
+        
+        setAvailableModels(uniqueModels);
+      } catch (err) {
+        console.error('Failed to load models for multi-voice:', err);
+      }
+    };
+    
+    loadModels();
+  }, []);
 
   // Cleanup URLs on unmount
   useEffect(() => {
@@ -99,6 +148,7 @@ export default function SongRemixPage() {
       setAudioFile({ file, url, name: file.name });
       setResults([]);
       setError(null);
+      setVoiceDetection(null); // Reset voice detection for new audio
     }
   }, [audioFile]);
 
@@ -174,6 +224,7 @@ export default function SongRemixPage() {
       
       setSearchResults([]);
       setSearchQuery('');
+      setVoiceDetection(null); // Reset voice detection for new audio
       
     } catch (err: any) {
       setError(err.response?.data?.message || 'Download failed');
@@ -189,6 +240,55 @@ export default function SongRemixPage() {
     const secs = seconds % 60;
     return `${mins}:${secs.toString().padStart(2, '0')}`;
   };
+
+  // Voice detection function
+  const detectVoices = useCallback(async (audioBase64: string) => {
+    setIsDetectingVoices(true);
+    
+    try {
+      const result = await voiceDetectionApi.detect({
+        audio: audioBase64,
+        use_vocals_only: true,
+        max_voices: 6,
+      });
+
+      setVoiceDetection({
+        voiceCount: result.voice_count,
+        confidence: result.confidence,
+        method: result.method,
+      });
+      
+      // Auto-select "All Vocals" if multiple voices detected
+      if (result.voice_count > 1) {
+        setRemoveAllVocals(true);
+      }
+    } catch (err: any) {
+      console.error('Voice detection failed:', err);
+      // Don't show error to user, just silently fail
+      setVoiceDetection(null);
+    } finally {
+      setIsDetectingVoices(false);
+    }
+  }, []);
+
+  // Voice detection disabled - API is not reliable enough yet
+  // Users can manually choose "All Vocals" if they know the song has harmonies
+  // useEffect(() => {
+  //   const runDetection = async () => {
+  //     if (youtubeAudio?.audioBase64 && !voiceDetection && !isDetectingVoices) {
+  //       detectVoices(youtubeAudio.audioBase64);
+  //     } else if (audioFile && !voiceDetection && !isDetectingVoices) {
+  //       const reader = new FileReader();
+  //       reader.onload = () => {
+  //         const result = reader.result as string;
+  //         const base64 = result.split(',')[1] || result;
+  //         detectVoices(base64);
+  //       };
+  //       reader.readAsDataURL(audioFile.file);
+  //     }
+  //   };
+  //   runDetection();
+  // }, [audioFile, youtubeAudio, voiceDetection, isDetectingVoices, detectVoices]);
 
   // Process audio
   const handleProcess = async () => {
@@ -232,12 +332,29 @@ export default function SongRemixPage() {
 
       const steps = {
         'split': ['Analyzing frequencies...', 'Separating vocals...', 'Extracting instrumental...'],
-        'swap': ['Separating vocals...', 'Converting vocals...', 'Merging tracks...'],
+        'swap': voiceCount > 1 
+          ? ['Extracting clean instrumental...', 'Cascading voice extraction...', 'Converting voices...', 'Merging tracks...']
+          : ['Separating vocals...', 'Converting vocals...', 'Merging tracks...'],
       };
 
       const currentSteps = steps[processingMode];
       setProcessingStep(currentSteps[0]);
       setProcessingProgress(30);
+
+      // Build voice configs for multi-voice swap
+      let voiceConfigs: VoiceModelConfig[] | undefined = undefined;
+      if (processingMode === 'swap' && voiceCount > 1 && selectedModelId) {
+        voiceConfigs = [
+          { model_id: selectedModelId, f0_up_key: f0UpKey, extraction_mode: voice1ExtractionMode },
+          ...additionalVoices.slice(0, voiceCount - 1)
+            .filter(v => v.modelId !== null)
+            .map(v => ({
+              model_id: v.modelId!,
+              f0_up_key: v.f0UpKey,
+              extraction_mode: v.extractionMode,
+            })),
+        ];
+      }
 
       const response = await audioProcessingApi.process({
         audio: base64Audio,
@@ -247,6 +364,11 @@ export default function SongRemixPage() {
         index_rate: indexRate,
         pitch_shift_all: f0UpKey,
         instrumental_pitch: f0UpKey,
+        // Only apply extract_all_vocals for split mode - swap mode uses default behavior
+        extract_all_vocals: processingMode === 'split' ? removeAllVocals : undefined,
+        // Multi-voice settings
+        voice_count: processingMode === 'swap' ? voiceCount : undefined,
+        voice_configs: voiceConfigs,
       });
 
       setProcessingStep('Processing complete!');
@@ -561,6 +683,53 @@ export default function SongRemixPage() {
           </div>
         </div>
 
+        {/* Vocal Extraction Mode (for split mode) */}
+        {processingMode === 'split' && hasAudio && (
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+            <h3 className="font-medium text-white flex items-center gap-2">
+              <Users className="h-5 w-5 text-accent-400" />
+              Vocal Extraction Mode
+            </h3>
+            
+            <p className="text-sm text-gray-400">
+              Choose what to separate from the instrumentals:
+            </p>
+            
+            <div className="grid grid-cols-2 gap-3">
+              <button
+                onClick={() => setRemoveAllVocals(true)}
+                className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                  removeAllVocals
+                    ? 'bg-accent-600/20 border-accent-500 text-white'
+                    : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                }`}
+              >
+                <span className="font-medium block">All Vocals</span>
+                <span className="text-xs opacity-70 block mt-1">
+                  Remove lead + backup vocals
+                </span>
+              </button>
+              <button
+                onClick={() => setRemoveAllVocals(false)}
+                className={`px-4 py-3 rounded-lg border-2 transition-all ${
+                  !removeAllVocals
+                    ? 'bg-accent-600/20 border-accent-500 text-white'
+                    : 'border-gray-700 text-gray-400 hover:border-gray-600'
+                }`}
+              >
+                <span className="font-medium block">Lead Vocal Only</span>
+                <span className="text-xs opacity-70 block mt-1">
+                  Keep backup/harmony vocals
+                </span>
+              </button>
+            </div>
+            
+            <p className="text-xs text-gray-500">
+              Tip: Use &quot;All Vocals&quot; for songs with harmonies or backup singers (like Billy Joel&apos;s &quot;For the Longest Time&quot;)
+            </p>
+          </div>
+        )}
+
         {/* Voice Model Selection (for swap mode) */}
         {processingMode === 'swap' && (
           <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
@@ -606,6 +775,145 @@ export default function SongRemixPage() {
                 />
               </div>
             </div>
+          </div>
+        )}
+
+        {/* Multi-Voice Configuration (for swap mode with multiple models available) */}
+        {processingMode === 'swap' && availableModels.length > 1 && (
+          <div className="bg-gray-900 border border-gray-800 rounded-lg p-6 space-y-4">
+            <div className="flex items-center justify-between">
+              <h3 className="font-medium text-white flex items-center gap-2">
+                <Users className="h-5 w-5 text-purple-400" />
+                Voice Layers
+              </h3>
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => {
+                    if (voiceCount > 1) {
+                      setVoiceCount(voiceCount - 1);
+                      setAdditionalVoices(additionalVoices.slice(0, voiceCount - 2));
+                    }
+                  }}
+                  disabled={voiceCount <= 1}
+                  className="p-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Minus className="h-4 w-4" />
+                </button>
+                <span className="text-sm font-medium text-white w-8 text-center">{voiceCount}</span>
+                <button
+                  onClick={() => {
+                    if (voiceCount < 4) {
+                      setVoiceCount(voiceCount + 1);
+                      // Add a new voice with a default model - default to 'all' for backing vocals
+                      const otherModels = availableModels.filter(m => m.id !== selectedModelId);
+                      const defaultModel = otherModels[additionalVoices.length % Math.max(1, otherModels.length)] || availableModels[0];
+                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null, f0UpKey: 0, extractionMode: 'all' }]);
+                    }
+                  }}
+                  disabled={voiceCount >= 4}
+                  className="p-1.5 rounded bg-gray-700 hover:bg-gray-600 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+
+            {voiceCount === 1 ? (
+              <p className="text-sm text-gray-400">
+                Single voice mode: Main vocal → Convert to selected model → Mix with instrumental
+              </p>
+            ) : (
+              <div className="space-y-3">
+                <p className="text-sm text-gray-500">
+                  Multi-voice cascading: Each voice layer extracted separately and converted with different models
+                </p>
+                
+                {/* Voice 1 (main selected model) */}
+                <div className="bg-gray-800/50 rounded-lg p-3 space-y-2">
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm text-gray-400 w-20">Voice 1:</span>
+                    <span className="text-sm text-accent-400 flex-1">
+                      {availableModels.find(m => m.id === selectedModelId)?.name || 'Select above'}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 ml-20">
+                    <span className="text-xs text-gray-500">Extract:</span>
+                    <select
+                      value={voice1ExtractionMode}
+                      onChange={(e) => setVoice1ExtractionMode(e.target.value as 'main' | 'all')}
+                      className="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white"
+                    >
+                      <option value="main">Lead Only (HP5)</option>
+                      <option value="all">All Vocals (HP3)</option>
+                    </select>
+                    <span className="text-xs text-gray-500 ml-2">
+                      {voice1ExtractionMode === 'main' ? 'Main/dominant voice' : 'Includes harmonies'}
+                    </span>
+                  </div>
+                </div>
+                
+                {/* Additional voices */}
+                {additionalVoices.slice(0, voiceCount - 1).map((voice, index) => (
+                  <div key={index} className="bg-gray-800/50 rounded-lg p-3 space-y-2">
+                    <div className="flex items-center gap-3">
+                      <span className="text-sm text-gray-400 w-20">Voice {index + 2}:</span>
+                      <select
+                        value={voice.modelId || ''}
+                        onChange={(e) => {
+                          const newVoices = [...additionalVoices];
+                          newVoices[index] = { ...newVoices[index], modelId: parseInt(e.target.value) || null };
+                          setAdditionalVoices(newVoices);
+                        }}
+                        className="flex-1 text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
+                      >
+                        <option value="">Select model...</option>
+                        {availableModels.map(m => (
+                          <option key={m.id} value={m.id}>{m.name}</option>
+                        ))}
+                      </select>
+                      <div className="flex items-center gap-2">
+                        <span className="text-xs text-gray-500">Pitch:</span>
+                        <input
+                          type="number"
+                          min="-12"
+                          max="12"
+                          value={voice.f0UpKey}
+                          onChange={(e) => {
+                            const newVoices = [...additionalVoices];
+                            newVoices[index] = { ...newVoices[index], f0UpKey: parseInt(e.target.value) || 0 };
+                            setAdditionalVoices(newVoices);
+                          }}
+                          className="w-14 text-sm bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-center"
+                        />
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 ml-20">
+                      <span className="text-xs text-gray-500">Extract:</span>
+                      <select
+                        value={voice.extractionMode}
+                        onChange={(e) => {
+                          const newVoices = [...additionalVoices];
+                          newVoices[index] = { ...newVoices[index], extractionMode: e.target.value as 'main' | 'all' };
+                          setAdditionalVoices(newVoices);
+                        }}
+                        className="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white"
+                      >
+                        <option value="main">Lead Only (HP5)</option>
+                        <option value="all">All Vocals (HP3)</option>
+                      </select>
+                      <span className="text-xs text-gray-500 ml-2">
+                        {voice.extractionMode === 'main' ? 'Next dominant voice' : 'All remaining vocals'}
+                      </span>
+                    </div>
+                  </div>
+                ))}
+                
+                <p className="text-xs text-amber-400/70 flex items-center gap-2">
+                  <Info className="h-4 w-4" />
+                  Tip: Use &quot;All Vocals&quot; for backing vocals/harmonies that may be quieter
+                </p>
+              </div>
+            )}
           </div>
         )}
 

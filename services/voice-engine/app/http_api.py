@@ -183,71 +183,89 @@ class HealthResponse(BaseModel):
 # Emotion presets - adjust prosody to simulate emotions
 # Format: (rate_adjustment, pitch_adjustment, description)
 # Enhanced values for more noticeable effect
+# Emotion intensity multiplier - lower = more subtle/natural prosody changes
+# Set to 0.5-0.6 for more lifelike output, 1.0 for full effect
+EMOTION_INTENSITY = 0.55
+
+# Index rate reduction for emotional segments - lets more base TTS prosody survive RVC
+# Higher values = more reduction (more natural but less voice similarity)
+EMOTION_INDEX_RATE_REDUCTION = {
+    'intense': 0.15,   # angry, furious, terrified, shocked, excited
+    'moderate': 0.10,  # sad, happy, scared, surprised
+    'mild': 0.05,      # calm, serious, neutral
+}
+
 EMOTION_PRESETS: Dict[str, Dict[str, str]] = {
-    # Happy / Positive emotions - more dramatic pitch and speed
-    'happy': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Cheerful, upbeat tone'},
-    'excited': {'rate': '+35%', 'pitch': '+25Hz', 'desc': 'Very enthusiastic'},
-    'cheerful': {'rate': '+25%', 'pitch': '+18Hz', 'desc': 'Light and positive'},
-    'joyful': {'rate': '+22%', 'pitch': '+20Hz', 'desc': 'Full of joy'},
+    # Happy / Positive emotions - subtle pitch and speed (softened ~45%)
+    'happy': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Cheerful, upbeat tone', 'intensity': 'moderate'},
+    'excited': {'rate': '+18%', 'pitch': '+12Hz', 'desc': 'Very enthusiastic', 'intensity': 'intense'},
+    'cheerful': {'rate': '+14%', 'pitch': '+10Hz', 'desc': 'Light and positive', 'intensity': 'moderate'},
+    'joyful': {'rate': '+12%', 'pitch': '+10Hz', 'desc': 'Full of joy', 'intensity': 'moderate'},
     
-    # Sad / Negative emotions - slower and lower pitched
-    'sad': {'rate': '-25%', 'pitch': '-15Hz', 'desc': 'Melancholic, slow'},
-    'melancholy': {'rate': '-35%', 'pitch': '-20Hz', 'desc': 'Deep sadness'},
-    'depressed': {'rate': '-40%', 'pitch': '-25Hz', 'desc': 'Very low energy'},
-    'disappointed': {'rate': '-20%', 'pitch': '-10Hz', 'desc': 'Let down feeling'},
+    # Sad / Negative emotions - gentler slowdown
+    'sad': {'rate': '-15%', 'pitch': '-8Hz', 'desc': 'Melancholic, slow', 'intensity': 'moderate'},
+    'melancholy': {'rate': '-20%', 'pitch': '-10Hz', 'desc': 'Deep sadness', 'intensity': 'moderate'},
+    'depressed': {'rate': '-22%', 'pitch': '-12Hz', 'desc': 'Very low energy', 'intensity': 'intense'},
+    'disappointed': {'rate': '-12%', 'pitch': '-6Hz', 'desc': 'Let down feeling', 'intensity': 'mild'},
     
-    # Angry / Intense emotions - faster with higher pitch
-    'angry': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Frustrated, intense'},
-    'furious': {'rate': '+25%', 'pitch': '+15Hz', 'desc': 'Very angry'},
-    'annoyed': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Mildly irritated'},
-    'frustrated': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Exasperated'},
+    # Angry / Intense emotions - reduced aggression for natural delivery
+    'angry': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Frustrated, intense', 'intensity': 'intense'},
+    'furious': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Very angry', 'intensity': 'intense'},
+    'annoyed': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Mildly irritated', 'intensity': 'mild'},
+    'frustrated': {'rate': '+7%', 'pitch': '+4Hz', 'desc': 'Exasperated', 'intensity': 'moderate'},
+    'disgruntled': {'rate': '+3%', 'pitch': '+2Hz', 'desc': 'Unhappy, grumbling', 'intensity': 'mild'},
     
-    # Calm / Neutral emotions - slower and slightly lower
-    'calm': {'rate': '-20%', 'pitch': '-8Hz', 'desc': 'Relaxed, peaceful'},
-    'peaceful': {'rate': '-30%', 'pitch': '-12Hz', 'desc': 'Very serene'},
-    'relaxed': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'At ease'},
-    'neutral': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Standard tone'},
+    # Calm / Neutral emotions - very subtle
+    'calm': {'rate': '-10%', 'pitch': '-4Hz', 'desc': 'Relaxed, peaceful', 'intensity': 'mild'},
+    'peaceful': {'rate': '-15%', 'pitch': '-6Hz', 'desc': 'Very serene', 'intensity': 'mild'},
+    'relaxed': {'rate': '-12%', 'pitch': '-5Hz', 'desc': 'At ease', 'intensity': 'mild'},
+    'neutral': {'rate': '+0%', 'pitch': '+0Hz', 'desc': 'Standard tone', 'intensity': 'mild'},
     
-    # Surprised / Shocked emotions - big pitch jumps
-    'surprised': {'rate': '+25%', 'pitch': '+25Hz', 'desc': 'Caught off guard'},
-    'shocked': {'rate': '+35%', 'pitch': '+35Hz', 'desc': 'Very surprised'},
-    'amazed': {'rate': '+20%', 'pitch': '+22Hz', 'desc': 'In awe'},
+    # Surprised / Shocked emotions - toned down jumps
+    'surprised': {'rate': '+12%', 'pitch': '+12Hz', 'desc': 'Caught off guard', 'intensity': 'moderate'},
+    'shocked': {'rate': '+18%', 'pitch': '+18Hz', 'desc': 'Very surprised', 'intensity': 'intense'},
+    'amazed': {'rate': '+10%', 'pitch': '+10Hz', 'desc': 'In awe', 'intensity': 'moderate'},
     
-    # Fear / Anxiety emotions - fast with trembling pitch
-    'scared': {'rate': '+20%', 'pitch': '+20Hz', 'desc': 'Frightened'},
-    'terrified': {'rate': '+30%', 'pitch': '+30Hz', 'desc': 'Extremely scared'},
-    'anxious': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Nervous, worried'},
-    'nervous': {'rate': '+12%', 'pitch': '+10Hz', 'desc': 'Slightly on edge'},
+    # Fear / Anxiety emotions - reduced trembling
+    'scared': {'rate': '+10%', 'pitch': '+10Hz', 'desc': 'Frightened', 'intensity': 'moderate'},
+    'terrified': {'rate': '+15%', 'pitch': '+15Hz', 'desc': 'Extremely scared', 'intensity': 'intense'},
+    'anxious': {'rate': '+8%', 'pitch': '+6Hz', 'desc': 'Nervous, worried', 'intensity': 'moderate'},
+    'nervous': {'rate': '+6%', 'pitch': '+5Hz', 'desc': 'Slightly on edge', 'intensity': 'mild'},
+    'worried': {'rate': '+5%', 'pitch': '+4Hz', 'desc': 'Concerned', 'intensity': 'mild'},
     
-    # Special expressions - more dramatic
-    'whisper': {'rate': '-30%', 'pitch': '-25Hz', 'desc': 'Quiet, secretive'},
-    'shouting': {'rate': '+25%', 'pitch': '+20Hz', 'desc': 'Loud, emphatic'},
-    'sarcastic': {'rate': '-10%', 'pitch': '+12Hz', 'desc': 'Ironic tone'},
-    'romantic': {'rate': '-25%', 'pitch': '-12Hz', 'desc': 'Soft, loving'},
-    'serious': {'rate': '-15%', 'pitch': '-10Hz', 'desc': 'Grave, important'},
-    'playful': {'rate': '+22%', 'pitch': '+18Hz', 'desc': 'Fun, teasing'},
-    'dramatic': {'rate': '-20%', 'pitch': '+15Hz', 'desc': 'Theatrical'},
-    'mysterious': {'rate': '-25%', 'pitch': '-18Hz', 'desc': 'Enigmatic'},
+    # Special expressions - more natural
+    'whisper': {'rate': '-15%', 'pitch': '-12Hz', 'desc': 'Quiet, secretive', 'intensity': 'moderate'},
+    'whispering': {'rate': '-15%', 'pitch': '-12Hz', 'desc': 'Quiet, secretive', 'intensity': 'moderate'},
+    'shouting': {'rate': '+12%', 'pitch': '+10Hz', 'desc': 'Loud, emphatic', 'intensity': 'intense'},
+    'sarcastic': {'rate': '-5%', 'pitch': '+6Hz', 'desc': 'Ironic tone', 'intensity': 'mild'},
+    'romantic': {'rate': '-12%', 'pitch': '-6Hz', 'desc': 'Soft, loving', 'intensity': 'moderate'},
+    'affectionate': {'rate': '-10%', 'pitch': '-5Hz', 'desc': 'Warm, caring', 'intensity': 'moderate'},
+    'serious': {'rate': '-8%', 'pitch': '-5Hz', 'desc': 'Grave, important', 'intensity': 'mild'},
+    'playful': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Fun, teasing', 'intensity': 'moderate'},
+    'dramatic': {'rate': '-10%', 'pitch': '+8Hz', 'desc': 'Theatrical', 'intensity': 'moderate'},
+    'mysterious': {'rate': '-12%', 'pitch': '-8Hz', 'desc': 'Enigmatic', 'intensity': 'moderate'},
+    'gentle': {'rate': '-8%', 'pitch': '-4Hz', 'desc': 'Soft, kind', 'intensity': 'mild'},
+    'embarrassed': {'rate': '-5%', 'pitch': '+3Hz', 'desc': 'Awkward, shy', 'intensity': 'mild'},
     
-    # Actions / Sounds (simulated via text and prosody)
-    'laugh': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Laughing sound'},
-    'laughing': {'rate': '+15%', 'pitch': '+10Hz', 'desc': 'Laughing sound'},
-    'giggle': {'rate': '+20%', 'pitch': '+15Hz', 'desc': 'Light giggling'},
-    'chuckle': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Soft laugh'},
-    'snicker': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Suppressed laugh'},
-    'cackle': {'rate': '+18%', 'pitch': '+12Hz', 'desc': 'Witch-like laugh'},
-    'sigh': {'rate': '-25%', 'pitch': '-10Hz', 'desc': 'Exhale sound'},
-    'gasp': {'rate': '+25%', 'pitch': '+15Hz', 'desc': 'Sharp intake'},
-    'yawn': {'rate': '-30%', 'pitch': '-15Hz', 'desc': 'Tired sound'},
-    'cry': {'rate': '-15%', 'pitch': '+3Hz', 'desc': 'Sobbing'},
-    'crying': {'rate': '-15%', 'pitch': '+3Hz', 'desc': 'Sobbing'},
-    'sob': {'rate': '-20%', 'pitch': '+5Hz', 'desc': 'Deep crying'},
-    'sniff': {'rate': '-10%', 'pitch': '+2Hz', 'desc': 'Sniffling'},
-    'groan': {'rate': '-20%', 'pitch': '-12Hz', 'desc': 'Pain/frustration'},
-    'moan': {'rate': '-25%', 'pitch': '-8Hz', 'desc': 'Discomfort sound'},
-    'scream': {'rate': '+30%', 'pitch': '+25Hz', 'desc': 'Screaming'},
-    'shriek': {'rate': '+35%', 'pitch': '+30Hz', 'desc': 'High pitched scream'},
-    'growl': {'rate': '-15%', 'pitch': '-20Hz', 'desc': 'Angry growl'},
+    # Actions / Sounds - gentler simulation
+    'laugh': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Laughing sound', 'intensity': 'mild'},
+    'laughing': {'rate': '+8%', 'pitch': '+5Hz', 'desc': 'Laughing sound', 'intensity': 'mild'},
+    'giggle': {'rate': '+10%', 'pitch': '+8Hz', 'desc': 'Light giggling', 'intensity': 'mild'},
+    'chuckle': {'rate': '+5%', 'pitch': '+3Hz', 'desc': 'Soft laugh', 'intensity': 'mild'},
+    'snicker': {'rate': '+6%', 'pitch': '+4Hz', 'desc': 'Suppressed laugh', 'intensity': 'mild'},
+    'cackle': {'rate': '+10%', 'pitch': '+6Hz', 'desc': 'Witch-like laugh', 'intensity': 'moderate'},
+    'sigh': {'rate': '-12%', 'pitch': '-5Hz', 'desc': 'Exhale sound', 'intensity': 'mild'},
+    'gasp': {'rate': '+12%', 'pitch': '+8Hz', 'desc': 'Sharp intake', 'intensity': 'moderate'},
+    'yawn': {'rate': '-15%', 'pitch': '-8Hz', 'desc': 'Tired sound', 'intensity': 'mild'},
+    'cry': {'rate': '-8%', 'pitch': '+2Hz', 'desc': 'Sobbing', 'intensity': 'moderate'},
+    'crying': {'rate': '-8%', 'pitch': '+2Hz', 'desc': 'Sobbing', 'intensity': 'moderate'},
+    'sob': {'rate': '-10%', 'pitch': '+3Hz', 'desc': 'Deep crying', 'intensity': 'moderate'},
+    'sniff': {'rate': '-5%', 'pitch': '+1Hz', 'desc': 'Sniffling', 'intensity': 'mild'},
+    'groan': {'rate': '-10%', 'pitch': '-6Hz', 'desc': 'Pain/frustration', 'intensity': 'moderate'},
+    'moan': {'rate': '-12%', 'pitch': '-4Hz', 'desc': 'Discomfort sound', 'intensity': 'moderate'},
+    'scream': {'rate': '+15%', 'pitch': '+12Hz', 'desc': 'Screaming', 'intensity': 'intense'},
+    'shriek': {'rate': '+18%', 'pitch': '+15Hz', 'desc': 'High pitched scream', 'intensity': 'intense'},
+    'growl': {'rate': '-8%', 'pitch': '-10Hz', 'desc': 'Angry growl', 'intensity': 'moderate'},
     'hum': {'rate': '-20%', 'pitch': '+0Hz', 'desc': 'Humming'},
     'cough': {'rate': '+10%', 'pitch': '+5Hz', 'desc': 'Coughing'},
     'sneeze': {'rate': '+20%', 'pitch': '+10Hz', 'desc': 'Sneezing'},
@@ -619,7 +637,27 @@ def get_emotion_effects(emotion: Optional[str]) -> Dict:
     return EMOTION_EFFECTS.get(emotion.lower(), {})
 
 
-def parse_emotion_tags(text: str) -> List[Dict]:
+def strip_emotion_tags(text: str) -> str:
+    """
+    Strip all emotion/effect tags from text, leaving just the plain spoken content.
+    This is used to clean text before sending to TTS.
+    """
+    # Remove [emotion]...[/emotion] tags, keeping inner text
+    text = re.sub(r'\[(\w+)\](.*?)\[/\1\]', r'\2', text, flags=re.IGNORECASE | re.DOTALL)
+    # Remove self-closing [emotion] or [emotion/] tags
+    text = re.sub(r'\[(\w+)/?\]', '', text, flags=re.IGNORECASE)
+    # Remove *action* tags
+    text = re.sub(r'\*(\w+)\*', '', text, flags=re.IGNORECASE)
+    # Remove (action) tags
+    text = re.sub(r'\((\w+)\)', '', text, flags=re.IGNORECASE)
+    # Remove <speed>...</speed> tags, keeping inner text
+    text = re.sub(r'<speed\s+[^>]+>(.*?)</speed>', r'\1', text, flags=re.IGNORECASE | re.DOTALL)
+    # Clean up extra whitespace
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+
+def parse_emotion_tags(text: str, parent_include: dict = None) -> List[Dict]:
     """
     Parse text with emotion tags and return segments with their emotions.
     
@@ -629,7 +667,7 @@ def parse_emotion_tags(text: str) -> List[Dict]:
     - *laughing* - Action asterisks
     - (sigh) - Parenthetical actions
     - <speed rate="-20%">slow text</speed> - Speed control
-    - <include voice_model_id="123">other voice text</include> - Multi-voice
+    - <include voice_model_id="5">other voice text</include> - Multi-voice
     
     Returns list of segments: [{'text': str, 'emotion': str or None, 'rate': str or None, 'include': dict or None}, ...]
     """
@@ -658,24 +696,28 @@ def parse_emotion_tags(text: str) -> List[Dict]:
         # Add any text before this match as neutral
         if match.start() > last_end:
             plain_text = text[last_end:match.start()].strip()
+            # Strip any remaining tags from plain text
+            plain_text = strip_emotion_tags(plain_text)
             if plain_text:
-                segments.append({'text': plain_text, 'emotion': None, 'rate': None, 'include': None})
+                segments.append({'text': plain_text, 'emotion': None, 'rate': None, 'include': parent_include})
         
         # Determine which pattern matched
         if match.group(1) and match.group(2):  # <speed rate="value">text</speed>
             rate_value = match.group(1)
             inner_text = match.group(2).strip()
+            # Strip any emotion tags from inner text
+            inner_text = strip_emotion_tags(inner_text)
             # Ensure rate has +/- prefix and % suffix
             if not rate_value.startswith(('+', '-')):
                 rate_value = f"+{rate_value}" if not rate_value.startswith('-') else rate_value
             if not rate_value.endswith('%'):
                 rate_value = f"{rate_value}%"
             if inner_text:
-                segments.append({'text': inner_text, 'emotion': None, 'rate': rate_value, 'include': None})
+                segments.append({'text': inner_text, 'emotion': None, 'rate': rate_value, 'include': parent_include})
         elif match.group(3) and match.group(4):  # <include attributes>text</include>
             attrs_str = match.group(3)
             inner_text = match.group(4).strip()
-            # Parse attributes like voice_model_id="123" model_path="..." etc
+            # Parse attributes like voice_model_id="5" model_path="..." etc
             include_attrs = {}
             attr_pattern = r'(\w+)=["\']?([^"\'>\s]+)["\']?'
             for attr_match in re.finditer(attr_pattern, attrs_str):
@@ -694,42 +736,50 @@ def parse_emotion_tags(text: str) -> List[Dict]:
                         pass
                 include_attrs[key] = value
             if inner_text:
-                segments.append({'text': inner_text, 'emotion': None, 'rate': None, 'include': include_attrs})
+                # Recursively parse inner text for emotions/speed tags, preserving include attrs
+                inner_segments = parse_emotion_tags(inner_text, parent_include=include_attrs)
+                segments.extend(inner_segments)
         elif match.group(5) and match.group(6):  # [emotion]text[/emotion]
             emotion = match.group(5).lower()
             inner_text = match.group(6).strip()
+            # Strip any nested tags from the inner text
+            inner_text = strip_emotion_tags(inner_text)
             if inner_text:
-                segments.append({'text': inner_text, 'emotion': emotion, 'rate': None, 'include': None})
+                segments.append({'text': inner_text, 'emotion': emotion, 'rate': None, 'include': parent_include})
         elif match.group(7):  # [emotion] or [emotion/] - self-closing/sound effect
             emotion = match.group(7).lower()
             if emotion in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[emotion], 'emotion': emotion, 'rate': None, 'include': None})
+                segments.append({'text': SOUND_REPLACEMENTS[emotion], 'emotion': emotion, 'rate': None, 'include': parent_include})
             else:
                 # Just an emotion marker, apply to next segment
                 pass
         elif match.group(8):  # *action*
             action = match.group(8).lower()
             if action in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': None})
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': parent_include})
             elif action in EMOTION_PRESETS:
                 # It's an emotion, mark but no text
                 pass
         elif match.group(9):  # (action)
             action = match.group(9).lower()
             if action in SOUND_REPLACEMENTS:
-                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': None})
+                segments.append({'text': SOUND_REPLACEMENTS[action], 'emotion': action, 'rate': None, 'include': parent_include})
         
         last_end = match.end()
     
     # Add remaining text
     if last_end < len(text):
         remaining = text[last_end:].strip()
+        # Strip any remaining tags
+        remaining = strip_emotion_tags(remaining)
         if remaining:
-            segments.append({'text': remaining, 'emotion': None, 'rate': None, 'include': None})
+            segments.append({'text': remaining, 'emotion': None, 'rate': None, 'include': parent_include})
     
-    # If no segments were found, return the original text
+    # If no segments were found, return the original text (stripped of tags)
     if not segments:
-        segments.append({'text': text, 'emotion': None, 'rate': None, 'include': None})
+        clean_text = strip_emotion_tags(text)
+        if clean_text:
+            segments.append({'text': clean_text, 'emotion': None, 'rate': None, 'include': parent_include})
     
     return segments
 
@@ -1511,6 +1561,18 @@ async def multi_voice_tts(request: MultiVoiceTTSRequest):
             segment_rate = segment.get('rate') or request.rate
             include_info = segment.get('include')
             
+            # Skip empty segments or segments with only punctuation/whitespace
+            if not segment_text or not segment_text.strip():
+                logger.info(f"Segment {i+1}: Skipping empty segment")
+                continue
+            
+            # Check if segment has any actual words (not just punctuation)
+            import string
+            text_without_punct = segment_text.translate(str.maketrans('', '', string.punctuation + '…—–'))
+            if not text_without_punct.strip():
+                logger.info(f"Segment {i+1}: Skipping punctuation-only segment: '{segment_text}'")
+                continue
+            
             # Fix rate format
             if segment_rate and not segment_rate.startswith(('+', '-')):
                 segment_rate = f"+{segment_rate}"
@@ -1521,7 +1583,7 @@ async def multi_voice_tts(request: MultiVoiceTTSRequest):
             # Get audio effects
             effects = get_emotion_effects(emotion)
             
-            logger.info(f"Segment {i+1}: emotion={emotion}, rate={seg_rate}, include={include_info is not None}")
+            logger.info(f"Segment {i+1}: emotion={emotion}, rate={seg_rate}, include={include_info is not None}, text='{segment_text[:50]}...'")
             
             # Generate TTS for this segment
             communicate = edge_tts.Communicate(segment_text, request.voice, rate=seg_rate, pitch=seg_pitch)
@@ -1567,6 +1629,19 @@ async def multi_voice_tts(request: MultiVoiceTTSRequest):
                     # Use default model for main voice
                     model_path = request.default_model_path
                     index_path = request.default_index_path
+                
+                # Auto-reduce index_rate for emotional segments to preserve more base TTS prosody
+                # This makes RVC output sound more natural/expressive
+                if emotion and emotion.lower() in EMOTION_PRESETS:
+                    preset = EMOTION_PRESETS[emotion.lower()]
+                    intensity = preset.get('intensity', 'mild')
+                    reduction = EMOTION_INDEX_RATE_REDUCTION.get(intensity, 0.05)
+                    original_index_rate = index_rate
+                    index_rate = max(0.3, index_rate - reduction)  # Don't go below 0.3
+                    if original_index_rate != index_rate:
+                        logger.info(f"Segment {i+1}: Auto-reduced index_rate from {original_index_rate:.2f} to {index_rate:.2f} for '{emotion}' emotion ({intensity})")
+                
+                logger.info(f"Segment {i+1}: model_path={model_path}, index_path={index_path}, f0_up_key={f0_up_key}, index_rate={index_rate}")
                 
                 # Apply voice conversion if model is specified
                 if model_path and model_manager:
@@ -1809,8 +1884,139 @@ async def list_models():
 
 
 # =============================================================================
+# Voice Detection Endpoints
+# =============================================================================
+
+class VoiceDetectRequest(BaseModel):
+    """Voice detection request"""
+    audio: str = Field(..., description="Base64 encoded audio data")
+    sample_rate: int = Field(default=44100, description="Input sample rate")
+    use_vocals_only: bool = Field(default=True, description="Separate vocals first (recommended for music)")
+    max_voices: int = Field(default=5, description="Maximum number of voices to detect")
+
+
+class VoiceDetectResponse(BaseModel):
+    """Voice detection response"""
+    voice_count: int = Field(description="Number of distinct voices detected")
+    confidence: float = Field(description="Confidence score (0-1)")
+    method: str = Field(description="Detection method used")
+    details: dict = Field(description="Additional detection details")
+
+
+@app.post("/voice-count/detect", response_model=VoiceDetectResponse)
+async def detect_voices(request: VoiceDetectRequest):
+    """
+    Detect the number of distinct singers/speakers in audio.
+    
+    Useful for:
+    - Determining if a song has backup vocals
+    - Knowing how many voice models to assign for multi-voice swap
+    - Detecting duets, harmonies, or group vocals
+    
+    Examples:
+    - Solo artist: 1 voice
+    - Duet (Simon & Garfunkel): 2 voices
+    - Group harmony (Billy Joel "For the Longest Time"): 4-6 voices
+    """
+    try:
+        # Use the new v2 detector with spectral/harmonic analysis
+        from app.voice_detector_v2 import detect_voice_count
+        import librosa
+        from pydub import AudioSegment
+        import tempfile
+        import subprocess
+        
+        logger.info(f"Voice detection request: use_vocals_only={request.use_vocals_only}, max_voices={request.max_voices}")
+        
+        # Decode audio - handle data URL prefix if present
+        audio_data = request.audio
+        if ',' in audio_data and audio_data.startswith('data:'):
+            audio_data = audio_data.split(',')[1]
+        
+        audio_bytes = base64.b64decode(audio_data)
+        audio_buffer = io.BytesIO(audio_bytes)
+        
+        # Try multiple methods to load audio
+        audio = None
+        sr = None
+        
+        # Method 1: Try soundfile directly
+        try:
+            audio, sr = sf.read(audio_buffer, dtype='float32')
+            logger.info(f"Loaded audio with soundfile: sr={sr}, shape={audio.shape}")
+        except Exception as e:
+            logger.debug(f"soundfile failed: {e}")
+            audio_buffer.seek(0)
+            
+            # Method 2: Try librosa
+            try:
+                audio, sr = librosa.load(audio_buffer, sr=None, mono=False)
+                logger.info(f"Loaded audio with librosa: sr={sr}, shape={audio.shape}")
+            except Exception as e:
+                logger.debug(f"librosa failed: {e}")
+                audio_buffer.seek(0)
+                
+                # Method 3: Use ffmpeg as fallback
+                try:
+                    with tempfile.NamedTemporaryFile(suffix='.webm', delete=False) as tmp_in:
+                        tmp_in.write(audio_buffer.read())
+                        tmp_in_path = tmp_in.name
+                    
+                    tmp_out_path = tmp_in_path.replace('.webm', '.wav')
+                    
+                    result = subprocess.run(
+                        ['ffmpeg', '-y', '-i', tmp_in_path, '-acodec', 'pcm_s16le', '-ar', '44100', tmp_out_path],
+                        capture_output=True, text=True
+                    )
+                    
+                    if result.returncode == 0:
+                        audio, sr = sf.read(tmp_out_path, dtype='float32')
+                        logger.info(f"Loaded audio with ffmpeg conversion: sr={sr}, shape={audio.shape}")
+                    else:
+                        raise Exception(f"ffmpeg conversion failed: {result.stderr}")
+                    
+                    import os
+                    os.unlink(tmp_in_path)
+                    if os.path.exists(tmp_out_path):
+                        os.unlink(tmp_out_path)
+                        
+                except Exception as e:
+                    logger.error(f"All audio loading methods failed: {e}")
+                    raise HTTPException(status_code=400, detail=f"Could not decode audio file: {str(e)}")
+        
+        # Run voice detection
+        result = detect_voice_count(
+            audio=audio,
+            sample_rate=sr,
+            use_vocals_only=request.use_vocals_only,
+            max_voices=request.max_voices
+        )
+        
+        return VoiceDetectResponse(
+            voice_count=result.voice_count,
+            confidence=result.confidence,
+            method=result.method,
+            details=result.details
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Voice detection failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Voice detection failed: {str(e)}")
+
+
+# =============================================================================
 # Audio Processing Endpoints
 # =============================================================================
+
+class VoiceModelConfig(BaseModel):
+    """Configuration for a single voice in multi-voice swap"""
+    model_path: str = Field(..., description="Path to the voice model")
+    index_path: Optional[str] = Field(default=None, description="Path to index file")
+    f0_up_key: int = Field(default=0, description="Pitch shift for this voice")
+    extraction_mode: str = Field(default="main", description="Extraction mode: 'main' (HP5 - main vocal only) or 'all' (HP3 - all vocals including harmonies)")
+
 
 class AudioProcessRequest(BaseModel):
     """Audio processing request"""
@@ -1826,6 +2032,11 @@ class AudioProcessRequest(BaseModel):
     pitch_shift_all: int = Field(default=0, description="Pitch shift for ALL audio in semitones")
     instrumental_pitch: Optional[int] = Field(default=None, description="Separate pitch shift for instrumental in semitones (overrides pitch_shift_all for instrumental)")
     quality_preset: Optional[str] = Field(default="natural", description="Quality preset: natural, balanced, accurate, maximum")
+    extract_all_vocals: bool = Field(default=False, description="Extract all vocals including backups (True) or only main vocal (False). Default is False (main vocal only).")
+    
+    # Multi-voice swap configuration
+    voice_count: int = Field(default=1, ge=1, le=4, description="Number of voice layers to extract and convert (1-4)")
+    voice_configs: Optional[List[VoiceModelConfig]] = Field(default=None, description="List of voice model configurations for multi-voice swap. If voice_count > 1, provide config for each voice.")
 
 
 class AudioProcessResponse(BaseModel):
@@ -1917,9 +2128,11 @@ async def process_audio(request: AudioProcessRequest):
         output_sr = sr if sr > 0 else 44100
         
         def encode_audio(audio_data: np.ndarray, sample_rate: int) -> str:
-            """Encode audio to base64 WAV"""
+            """Encode audio to base64 WAV, ensuring valid range"""
+            # Clip to valid range to prevent distortion
+            audio_clipped = np.clip(audio_data, -1.0, 1.0).astype(np.float32)
             wav_buffer = io.BytesIO()
-            sf.write(wav_buffer, audio_data, sample_rate, format='WAV')
+            sf.write(wav_buffer, audio_clipped, sample_rate, format='WAV')
             wav_buffer.seek(0)
             return base64.b64encode(wav_buffer.read()).decode('utf-8')
         
@@ -1947,8 +2160,16 @@ async def process_audio(request: AudioProcessRequest):
                         detail="No UVR5 models available. Run: bash scripts/download_uvr5_assets.sh"
                     )
                 
-                # Use HP5_only_main_vocal by default (best for general use)
-                uvr_model = "HP5_only_main_vocal"
+                # Choose model based on whether to extract all vocals or just main
+                if request.extract_all_vocals:
+                    # HP3_all_vocals extracts ALL vocals including backups/harmonies (better quality than HP2)
+                    uvr_model = "HP3_all_vocals"
+                    if uvr_model not in available_models:
+                        uvr_model = "HP2_all_vocals"  # Fallback
+                else:
+                    # HP5_only_main_vocal extracts only the main/lead vocal
+                    uvr_model = "HP5_only_main_vocal"
+                
                 if uvr_model not in available_models and available_models:
                     uvr_model = available_models[0]
                 
@@ -2054,11 +2275,75 @@ async def process_audio(request: AudioProcessRequest):
             
         elif request.mode == "swap":
             # Vocal swap: split -> convert vocals -> merge back with instrumental
-            if not request.model_path:
-                raise HTTPException(status_code=400, detail="Model path required for vocal swap")
+            # Supports multi-voice cascading extraction for songs with multiple vocal layers
             
             if model_manager is None:
                 raise HTTPException(status_code=500, detail="Model manager not initialized")
+            
+            # Validate voice configuration
+            voice_count = request.voice_count or 1
+            
+            # Debug logging for multi-voice
+            logger.info(f"Multi-voice config: voice_count={voice_count}, model_path={request.model_path}")
+            logger.info(f"voice_configs from request: {request.voice_configs}")
+            
+            # Build voice configs list
+            voice_configs = []
+            if voice_count == 1:
+                # Single voice - use main model_path
+                if not request.model_path:
+                    raise HTTPException(status_code=400, detail="Model path required for vocal swap")
+                voice_configs.append({
+                    "model_path": request.model_path,
+                    "index_path": request.index_path,
+                    "f0_up_key": request.f0_up_key,
+                    "extraction_mode": "main"  # Default to HP5 for single voice
+                })
+            else:
+                # Multi-voice mode
+                # Check if voice_configs already has ALL voices (frontend sends complete list)
+                if request.voice_configs and len(request.voice_configs) >= voice_count:
+                    # Use voice_configs directly - it contains all voice configurations
+                    for vc in request.voice_configs[:voice_count]:
+                        voice_configs.append({
+                            "model_path": vc.model_path,
+                            "index_path": vc.index_path,
+                            "f0_up_key": vc.f0_up_key,
+                            "extraction_mode": getattr(vc, 'extraction_mode', 'main')  # 'main' (HP5) or 'all' (HP3)
+                        })
+                else:
+                    # Fallback: Voice 1 from model_path, additional from voice_configs
+                    if not request.model_path:
+                        raise HTTPException(status_code=400, detail="Model path required for vocal swap (Voice 1)")
+                    
+                    # Add Voice 1 from main model_path
+                    voice_configs.append({
+                        "model_path": request.model_path,
+                        "index_path": request.index_path,
+                        "f0_up_key": request.f0_up_key,
+                        "extraction_mode": "main"  # Default to HP5 for voice 1
+                    })
+                    
+                    # Add additional voices from voice_configs (Voice 2, 3, 4...)
+                    additional_needed = voice_count - 1
+                    if request.voice_configs:
+                        for vc in request.voice_configs[:additional_needed]:
+                            voice_configs.append({
+                                "model_path": vc.model_path,
+                                "index_path": vc.index_path,
+                                "f0_up_key": vc.f0_up_key,
+                                "extraction_mode": getattr(vc, 'extraction_mode', 'main')
+                            })
+                
+                # Check we have enough voices
+                if len(voice_configs) < voice_count:
+                    raise HTTPException(
+                        status_code=400, 
+                        detail=f"Need {voice_count} voice configurations but only got {len(voice_configs)}"
+                    )
+            
+            # Debug: Log final voice configs
+            logger.info(f"Final voice_configs for processing: {voice_configs}")
             
             try:
                 from app.vocal_separator import separate_vocals, list_available_models
@@ -2071,28 +2356,13 @@ async def process_audio(request: AudioProcessRequest):
                         detail="No UVR5 models available. Run: bash scripts/download_uvr5_assets.sh"
                     )
                 
-                uvr_model = "HP5_only_main_vocal"
-                if uvr_model not in available_models and available_models:
-                    uvr_model = available_models[0]
-                
-                logger.info(f"Starting vocal swap with model: {uvr_model}")
-                
-                # Step 1: Separate vocals and instrumental
-                vocals, instrumental = separate_vocals(
-                    audio=audio,
-                    sample_rate=sr,
-                    model_name=uvr_model,
-                    agg=10
-                )
-                
-                # Step 2: Convert vocals using RVC
-                # Resample vocals to 16kHz for RVC
-                vocals_16k = librosa.resample(vocals, orig_sr=44100, target_sr=16000)
-                
-                # Load model and convert
-                success = model_manager.load_model(request.model_path, request.index_path)
-                if not success:
-                    raise HTTPException(status_code=400, detail="Failed to load model")
+                # Determine which models we need
+                main_vocal_model = "HP5_only_main_vocal"
+                all_vocals_model = "HP3_all_vocals"  # HP3 is better quality than HP2
+                if all_vocals_model not in available_models:
+                    all_vocals_model = "HP2_all_vocals"
+                if main_vocal_model not in available_models and available_models:
+                    main_vocal_model = available_models[0]
                 
                 # Apply quality preset if specified
                 index_rate = request.index_rate
@@ -2106,52 +2376,389 @@ async def process_audio(request: AudioProcessRequest):
                     rms_mix_rate = preset['rms_mix_rate']
                     logger.info(f"Using quality preset for swap: {request.quality_preset}")
                 
+                logger.info(f"Multi-voice swap: voice_count={voice_count}")
+                logger.info(f"Input audio: sr={sr}, length={len(audio)} samples, duration={len(audio)/sr:.2f}s")
+                
+                # CRITICAL: UVR5 outputs at 44100Hz regardless of input sample rate
+                uvr_output_sr = 44100
+                original_duration = len(audio) / sr  # Duration in seconds
+                target_length_44k = int(original_duration * uvr_output_sr)
+                
+                converted_vocals_list = []
+                
+                # Helper functions for all voice modes
                 from app.model_manager import RVCInferParams
-                params = RVCInferParams(
-                    f0_up_key=request.f0_up_key,
-                    index_rate=index_rate,
-                    protect=protect,
-                    rms_mix_rate=rms_mix_rate,
-                )
-                logger.info(f"Swap conversion params: index_rate={index_rate}, protect={protect}, rms_mix={rms_mix_rate}")
                 
-                converted_vocals = model_manager.infer(vocals_16k, params=params)
+                def ensure_length(arr, target_len):
+                    """Pad or trim array to target length"""
+                    if len(arr) < target_len:
+                        return np.pad(arr, (0, target_len - len(arr)), mode='constant')
+                    return arr[:target_len]
                 
-                if converted_vocals is None or len(converted_vocals) == 0:
-                    raise HTTPException(status_code=500, detail="Voice conversion failed")
+                def convert_vocal(vocal_audio, voice_config, voice_num):
+                    """Convert a vocal track with RVC model, preserving original RMS level"""
+                    vc = voice_config
+                    logger.info(f"Converting vocals_{voice_num} with model: {vc['model_path'].split('/')[-1]}")
+                    
+                    # Measure original vocal RMS before conversion
+                    original_rms = np.sqrt(np.mean(vocal_audio**2))
+                    logger.info(f"vocals_{voice_num} original RMS before RVC: {original_rms:.4f}")
+                    
+                    # Resample to 16kHz for RVC
+                    vocal_16k = librosa.resample(vocal_audio, orig_sr=uvr_output_sr, target_sr=16000)
+                    
+                    success = model_manager.load_model(vc["model_path"], vc["index_path"])
+                    if not success:
+                        raise HTTPException(status_code=400, detail=f"Failed to load model for voice {voice_num}")
+                    
+                    params = RVCInferParams(
+                        f0_up_key=vc["f0_up_key"],
+                        index_rate=index_rate,
+                        protect=protect,
+                        rms_mix_rate=rms_mix_rate,
+                    )
+                    
+                    converted = model_manager.infer(vocal_16k, params=params)
+                    if converted is None or len(converted) == 0:
+                        raise HTTPException(status_code=500, detail=f"Voice {voice_num} conversion failed")
+                    
+                    # Resample back to 44.1kHz
+                    converted_44k = librosa.resample(converted.astype(np.float32), orig_sr=16000, target_sr=uvr_output_sr)
+                    converted_44k = ensure_length(converted_44k, target_length_44k)
+                    
+                    # Measure converted RMS
+                    converted_rms = np.sqrt(np.mean(converted_44k**2))
+                    logger.info(f"vocals_{voice_num} RMS after RVC: {converted_rms:.4f}")
+                    
+                    # Gentle RMS normalization - only boost if conversion dropped volume significantly
+                    # Use conservative boost to avoid clipping
+                    if converted_rms > 0.0001 and original_rms > 0.0001:
+                        rms_ratio = original_rms / converted_rms
+                        # Only boost, never reduce, and limit to 2x max
+                        if rms_ratio > 1.2 and rms_ratio <= 2.0:
+                            converted_44k = converted_44k * rms_ratio
+                            final_rms = np.sqrt(np.mean(converted_44k**2))
+                            logger.info(f"vocals_{voice_num} RMS boosted: {converted_rms:.4f} → {final_rms:.4f} (x{rms_ratio:.2f})")
+                        elif rms_ratio > 2.0:
+                            # Large drop - use conservative 2x boost
+                            converted_44k = converted_44k * 2.0
+                            final_rms = np.sqrt(np.mean(converted_44k**2))
+                            logger.info(f"vocals_{voice_num} RMS boosted (capped): {converted_rms:.4f} → {final_rms:.4f} (x2.00)")
+                    
+                    # Ensure no clipping - peak normalize if needed
+                    peak = np.max(np.abs(converted_44k))
+                    if peak > 0.95:
+                        converted_44k = converted_44k * (0.95 / peak)
+                        logger.info(f"vocals_{voice_num} peak limited: {peak:.4f} → 0.95")
+                    
+                    final_rms = np.sqrt(np.mean(converted_44k**2))
+                    logger.info(f"Voice {voice_num} converted: length={len(converted_44k)}, RMS={final_rms:.4f}")
+                    return converted_44k
                 
-                # Resample converted vocals back to 44100Hz
-                converted_vocals_44k = librosa.resample(
-                    converted_vocals.astype(np.float32), 
-                    orig_sr=16000, 
-                    target_sr=44100
-                )
+                if voice_count == 1:
+                    # ============================================================
+                    # SINGLE VOICE MODE: HP5 for both instrumental AND main vocal
+                    # ============================================================
+                    # STEP 1: HP5(original) → instrumental_clean (KEEP) + vocals_1 → convert with Model_1
+                    # FINAL: Mix = instrumental_clean + converted_vocals_1
+                    # ============================================================
+                    
+                    logger.info("Single voice extraction pipeline: 1 voice requested")
+                    
+                    # Helper function to clear memory
+                    def clear_memory():
+                        """Clear GPU and CPU memory"""
+                        import gc
+                        import torch as torch_mem
+                        gc.collect()
+                        if torch_mem.cuda.is_available():
+                            torch_mem.cuda.empty_cache()
+                            torch_mem.cuda.synchronize()
+                    
+                    # STEP 1: HP5(original) → instrumental_clean + vocals_1
+                    logger.info("STEP 1: HP5(original) → instrumental_clean + vocals_1")
+                    vocals_1, instrumental_clean = separate_vocals(
+                        audio=audio,
+                        sample_rate=sr,
+                        model_name="HP5_only_main_vocal",
+                        agg=10
+                    )
+                    del audio  # Free original
+                    clear_memory()
+                    
+                    instrumental_clean = ensure_length(instrumental_clean, target_length_44k)
+                    vocals_1 = ensure_length(vocals_1, target_length_44k)
+                    
+                    inst_rms = np.sqrt(np.mean(instrumental_clean**2))
+                    v1_rms = np.sqrt(np.mean(vocals_1**2))
+                    logger.info(f"instrumental_clean extracted: length={len(instrumental_clean)}, RMS={inst_rms:.4f} (KEEP)")
+                    logger.info(f"vocals_1 extracted: RMS={v1_rms:.4f} (KEEP)")
+                    
+                    # Convert vocals_1 with Model_1
+                    converted_vocals_1 = convert_vocal(vocals_1, voice_configs[0], 1)
+                    converted_vocals_list.append(converted_vocals_1)
+                    del vocals_1  # No longer needed
+                    clear_memory()
+                    
+                else:
+                    # Multi-voice cascading extraction:
+                    # ============================================================
+                    # MAX-4-VOICE EXTRACTION PIPELINE (HP3 + iterative HP5)
+                    # ============================================================
+                    # STEP 1: HP3(original) → instrumental_clean (KEEP) + all_vocals_tmp (DISCARD)
+                    # STEP 2: HP5(original) → inst_minus_1 + vocals_1 → convert with Model_1
+                    # STEP 3: HP5(inst_minus_1) → inst_minus_2 + vocals_2 → convert with Model_2
+                    # STEP 4: HP5(inst_minus_2) → inst_minus_3 + vocals_3 → convert with Model_3 [if 3+ voices]
+                    # STEP 5: HP5(inst_minus_3) → inst_minus_4 + vocals_4 → convert with Model_4 [if 4 voices]
+                    # FINAL: Mix = instrumental_clean + all converted vocals
+                    # ============================================================
+                    
+                    logger.info(f"Max-4-voice extraction pipeline: {voice_count} voices requested")
+                    logger.info(f"Target output: sr={uvr_output_sr}, length={target_length_44k} samples, duration={original_duration:.2f}s")
+                    
+                    # Helper function to clear memory
+                    def clear_memory():
+                        """Clear GPU and CPU memory"""
+                        import gc
+                        import torch as torch_mem
+                        gc.collect()
+                        if torch_mem.cuda.is_available():
+                            torch_mem.cuda.empty_cache()
+                            torch_mem.cuda.synchronize()
+                    
+                    # Helper to get separator model based on extraction mode
+                    def get_separator_model(voice_num, voice_config):
+                        """Get the UVR model name based on extraction_mode"""
+                        mode = voice_config.get("extraction_mode", "main")
+                        if mode == "all":
+                            model = "HP3_all_vocals"
+                            logger.info(f"Voice {voice_num}: Using HP3 (all vocals including harmonies)")
+                        else:
+                            model = "HP5_only_main_vocal"
+                            logger.info(f"Voice {voice_num}: Using HP5 (main vocal only)")
+                        return model
+                    
+                    # ============================================================
+                    # STEP 2: Extract vocals_1 from original → convert with Model_1
+                    # Also capture the INSTRUMENTAL from HP5 (preserves full audio incl. intros!)
+                    # ============================================================
+                    sep_model_1 = get_separator_model(1, voice_configs[0])
+                    logger.info(f"STEP 2: {sep_model_1}(original) → inst_minus_1 + vocals_1")
+                    vocals_1, inst_minus_1 = separate_vocals(
+                        audio=audio,  # IMPORTANT: Use ORIGINAL audio
+                        sample_rate=sr,
+                        model_name=sep_model_1,
+                        agg=10
+                    )
+                    # Free original audio - we have what we need
+                    del audio
+                    clear_memory()
+                    
+                    vocals_1 = ensure_length(vocals_1, target_length_44k)
+                    inst_minus_1 = ensure_length(inst_minus_1, target_length_44k)
+                    v1_rms = np.sqrt(np.mean(vocals_1**2))
+                    
+                    # SAVE inst_minus_1 as our clean instrumental for final mix
+                    # HP5's instrumental output preserves ALL audio including intros!
+                    instrumental_clean = inst_minus_1.copy()
+                    inst_rms = np.sqrt(np.mean(instrumental_clean**2))
+                    logger.info(f"instrumental_clean FROM HP5: length={len(instrumental_clean)}, RMS={inst_rms:.4f} (KEEP FOR FINAL MIX)")
+                    
+                    # Log intro specifically to verify it's not silent
+                    intro_samples = int(5 * uvr_output_sr)  # First 5 seconds
+                    if len(instrumental_clean) > intro_samples:
+                        intro_rms = np.sqrt(np.mean(instrumental_clean[:intro_samples]**2))
+                        intro_max = np.max(np.abs(instrumental_clean[:intro_samples]))
+                        logger.info(f"INSTRUMENTAL INTRO CHECK (first 5s): RMS={intro_rms:.4f}, max={intro_max:.4f}")
+                    
+                    logger.info(f"vocals_1 extracted: RMS={v1_rms:.4f} (KEEP)")
+                    logger.info(f"inst_minus_1: length={len(inst_minus_1)} (input for next step)")
+                    
+                    # Convert vocals_1 with Model_1
+                    converted_vocals_1 = convert_vocal(vocals_1, voice_configs[0], 1)
+                    converted_vocals_list.append(converted_vocals_1)
+                    del vocals_1  # No longer needed
+                    clear_memory()
+                    
+                    # ============================================================
+                    # STEP 3: Extract vocals_2 from inst_minus_1 → convert with Model_2
+                    # ============================================================
+                    if voice_count >= 2:
+                        sep_model_2 = get_separator_model(2, voice_configs[1])
+                        logger.info(f"STEP 3: {sep_model_2}(inst_minus_1) → inst_minus_2 + vocals_2")
+                        vocals_2, inst_minus_2 = separate_vocals(
+                            audio=inst_minus_1,  # Use inst_minus_1 as input
+                            sample_rate=uvr_output_sr,  # Already at 44.1kHz from UVR
+                            model_name=sep_model_2,
+                            agg=10
+                        )
+                        del inst_minus_1  # DISCARD - no longer needed
+                        clear_memory()
+                        
+                        vocals_2 = ensure_length(vocals_2, target_length_44k)
+                        inst_minus_2 = ensure_length(inst_minus_2, target_length_44k)
+                        v2_rms = np.sqrt(np.mean(vocals_2**2))
+                        logger.info(f"vocals_2 extracted: RMS={v2_rms:.4f} (KEEP)")
+                        
+                        # Convert vocals_2 with Model_2
+                        converted_vocals_2 = convert_vocal(vocals_2, voice_configs[1], 2)
+                        converted_vocals_list.append(converted_vocals_2)
+                        del vocals_2  # No longer needed
+                        clear_memory()
+                        
+                        # ============================================================
+                        # STEP 4: Extract vocals_3 from inst_minus_2 → convert with Model_3
+                        # ============================================================
+                        if voice_count >= 3:
+                            sep_model_3 = get_separator_model(3, voice_configs[2])
+                            logger.info(f"STEP 4: {sep_model_3}(inst_minus_2) → inst_minus_3 + vocals_3")
+                            vocals_3, inst_minus_3 = separate_vocals(
+                                audio=inst_minus_2,
+                                sample_rate=uvr_output_sr,
+                                model_name=sep_model_3,
+                                agg=10
+                            )
+                            del inst_minus_2  # DISCARD
+                            clear_memory()
+                            
+                            vocals_3 = ensure_length(vocals_3, target_length_44k)
+                            inst_minus_3 = ensure_length(inst_minus_3, target_length_44k)
+                            v3_rms = np.sqrt(np.mean(vocals_3**2))
+                            logger.info(f"vocals_3 extracted: RMS={v3_rms:.4f} (KEEP)")
+                            
+                            # Convert vocals_3 with Model_3
+                            converted_vocals_3 = convert_vocal(vocals_3, voice_configs[2], 3)
+                            converted_vocals_list.append(converted_vocals_3)
+                            del vocals_3
+                            clear_memory()
+                            
+                            # ============================================================
+                            # STEP 5: Extract vocals_4 from inst_minus_3 → convert with Model_4
+                            # ============================================================
+                            if voice_count >= 4:
+                                sep_model_4 = get_separator_model(4, voice_configs[3])
+                                logger.info(f"STEP 5: {sep_model_4}(inst_minus_3) → inst_minus_4 + vocals_4")
+                                vocals_4, inst_minus_4 = separate_vocals(
+                                    audio=inst_minus_3,
+                                    sample_rate=uvr_output_sr,
+                                    model_name=sep_model_4,
+                                    agg=10
+                                )
+                                del inst_minus_3
+                                del inst_minus_4  # DISCARD - end of chain
+                                clear_memory()
+                                
+                                vocals_4 = ensure_length(vocals_4, target_length_44k)
+                                v4_rms = np.sqrt(np.mean(vocals_4**2))
+                                logger.info(f"vocals_4 extracted: RMS={v4_rms:.4f} (KEEP)")
+                                
+                                # Convert vocals_4 with Model_4
+                                converted_vocals_4 = convert_vocal(vocals_4, voice_configs[3], 4)
+                                converted_vocals_list.append(converted_vocals_4)
+                                del vocals_4
+                                clear_memory()
+                            else:
+                                del inst_minus_3  # DISCARD if not used for step 5
+                                clear_memory()
+                        else:
+                            del inst_minus_2  # DISCARD - end of chain for 2 voices
+                            clear_memory()
+                    else:
+                        del inst_minus_1  # DISCARD - only 1 voice
+                        clear_memory()
                 
-                # Apply pitch shift to instrumental if requested (vocals already shifted via f0_up_key)
-                instrumental_final = instrumental
-                # Use separate instrumental_pitch if provided, otherwise fall back to pitch_shift_all
-                instrumental_pitch = request.instrumental_pitch if request.instrumental_pitch is not None else request.pitch_shift_all
-                if instrumental_pitch != 0:
-                    logger.info(f"Applying pitch shift of {instrumental_pitch} semitones to instrumental")
-                    instrumental_final = pitch_shift_audio(instrumental, 44100, instrumental_pitch)
-                    logger.info(f"Instrumental pitch shifted: shape={instrumental_final.shape}")
+                # ============================================================
+                # FINAL MIX: instrumental_clean + all converted vocals
+                # (This works for both single and multi-voice cases)
+                # ============================================================
+                logger.info(f"FINAL MIX: instrumental_clean + {len(converted_vocals_list)} converted vocals")
                 
-                # Step 3: Mix converted vocals with instrumental
-                # Ensure same length
-                min_len = min(len(converted_vocals_44k), len(instrumental_final))
-                mixed = converted_vocals_44k[:min_len] + instrumental_final[:min_len]
+                # CRITICAL: Make a fresh copy of instrumental_clean for mixing
+                # This ensures the original is never modified
+                instrumental_for_mix = instrumental_clean.copy()
+                inst_rms = np.sqrt(np.mean(instrumental_for_mix**2))
+                logger.info(f"instrumental_clean RMS: {inst_rms:.4f}")
                 
-                # Normalize to prevent clipping
+                # Log the first few seconds of instrumental to verify it's not silent
+                intro_samples = int(5 * uvr_output_sr)  # First 5 seconds
+                intro_rms = np.sqrt(np.mean(instrumental_for_mix[:intro_samples]**2))
+                intro_max = np.max(np.abs(instrumental_for_mix[:intro_samples]))
+                logger.info(f"Instrumental INTRO (first 5s): RMS={intro_rms:.4f}, max={intro_max:.4f}")
+                
+                # ============================================================
+                # SIMPLE MIXING STRATEGY:
+                # 1. Keep instrumental at original level - DO NOT MODIFY
+                # 2. Keep main vocal (vocals_1) at its converted level
+                # 3. Slightly boost secondary vocals to be audible as backing
+                # 4. Simple peak normalization at the end if needed
+                # ============================================================
+                
+                # Get RMS of main vocal for reference
+                main_vocal_rms = np.sqrt(np.mean(converted_vocals_list[0]**2)) if converted_vocals_list else 0.05
+                logger.info(f"Main vocal (vocals_1) RMS: {main_vocal_rms:.4f}")
+                
+                # Start with instrumental - use the fresh copy
+                mixed = instrumental_for_mix.copy()
+                logger.info(f"Starting mix with instrumental: RMS={inst_rms:.4f}")
+                
+                # Add each vocal layer
+                for i, cv in enumerate(converted_vocals_list, start=1):
+                    cv_rms = np.sqrt(np.mean(cv**2))
+                    
+                    if i == 1:
+                        # Main vocal - add as-is
+                        mixed = mixed + cv
+                        logger.info(f"Added vocals_{i}: RMS={cv_rms:.4f} (main vocal, no scaling)")
+                    else:
+                        # Secondary vocals - boost if too quiet (target ~40% of main vocal RMS)
+                        # Use very low threshold to not skip quiet backing vocals
+                        if cv_rms > 0.0001:  # Very low threshold - almost never skip
+                            target_rms = main_vocal_rms * 0.40  # Target 40% of main vocal
+                            if cv_rms < target_rms:
+                                boost = min(target_rms / cv_rms, 8.0)  # Max 8x boost for quiet backing
+                                cv_boosted = cv * boost
+                                new_rms = np.sqrt(np.mean(cv_boosted**2))
+                                logger.info(f"Boosted vocals_{i}: {cv_rms:.4f} → {new_rms:.4f} (x{boost:.2f})")
+                                mixed = mixed + cv_boosted
+                            else:
+                                mixed = mixed + cv
+                                logger.info(f"Added vocals_{i}: RMS={cv_rms:.4f} (no boost needed)")
+                        else:
+                            logger.warning(f"vocals_{i} extremely quiet (RMS={cv_rms:.6f}), adding anyway with 10x boost")
+                            cv_boosted = cv * 10.0
+                            mixed = mixed + cv_boosted
+                
+                # Check peak and normalize only if clipping
                 max_val = np.max(np.abs(mixed))
-                if max_val > 1.0:
-                    mixed = mixed / max_val * 0.95
+                mix_rms = np.sqrt(np.mean(mixed**2))
                 
-                logger.info(f"Vocal swap complete: output length={len(mixed)}")
+                # Verify instrumental is still in the mix by checking intro
+                intro_samples = int(5 * uvr_output_sr)  # First 5 seconds
+                mixed_intro_rms = np.sqrt(np.mean(mixed[:intro_samples]**2))
+                mixed_intro_max = np.max(np.abs(mixed[:intro_samples]))
+                logger.info(f"Mix INTRO (first 5s): RMS={mixed_intro_rms:.4f}, max={mixed_intro_max:.4f}")
+                logger.info(f"Mix before normalization: RMS={mix_rms:.4f}, peak={max_val:.4f}")
+                
+                if max_val > 0.99:
+                    # Simple peak normalization to prevent clipping
+                    normalize_factor = 0.95 / max_val
+                    mixed = mixed * normalize_factor
+                    final_rms = np.sqrt(np.mean(mixed**2))
+                    final_peak = np.max(np.abs(mixed))
+                    logger.info(f"Normalized: factor={normalize_factor:.4f}, final RMS={final_rms:.4f}, peak={final_peak:.4f}")
+                else:
+                    logger.info("No normalization needed (peak < 0.99)")
+                
+                # Final check on intro after normalization
+                final_intro_rms = np.sqrt(np.mean(mixed[:intro_samples]**2))
+                logger.info(f"Final INTRO RMS: {final_intro_rms:.4f}")
+                
+                logger.info(f"Vocal swap complete: {len(converted_vocals_list)} voices + instrumental, output length={len(mixed)}, sr={uvr_output_sr}")
                 
                 return AudioProcessResponse(
                     mode="swap",
-                    converted=encode_audio(mixed.astype(np.float32), 44100),
-                    sample_rate=44100,
+                    converted=encode_audio(mixed.astype(np.float32), uvr_output_sr),
+                    sample_rate=uvr_output_sr,
                     format="wav"
                 )
                 

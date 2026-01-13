@@ -561,6 +561,12 @@ export const roleRequestsApi = {
 // Audio Processing API
 // =============================================================================
 
+export interface VoiceModelConfig {
+  model_id: number;
+  f0_up_key?: number; // Pitch shift for this voice layer
+  extraction_mode?: 'main' | 'all'; // 'main' = HP5 (main vocal only), 'all' = HP3 (all vocals including harmonies)
+}
+
 export interface AudioProcessRequest {
   audio: string; // Base64 encoded audio
   sample_rate?: number;
@@ -570,6 +576,10 @@ export interface AudioProcessRequest {
   index_rate?: number;
   pitch_shift_all?: number; // Pitch shift for both vocals and instrumental (split mode) or just instrumental (swap mode)
   instrumental_pitch?: number; // Separate instrumental pitch shift (optional, used when different from pitch_shift_all)
+  extract_all_vocals?: boolean; // Extract all vocals including backups (true) or only main vocal (false)
+  // Multi-voice swap configuration
+  voice_count?: number; // Number of voice layers to extract (1-4), default 1
+  voice_configs?: VoiceModelConfig[]; // Voice model configs for multi-voice swap
 }
 
 export interface AudioProcessResponse {
@@ -597,6 +607,49 @@ export const audioProcessingApi = {
       index_rate: request.index_rate || 0.75,
       pitch_shift_all: request.pitch_shift_all || 0,
       instrumental_pitch: request.instrumental_pitch,
+      extract_all_vocals: request.extract_all_vocals ?? false, // Default to main vocal only
+      voice_count: request.voice_count || 1,
+      voice_configs: request.voice_configs,
+    });
+    
+    return response.data;
+  },
+};
+
+// =============================================================================
+// Voice Detection API
+// =============================================================================
+
+export interface VoiceDetectRequest {
+  audio: string; // Base64 encoded audio
+  sample_rate?: number;
+  use_vocals_only?: boolean; // Separate vocals first (recommended for music)
+  max_voices?: number; // Maximum number of voices to detect
+}
+
+export interface VoiceDetectResponse {
+  voice_count: number; // Number of distinct voices detected
+  confidence: number; // Confidence score (0-1)
+  method: string; // Detection method used
+  details: {
+    segments_analyzed?: number;
+    embeddings_computed?: number;
+    max_voices_checked?: number;
+    reason?: string;
+  };
+}
+
+export const voiceDetectionApi = {
+  /**
+   * Detect number of distinct singers/speakers in audio
+   * Useful for determining if backup vocals exist
+   */
+  detect: async (request: VoiceDetectRequest): Promise<VoiceDetectResponse> => {
+    const response = await api.post('/voice-count/detect', {
+      audio: request.audio,
+      sample_rate: request.sample_rate || 44100,
+      use_vocals_only: request.use_vocals_only ?? true,
+      max_voices: request.max_voices || 5,
     });
     
     return response.data;

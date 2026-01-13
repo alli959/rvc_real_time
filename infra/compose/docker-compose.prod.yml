@@ -305,6 +305,8 @@ services:
     volumes:
       # Mount app source code for development
       - ../../services/voice-engine/app:/app/app
+      # Mount RVC core code for development
+      - ../../services/voice-engine/rvc:/app/rvc
       # Mount local models directory directly (bind mount)
       - ../../services/voice-engine/assets/models:/app/assets/models
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert
