@@ -226,8 +226,18 @@ class RecordingWizard:
     """
     Manages guided recording sessions for voice model training.
     
+    Recordings are stored in two locations:
+    1. Session metadata/state: base_dir/{session_id}/
+    2. Audio files: models_dir/{exp_name}/recordings/
+    
+    This ensures all audio for a model is in one place, while
+    session state can be managed separately.
+    
     Usage:
-        wizard = RecordingWizard(base_dir="/path/to/sessions")
+        wizard = RecordingWizard(
+            base_dir="/path/to/sessions",
+            models_dir="/path/to/models"  # NEW: stores recordings with model
+        )
         
         # Create new session
         session = wizard.create_session(
@@ -263,17 +273,24 @@ class RecordingWizard:
     def __init__(
         self,
         base_dir: Optional[str] = None,
+        models_dir: Optional[str] = None,
         prompt_loader: Optional[PromptLoader] = None
     ):
         """
         Initialize the recording wizard.
         
         Args:
-            base_dir: Directory to store session data
+            base_dir: Directory to store session state/metadata
+            models_dir: Directory containing model folders (recordings go here)
             prompt_loader: PromptLoader instance (uses default if None)
         """
         self.base_dir = Path(base_dir) if base_dir else Path(tempfile.gettempdir()) / "wizard_sessions"
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Models directory - if provided, recordings go to models_dir/{exp_name}/recordings/
+        self.models_dir = Path(models_dir) if models_dir else None
+        if self.models_dir:
+            self.models_dir.mkdir(parents=True, exist_ok=True)
         
         self.prompt_loader = prompt_loader or get_prompt_loader()
         self.phoneme_analyzer = PhonemeAnalyzer()
@@ -304,9 +321,18 @@ class RecordingWizard:
         """
         session_id = str(uuid.uuid4())[:8]
         
-        # Create output directory
-        output_dir = self.base_dir / session_id
-        output_dir.mkdir(parents=True, exist_ok=True)
+        # Session metadata directory (state only)
+        session_dir = self.base_dir / session_id
+        session_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Recordings go to model directory if models_dir is set
+        if self.models_dir:
+            recordings_dir = self.models_dir / exp_name / "recordings"
+            recordings_dir.mkdir(parents=True, exist_ok=True)
+            output_dir = str(recordings_dir.parent)  # The model directory
+        else:
+            # Legacy: store in session directory
+            output_dir = str(session_dir)
         
         # Get prompts
         prompts_data = self.prompt_loader.get_wizard_session_prompts(
@@ -333,14 +359,14 @@ class RecordingWizard:
             prompts=prompts,
             target_phonemes=target_phonemes or set(),
             initial_coverage=existing_coverage,
-            output_dir=str(output_dir)
+            output_dir=output_dir
         )
         
-        # Save session
+        # Save session metadata to session directory
         self._sessions[session_id] = session
-        session.save(output_dir / "session.json")
+        session.save(session_dir / "session.json")
         
-        logger.info(f"Created session {session_id} with {len(prompts)} prompts")
+        logger.info(f"Created session {session_id} with {len(prompts)} prompts, output_dir={output_dir}")
         return session
     
     def get_session(self, session_id: str) -> Optional[WizardSession]:
@@ -493,10 +519,18 @@ class RecordingWizard:
         # Validate recording
         validation = self.validate_recording(audio, sample_rate)
         
-        # Save audio
+        # Determine save location based on models_dir
         audio_filename = f"{prompt.prompt_id}.wav"
-        audio_path = Path(session.output_dir) / "recordings" / audio_filename
-        audio_path.parent.mkdir(exist_ok=True)
+        
+        if self.models_dir:
+            # Save to model's recordings directory
+            recordings_dir = self.models_dir / session.exp_name / "recordings"
+            recordings_dir.mkdir(parents=True, exist_ok=True)
+            audio_path = recordings_dir / audio_filename
+        else:
+            # Legacy: save to session directory
+            audio_path = Path(session.output_dir) / "recordings" / audio_filename
+            audio_path.parent.mkdir(exist_ok=True)
         
         sf.write(str(audio_path), audio, sample_rate)
         
@@ -640,12 +674,17 @@ class RecordingWizard:
         session: WizardSession
     ) -> Optional[PhonemeCoverageReport]:
         """Analyze phoneme coverage of session recordings"""
-        audio_dir = Path(session.output_dir) / "recordings"
-        if not audio_dir.exists():
+        # Check model's recordings directory if models_dir is set
+        if self.models_dir:
+            recordings_dir = self.models_dir / session.exp_name / "recordings"
+        else:
+            recordings_dir = Path(session.output_dir) / "recordings"
+        
+        if not recordings_dir.exists():
             return None
         
         return self.phoneme_analyzer.analyze_audio_directory(
-            str(audio_dir), session.language
+            str(recordings_dir), session.language
         )
     
     def _calculate_coverage_improvement(
@@ -695,6 +734,11 @@ class RecordingWizard:
     def get_all_recordings_for_model(self, exp_name: str) -> Dict[str, Any]:
         """
         Get all recordings across all sessions for a model.
+        
+        Looks in both:
+        1. Session recordings (legacy: base_dir/{session_id}/recordings/)
+        2. Model recordings (new: models_dir/{exp_name}/recordings/)
+        
         Returns audio paths, phoneme coverage stats, and category breakdown.
         """
         sessions = self.get_all_sessions_for_model(exp_name)
@@ -704,16 +748,71 @@ class RecordingWizard:
         total_duration = 0.0
         phonemes_recorded: Set[str] = set()
         
+        # First, get recordings from wizard sessions (legacy and new sessions)
         for session in sessions:
             for prompt in session.prompts:
                 if prompt.is_accepted and prompt.audio_path:
-                    all_audio_paths.append(prompt.audio_path)
-                    total_duration += prompt.duration_seconds
-                    
-                    # Track by category
-                    if prompt.category not in recordings_by_category:
-                        recordings_by_category[prompt.category] = []
-                    recordings_by_category[prompt.category].append(prompt.audio_path)
+                    # Check if file actually exists
+                    if Path(prompt.audio_path).exists():
+                        all_audio_paths.append(prompt.audio_path)
+                        total_duration += prompt.duration_seconds
+                        
+                        # Track by category
+                        if prompt.category not in recordings_by_category:
+                            recordings_by_category[prompt.category] = []
+                        recordings_by_category[prompt.category].append(prompt.audio_path)
+        
+        # Also check model's recordings directory directly
+        # This catches recordings uploaded via bulk upload that aren't in wizard sessions
+        if self.models_dir:
+            model_recordings_dir = self.models_dir / exp_name / "recordings"
+            if model_recordings_dir.exists():
+                existing_filenames = {Path(p).name for p in all_audio_paths}
+                audio_extensions = ['*.wav', '*.mp3', '*.flac', '*.ogg']
+                
+                for ext in audio_extensions:
+                    for audio_path in model_recordings_dir.glob(ext):
+                        if audio_path.name not in existing_filenames:
+                            try:
+                                import soundfile as sf
+                                info = sf.info(str(audio_path))
+                                all_audio_paths.append(str(audio_path))
+                                total_duration += info.duration
+                                existing_filenames.add(audio_path.name)
+                                
+                                # Put in "uploaded" category
+                                if "uploaded" not in recordings_by_category:
+                                    recordings_by_category["uploaded"] = []
+                                recordings_by_category["uploaded"].append(str(audio_path))
+                                logger.info(f"Found model recording: {audio_path}")
+                            except Exception as e:
+                                logger.warning(f"Could not read {audio_path}: {e}")
+        
+        # Also check uploads directory (files uploaded via /trainer/upload endpoint)
+        # This is separate from model recordings dir
+        # Go up to /app level: __file__ is /app/app/wizard/__init__.py
+        uploads_dir = Path(__file__).parent.parent.parent / "uploads" / exp_name
+        if uploads_dir.exists():
+            existing_filenames = {Path(p).name for p in all_audio_paths}
+            audio_extensions = ['*.wav', '*.mp3', '*.flac', '*.ogg']
+            
+            for ext in audio_extensions:
+                for audio_path in uploads_dir.glob(f"**/{ext}"):
+                    if audio_path.name not in existing_filenames:
+                        try:
+                            import soundfile as sf
+                            info = sf.info(str(audio_path))
+                            all_audio_paths.append(str(audio_path))
+                            total_duration += info.duration
+                            existing_filenames.add(audio_path.name)
+                            
+                            # Put in "uploaded" category
+                            if "uploaded" not in recordings_by_category:
+                                recordings_by_category["uploaded"] = []
+                            recordings_by_category["uploaded"].append(str(audio_path))
+                            logger.info(f"Found uploaded audio file: {audio_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not read {audio_path}: {e}")
         
         return {
             "exp_name": exp_name,
@@ -731,35 +830,56 @@ class RecordingWizard:
         """
         Get status of each category for a model - how many recordings exist.
         Used to show progress indicators in UI.
+        
+        Returns:
+            - "not_started": grey - no recordings
+            - "has_recordings": yellow - has recordings but not satisfied
+            - "satisfied": green - model covers this category well (after training)
         """
         sessions = self.get_all_sessions_for_model(exp_name)
         
         # Get all categories from prompt loader
-        prompts_data = self.prompt_loader.get_prompts(language)
-        all_categories = prompts_data.get("categories", {}) if prompts_data else {}
+        lang_prompts = self.prompt_loader.get_language(language)
         
         category_status = {}
         
-        for cat_id, cat_info in all_categories.items():
-            recordings_in_cat = 0
-            for session in sessions:
-                if session.language == language:
-                    for prompt in session.prompts:
-                        if prompt.category == cat_id and prompt.is_accepted:
-                            recordings_in_cat += 1
-            
-            category_status[cat_id] = {
-                "name": cat_info.get("description", cat_id),
-                "total_prompts": cat_info.get("prompt_count", 0),
-                "recordings": recordings_in_cat,
-                "has_recordings": recordings_in_cat > 0,
-                "phonemes_covered": cat_info.get("phonemes_covered", [])
-            }
+        if lang_prompts and lang_prompts.categories:
+            for cat_id, cat in lang_prompts.categories.items():
+                recordings_in_cat = 0
+                for session in sessions:
+                    if session.language == language:
+                        for prompt in session.prompts:
+                            if prompt.category == cat_id and prompt.is_accepted:
+                                recordings_in_cat += 1
+                
+                category_status[cat_id] = {
+                    "name": cat.description or cat_id,
+                    "total_prompts": len(cat.prompts) if cat.prompts else 0,
+                    "recordings": recordings_in_cat,
+                    "has_recordings": recordings_in_cat > 0,
+                    "status": "has_recordings" if recordings_in_cat > 0 else "not_started",
+                    "phonemes_covered": cat.phonemes_covered or []
+                }
+        
+        # Also count total uploaded recordings (not from wizard sessions)
+        total_uploaded = 0
+        if self.models_dir:
+            model_recordings_dir = self.models_dir / exp_name / "recordings"
+            if model_recordings_dir.exists():
+                all_wavs = list(model_recordings_dir.glob("*.wav"))
+                # Count those not from wizard sessions
+                wizard_recordings = sum(
+                    cat_status.get("recordings", 0) 
+                    for cat_status in category_status.values()
+                )
+                total_uploaded = max(0, len(all_wavs) - wizard_recordings)
         
         return {
             "exp_name": exp_name,
             "language": language,
-            "categories": category_status
+            "categories": category_status,
+            "uploaded_recordings": total_uploaded,
+            "total_recordings": sum(c.get("recordings", 0) for c in category_status.values()) + total_uploaded
         }
 
 

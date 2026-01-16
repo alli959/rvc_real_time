@@ -44,6 +44,67 @@ except ImportError:
 
 logger = logging.getLogger(__name__)
 
+# =============================================================================
+# Job Queue / Concurrency Limiter for Heavy Operations
+# =============================================================================
+# This prevents OOM issues when multiple heavy jobs run concurrently
+
+class JobQueue:
+    """Simple semaphore-based job queue for heavy operations"""
+    
+    def __init__(self, max_concurrent: int = 2):
+        self.semaphore = asyncio.Semaphore(max_concurrent)
+        self.active_jobs = 0
+        self.queued_jobs = 0
+        self.completed_jobs = 0
+        self.failed_jobs = 0
+        self._lock = asyncio.Lock()
+    
+    async def acquire(self, timeout: float = 300.0) -> bool:
+        """Try to acquire a slot, with timeout"""
+        async with self._lock:
+            self.queued_jobs += 1
+        
+        try:
+            acquired = await asyncio.wait_for(
+                self.semaphore.acquire(), 
+                timeout=timeout
+            )
+            async with self._lock:
+                self.queued_jobs -= 1
+                if acquired:
+                    self.active_jobs += 1
+            return acquired
+        except asyncio.TimeoutError:
+            async with self._lock:
+                self.queued_jobs -= 1
+            return False
+    
+    async def release(self, success: bool = True):
+        """Release a slot"""
+        async with self._lock:
+            self.active_jobs = max(0, self.active_jobs - 1)
+            if success:
+                self.completed_jobs += 1
+            else:
+                self.failed_jobs += 1
+        self.semaphore.release()
+    
+    def get_stats(self) -> dict:
+        return {
+            "active_jobs": self.active_jobs,
+            "queued_jobs": self.queued_jobs,
+            "completed_jobs": self.completed_jobs,
+            "failed_jobs": self.failed_jobs,
+        }
+
+
+# Global job queues for different operation types
+# Limit concurrent heavy operations to prevent OOM
+heavy_job_queue = JobQueue(max_concurrent=2)  # Vocal separation, training
+youtube_job_queue = JobQueue(max_concurrent=3)  # YouTube downloads
+
+
 app = FastAPI(
     title="MorphVox Voice Engine API",
     description="Voice conversion and TTS API",
@@ -73,6 +134,64 @@ except ImportError:
     trainer_router = None
     logger.warning("Trainer API not available - missing dependencies")
 
+# Import admin APIs (optional)
+try:
+    from app.admin import logs_router, metrics_router, assets_router
+    ADMIN_API_AVAILABLE = True
+except ImportError:
+    ADMIN_API_AVAILABLE = False
+    logs_router = None
+    metrics_router = None
+    assets_router = None
+    logger.warning("Admin API not available - missing dependencies")
+
+import uuid
+import traceback
+from starlette.requests import Request
+from starlette.responses import JSONResponse
+from starlette.middleware.base import BaseHTTPMiddleware
+
+# =============================================================================
+# Centralized Error Handling & Request Tracking
+# =============================================================================
+
+class RequestIdMiddleware(BaseHTTPMiddleware):
+    """Add request ID to every request for tracking"""
+    async def dispatch(self, request: Request, call_next):
+        request_id = request.headers.get("X-Request-ID", str(uuid.uuid4())[:8])
+        request.state.request_id = request_id
+        
+        response = await call_next(request)
+        response.headers["X-Request-ID"] = request_id
+        return response
+
+
+class ErrorResponse(BaseModel):
+    """Standard error response"""
+    error: dict = Field(..., description="Error details")
+
+
+def create_error_response(
+    code: str,
+    message: str,
+    request_id: str = None,
+    details: dict = None,
+    status_code: int = 500
+) -> JSONResponse:
+    """Create a standardized JSON error response"""
+    error_body = {
+        "error": {
+            "code": code,
+            "message": message,
+            "request_id": request_id or "unknown",
+        }
+    }
+    if details:
+        error_body["error"]["details"] = details
+    
+    return JSONResponse(status_code=status_code, content=error_body)
+
+
 # CORS middleware
 app.add_middleware(
     CORSMiddleware,
@@ -82,10 +201,58 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Request ID middleware for tracking
+app.add_middleware(RequestIdMiddleware)
+
+
+# Global exception handler - catches all unhandled exceptions
+@app.exception_handler(Exception)
+async def global_exception_handler(request: Request, exc: Exception):
+    """Handle all unhandled exceptions with proper JSON responses"""
+    request_id = getattr(request.state, "request_id", "unknown")
+    
+    # Log the full traceback
+    logger.error(f"[{request_id}] Unhandled exception: {exc}")
+    logger.error(f"[{request_id}] Traceback: {traceback.format_exc()}")
+    
+    # Return user-friendly JSON error
+    return create_error_response(
+        code="INTERNAL_ERROR",
+        message=str(exc) if str(exc) else "An unexpected error occurred",
+        request_id=request_id,
+        status_code=500
+    )
+
+
+@app.exception_handler(HTTPException)
+async def http_exception_handler(request: Request, exc: HTTPException):
+    """Handle HTTPExceptions with proper JSON responses"""
+    request_id = getattr(request.state, "request_id", "unknown")
+    
+    return create_error_response(
+        code=f"HTTP_{exc.status_code}",
+        message=exc.detail,
+        request_id=request_id,
+        status_code=exc.status_code
+    )
+
+
 # Include trainer router if available
 if TRAINER_AVAILABLE and trainer_router:
     app.include_router(trainer_router)
     logger.info("Trainer API endpoints enabled")
+
+# Include admin routers if available
+if ADMIN_API_AVAILABLE:
+    if logs_router:
+        app.include_router(logs_router)
+        logger.info("Admin Logs API enabled")
+    if metrics_router:
+        app.include_router(metrics_router)
+        logger.info("Admin Metrics API enabled")
+    if assets_router:
+        app.include_router(assets_router)
+        logger.info("Admin Assets API enabled")
 
 # Global model manager reference (set from main.py)
 model_manager = None
@@ -1064,6 +1231,14 @@ async def youtube_download(request: YouTubeDownloadRequest):
             detail="YouTube service not available. Install yt-dlp: pip install yt-dlp"
         )
     
+    # Use job queue to limit concurrent downloads
+    if not await youtube_job_queue.acquire(timeout=60.0):
+        raise HTTPException(
+            status_code=503,
+            detail="Service busy. Too many concurrent downloads. Please try again."
+        )
+    
+    success = False
     try:
         # Get video info first
         info = await get_video_info(request.video_id)
@@ -1074,6 +1249,7 @@ async def youtube_download(request: YouTubeDownloadRequest):
             use_cache=request.use_cache
         )
         
+        success = True
         return YouTubeDownloadResponse(
             audio=base64.b64encode(audio_bytes).decode('utf-8'),
             sample_rate=sample_rate,
@@ -1086,6 +1262,8 @@ async def youtube_download(request: YouTubeDownloadRequest):
     except Exception as e:
         logger.exception(f"YouTube download failed: {e}")
         raise HTTPException(status_code=500, detail=f"Download failed: {str(e)}")
+    finally:
+        await youtube_job_queue.release(success)
 
 
 @app.get("/youtube/info/{video_id}")
@@ -2060,6 +2238,14 @@ async def process_audio(request: AudioProcessRequest):
     # Log incoming request parameters
     logger.info(f"Audio processing request: mode={request.mode}, pitch_shift_all={request.pitch_shift_all}, f0_up_key={request.f0_up_key}")
     
+    # Use job queue to limit concurrent heavy operations
+    if not await heavy_job_queue.acquire(timeout=300.0):
+        raise HTTPException(
+            status_code=503,
+            detail="Service busy. Too many concurrent processing jobs. Please try again."
+        )
+    
+    success = False
     try:
         import librosa
         from pydub import AudioSegment
@@ -2200,6 +2386,7 @@ async def process_audio(request: AudioProcessRequest):
                     instrumental = pitch_shift_audio(instrumental, 44100, instrumental_pitch)
                     logger.info(f"Instrumental pitch shift applied: shape={instrumental.shape}")
                 
+                success = True
                 return AudioProcessResponse(
                     mode="split",
                     vocals=encode_audio(vocals, 44100),
@@ -2266,6 +2453,7 @@ async def process_audio(request: AudioProcessRequest):
             if output_audio is None or len(output_audio) == 0:
                 raise HTTPException(status_code=500, detail="Voice conversion failed")
             
+            success = True
             return AudioProcessResponse(
                 mode="convert",
                 converted=encode_audio(output_audio.astype(np.float32), 16000),
@@ -2676,6 +2864,17 @@ async def process_audio(request: AudioProcessRequest):
                 # CRITICAL: Make a fresh copy of instrumental_clean for mixing
                 # This ensures the original is never modified
                 instrumental_for_mix = instrumental_clean.copy()
+                
+                # ============================================================
+                # PITCH SHIFT: Apply pitch_shift_all to instrumental if requested
+                # This keeps the instrumental in the same key as the pitch-shifted voice
+                # ============================================================
+                instrumental_pitch = request.instrumental_pitch if request.instrumental_pitch is not None else request.pitch_shift_all
+                if instrumental_pitch != 0:
+                    logger.info(f"Applying pitch shift of {instrumental_pitch} semitones to instrumental for swap mode")
+                    instrumental_for_mix = pitch_shift_audio(instrumental_for_mix, uvr_output_sr, instrumental_pitch)
+                    logger.info(f"Instrumental pitch shift applied: shape={instrumental_for_mix.shape}")
+                
                 inst_rms = np.sqrt(np.mean(instrumental_for_mix**2))
                 logger.info(f"instrumental_clean RMS: {inst_rms:.4f}")
                 
@@ -2755,6 +2954,7 @@ async def process_audio(request: AudioProcessRequest):
                 
                 logger.info(f"Vocal swap complete: {len(converted_vocals_list)} voices + instrumental, output length={len(mixed)}, sr={uvr_output_sr}")
                 
+                success = True
                 return AudioProcessResponse(
                     mode="swap",
                     converted=encode_audio(mixed.astype(np.float32), uvr_output_sr),
@@ -2780,7 +2980,8 @@ async def process_audio(request: AudioProcessRequest):
     except Exception as e:
         logger.exception(f"Audio processing failed: {e}")
         raise HTTPException(status_code=500, detail=f"Audio processing failed: {str(e)}")
-
+    finally:
+        await heavy_job_queue.release(success)
 
 # =============================================================================
 # Model Cache Management Endpoints
@@ -2800,6 +3001,38 @@ class CacheStatsResponse(BaseModel):
     uvr5_loads: int
     uvr5_evictions: int
     estimated_memory_mb: float
+
+
+class JobQueueStatsResponse(BaseModel):
+    """Response model for job queue statistics."""
+    heavy_queue_active: int
+    heavy_queue_max: int
+    heavy_queue_completed: int
+    heavy_queue_failed: int
+    youtube_queue_active: int
+    youtube_queue_max: int
+    youtube_queue_completed: int
+    youtube_queue_failed: int
+
+
+@app.get("/job-queue/stats", response_model=JobQueueStatsResponse)
+async def get_job_queue_stats():
+    """
+    Get job queue statistics.
+    
+    Shows current utilization of the heavy processing queue (audio/process)
+    and YouTube download queue. Useful for monitoring load and concurrency limits.
+    """
+    return JobQueueStatsResponse(
+        heavy_queue_active=heavy_job_queue.active_jobs,
+        heavy_queue_max=heavy_job_queue.max_concurrent,
+        heavy_queue_completed=heavy_job_queue.completed_jobs,
+        heavy_queue_failed=heavy_job_queue.failed_jobs,
+        youtube_queue_active=youtube_job_queue.active_jobs,
+        youtube_queue_max=youtube_job_queue.max_concurrent,
+        youtube_queue_completed=youtube_job_queue.completed_jobs,
+        youtube_queue_failed=youtube_job_queue.failed_jobs
+    )
 
 
 class ClearCacheRequest(BaseModel):

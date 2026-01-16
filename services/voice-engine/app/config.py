@@ -55,7 +55,7 @@ class ModelConfig:
     filter_radius: int = 3
     rms_mix_rate: float = 0.25
     protect: float = 0.33
-    resample_sr: int = 16000
+    resample_sr: int = 0  # 0 = keep model's native sample rate
 
     @classmethod
     def from_env(cls):
@@ -76,7 +76,7 @@ class ModelConfig:
             filter_radius=int(os.getenv("FILTER_RADIUS", 3)),
             rms_mix_rate=float(os.getenv("RMS_MIX_RATE", 0.25)),
             protect=float(os.getenv("PROTECT", 0.33)),
-            resample_sr=int(os.getenv("RESAMPLE_SR", int(os.getenv("AUDIO_SAMPLE_RATE", 16000)))),
+            resample_sr=int(os.getenv("RESAMPLE_SR", 0)),  # 0 = keep native rate
         )
 
 
