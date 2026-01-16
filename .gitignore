@@ -49,6 +49,15 @@ logs/
 # Voice Engine - Model files (large binaries)
 # ============================================
 
+# User uploads (audio files for training)
+services/voice-engine/uploads/
+
+# Whisper models (downloaded at runtime)
+services/voice-engine/whisper/
+
+# Matplotlib cache
+services/voice-engine/matplotlib/
+
 # Hubert and RMVPE models (downloaded on setup)
 services/voice-engine/assets/hubert/*.pt
 services/voice-engine/assets/rmvpe/*.pt
@@ -60,6 +69,14 @@ services/voice-engine/assets/uvr5_weights/**/*.pth
 # Bark TTS models (downloaded on setup, ~13GB)
 services/voice-engine/assets/bark/*.pt
 services/voice-engine/assets/bark/*.th
+
+# pretrained_v2 models (downloaded on setup, ~145MB each)
+services/voice-engine/assets/pretrained_v2/*.pt
+services/voice-engine/assets/pretrained_v2/*.pth
+services/voice-engine/assets/pretrained_v2/*.th
+
+# Test audio files in root (temporary)
+*.wav
 
 # ALL model .pth, .index, .npy files (too large for GitHub)
 # These are downloaded on setup via scripts/download_billcipher_model.sh
@@ -118,6 +135,7 @@ apps/api/storage/framework/views/*
 apps/api/storage/logs/*
 apps/api/bootstrap/cache/*.php
 !apps/api/bootstrap/cache/.gitkeep
+!apps/api/resources/views/admin/logs
 
 # ============================================
 # Next.js Web
