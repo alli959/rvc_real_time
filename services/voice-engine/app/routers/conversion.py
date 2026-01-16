@@ -82,18 +82,21 @@ async def convert_voice(request: ConvertRequest):
             protect=params.get('protect', 0.33),
         )
         
-        # Encode output
+        # Encode output - use actual output sample rate from model
+        out_sr = int(getattr(getattr(model_manager, "default_params", None), "resample_sr", 0) or 0)
+        if out_sr <= 0:
+            out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", sample_rate) or sample_rate)
         wav_buffer = io.BytesIO()
-        sf.write(wav_buffer, converted, sample_rate, format='WAV')
+        sf.write(wav_buffer, converted, out_sr, format='WAV')
         wav_buffer.seek(0)
         
         audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
         
         return ConvertResponse(
             audio=audio_base64,
-            sample_rate=sample_rate,
+            sample_rate=out_sr,
             format="wav",
-            duration=len(converted) / sample_rate,
+            duration=len(converted) / out_sr,
             model_id=request.model_id,
         )
         
@@ -154,18 +157,21 @@ async def convert_voice_file(
             index_rate=params.get('index_rate', 0.5),
         )
         
-        # Encode output
+        # Encode output - use actual output sample rate from model
+        out_sr = int(getattr(getattr(model_manager, "default_params", None), "resample_sr", 0) or 0)
+        if out_sr <= 0:
+            out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", sample_rate) or sample_rate)
         wav_buffer = io.BytesIO()
-        sf.write(wav_buffer, converted, sample_rate, format='WAV')
+        sf.write(wav_buffer, converted, out_sr, format='WAV')
         wav_buffer.seek(0)
         
         audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
         
         return ConvertResponse(
             audio=audio_base64,
-            sample_rate=sample_rate,
+            sample_rate=out_sr,
             format="wav",
-            duration=len(converted) / sample_rate,
+            duration=len(converted) / out_sr,
             model_id=model_id,
         )
         

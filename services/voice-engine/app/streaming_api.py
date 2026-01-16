@@ -179,6 +179,7 @@ class WebSocketServer:
                 except Exception as e:
                     logger.error(f"Model warmup failed for {self.model_manager.model_name} (client {client_id}): {e}")
 
+                out_sr = self._infer_output_sample_rate(self.infer_params)
                 response = {
                     'type': 'model_loaded',
                     'model_name': self.model_manager.model_name,
@@ -234,11 +235,14 @@ class WebSocketServer:
             output_gain = 1.0
             if processed is not None and len(processed) > 0:
                 processed = np.clip(processed * output_gain, -1.0, 1.0)
-                logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} sending processed audio: {len(processed)} samples ({len(processed)/16000:.2f}s)")
+                # Get the actual output sample rate from the inference params
+                out_sr = self._infer_output_sample_rate(infer_params)
+                logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} sending processed audio: {len(processed)} samples ({len(processed)/out_sr:.2f}s)")
                 # Send processed audio back
                 response = {
                     'type': 'audio',
-                    'data': self.encode_audio(processed),
+                    'data': self.encode_audio(processed, sample_rate=out_sr),
+                    'sample_rate': out_sr,
                     'final': True
                 }
                 try:
@@ -255,6 +259,7 @@ class WebSocketServer:
             self.client_buffers[client_id].append(audio_data)
             import datetime
             logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} buffered audio chunk: {len(audio_data)} samples (buffered: {len(self.client_buffers[client_id])})")
+            out_sr = self._infer_output_sample_rate()
             response = {
                 'type': 'ack',
                 'buffered': len(self.client_buffers[client_id])
@@ -268,10 +273,12 @@ class WebSocketServer:
             processed = self.stream_processor.process_audio_chunk(audio_data)
             
             if processed is not None:
+                out_sr = self._infer_output_sample_rate(infer_params)
                 logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} sending real-time processed audio: {len(processed)} samples")
                 response = {
                     'type': 'audio',
-                    'data': self.encode_audio(processed)
+                    'data': self.encode_audio(processed, sample_rate=out_sr),
+                    'sample_rate': out_sr,
                 }
                 await websocket.send(json.dumps(response))
     
@@ -316,7 +323,7 @@ class WebSocketServer:
                 
                 # Load the audio
                 import librosa
-                audio, sr = librosa.load(tmp_path, sr=40000, mono=True)  # RVC expects 40kHz
+                audio, sr = librosa.load(tmp_path, sr=None, mono=True)
                 
                 # Clean up temp file
                 if os.path.exists(tmp_path):
@@ -337,10 +344,18 @@ class WebSocketServer:
                     params = self.get_client_params(client_id, settings)
                     
                     # Run voice conversion
+
+                    # Ensure model input sample rate is 16k (RVC expects 16k input)
+                    target_in_sr = 16000
+                    if sr != target_in_sr:
+                        audio = librosa.resample(audio.astype(np.float32), orig_sr=sr, target_sr=target_in_sr)
+                        sr = target_in_sr
+
                     converted_audio = self.model_manager.infer(audio, params=params)
                     
                     if converted_audio is not None:
                         audio = converted_audio
+                        sr = self._infer_output_sample_rate(params)
                         logger.info(f"TTS audio converted with model {self.model_manager.model_name}")
                     
                 except Exception as e:
@@ -349,7 +364,7 @@ class WebSocketServer:
             
             # Step 3: Convert to WAV and encode as base64
             wav_buffer = io.BytesIO()
-            sf.write(wav_buffer, audio, 40000, format='WAV')
+            sf.write(wav_buffer, audio, int(sr), format='WAV')
             wav_buffer.seek(0)
             audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
             
@@ -357,7 +372,7 @@ class WebSocketServer:
             response = {
                 'type': 'tts_audio',
                 'data': audio_base64,
-                'sample_rate': 40000,
+                'sample_rate': int(sr),
                 'model_applied': self.model_manager.model_name if self.model_manager and self.model_manager.model_name else None
             }
             await websocket.send(json.dumps(response))
@@ -517,33 +532,62 @@ class WebSocketServer:
             traceback.print_exc()
             return None
     
-    def encode_audio(self, audio_data: np.ndarray, as_wav: bool = True) -> str:
+
+    def _infer_output_sample_rate(self, infer_params=None) -> int:
         """
-        Encode audio data to base64
-        
-        Args:
-            audio_data: Numpy array of audio samples (float32)
-            as_wav: If True, encode as WAV file (playable in browser)
-            
-        Returns:
-            Base64 encoded audio string
+        Infer the *actual* output sample rate produced by the VC pipeline.
+        Priority:
+          1) params.resample_sr if > 0
+          2) model_manager.vc.tgt_sr
+          3) fallback 16000
+        """
+        params = infer_params or getattr(self, "infer_params", None)
+
+        try:
+            resample_sr = int(getattr(params, "resample_sr", 0) or 0)
+            if resample_sr > 0:
+                return resample_sr
+        except Exception:
+            pass
+
+        try:
+            vc = getattr(self.model_manager, "vc", None) if getattr(self, "model_manager", None) else None
+            tgt_sr = getattr(vc, "tgt_sr", None) if vc is not None else None
+            if tgt_sr:
+                return int(tgt_sr)
+        except Exception:
+            pass
+
+        return 16000
+
+
+
+
+    def encode_audio(self, audio_data: np.ndarray, sample_rate: Optional[int] = None, as_wav: bool = True) -> str:
+        """
+        Encode audio data to base64.
+
+        IMPORTANT:
+        - We must write the WAV header with the TRUE output sample rate,
+          otherwise playback becomes deep/slow/broken.
+        - We write PCM_16 for maximum browser compatibility.
         """
         if as_wav:
-            import soundfile as sf
-            
-            # Write to WAV format in memory
             wav_io = io.BytesIO()
-            # RVC outputs at model's target sample rate (usually 40000 or 48000)
-            # We'll use 16000 for consistency, but this should match the actual output
-            sample_rate = 16000
-            sf.write(wav_io, audio_data.astype(np.float32), sample_rate, format='WAV')
+            sr = int(sample_rate or self._infer_output_sample_rate())
+
+            # Convert float32 [-1, 1] -> int16 PCM
+            y = np.asarray(audio_data, dtype=np.float32).flatten()
+            y = np.clip(y, -1.0, 1.0)
+            y16 = (y * 32767.0).astype(np.int16)
+
+            sf.write(wav_io, y16, sr, format="WAV", subtype="PCM_16")
             wav_io.seek(0)
-            return base64.b64encode(wav_io.read()).decode('utf-8')
+            return base64.b64encode(wav_io.read()).decode("utf-8")
         else:
-            # Raw float32 bytes
-            audio_bytes = audio_data.astype(np.float32).tobytes()
-            return base64.b64encode(audio_bytes).decode('utf-8')
-    
+            audio_bytes = np.asarray(audio_data, dtype=np.float32).tobytes()
+            return base64.b64encode(audio_bytes).decode("utf-8")
+
     async def broadcast(self, message: dict):
         """
         Broadcast message to all connected clients
