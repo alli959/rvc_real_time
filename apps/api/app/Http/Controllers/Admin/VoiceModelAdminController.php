@@ -68,10 +68,44 @@ class VoiceModelAdminController extends Controller
     public function edit(VoiceModel $voiceModel)
     {
         $voiceModel->load('user');
+        
+        // Get training info if model has a model_dir
+        $trainingInfo = null;
+        if ($voiceModel->model_dir) {
+            $trainer = app(TrainerService::class);
+            $trainingInfo = $trainer->getModelTrainingInfo($voiceModel->model_dir);
+        }
 
         return view('admin.models.edit', [
             'voiceModel' => $voiceModel,
+            'trainingInfo' => $trainingInfo,
         ]);
+    }
+
+    /**
+     * Request checkpoint save for a training job (and optionally stop training)
+     */
+    public function requestCheckpoint(Request $request, VoiceModel $voiceModel)
+    {
+        $stopAfter = $request->boolean('stop_after', false);
+        $jobId = $request->input('job_id');
+        
+        if (!$jobId) {
+            return back()->with('error', 'No job ID provided');
+        }
+        
+        $trainer = app(TrainerService::class);
+        $result = $trainer->requestCheckpoint($jobId, $stopAfter);
+        
+        if (!$result) {
+            return back()->with('error', 'Failed to request checkpoint');
+        }
+        
+        $message = $stopAfter 
+            ? 'Checkpoint save requested. Training will stop after saving.'
+            : 'Checkpoint save requested. Training will continue.';
+            
+        return back()->with('status', $message);
     }
 
     public function update(Request $request, VoiceModel $voiceModel)
@@ -283,5 +317,109 @@ class VoiceModelAdminController extends Controller
                 'Inference test failed: ' . $e->getMessage()
             );
         }
+    }
+
+    /**
+     * Extract model from checkpoint and/or build FAISS index.
+     * 
+     * This handles cases where:
+     * - Training completed but final model wasn't extracted (has G_*.pth but no {name}.pth)
+     * - Index file is missing and needs to be rebuilt
+     */
+    public function extractModel(Request $request, VoiceModel $voiceModel, TrainerService $trainerService)
+    {
+        try {
+            $validated = $request->validate([
+                'extract_model' => ['nullable', 'boolean'],
+                'build_index' => ['nullable', 'boolean'],
+                'sample_rate' => ['nullable', 'in:32k,40k,48k'],
+                'version' => ['nullable', 'in:v1,v2'],
+            ]);
+
+            // Determine model directory from model_path or slug
+            $modelDir = null;
+            if ($voiceModel->model_path) {
+                // Extract directory from model_path (e.g., "bjarni-ben-10/bjarni-ben-10.pth" -> "bjarni-ben-10")
+                $modelDir = dirname($voiceModel->model_path);
+                if ($modelDir === '.' || empty($modelDir)) {
+                    $modelDir = $voiceModel->slug;
+                }
+            } else {
+                $modelDir = $voiceModel->slug;
+            }
+
+            $result = $trainerService->extractModelAndBuildIndex(
+                $modelDir,
+                $request->boolean('extract_model', true),
+                $request->boolean('build_index', true),
+                $validated['sample_rate'] ?? '48k',
+                $validated['version'] ?? 'v2',
+                $voiceModel->slug
+            );
+
+            if ($result && $result['success']) {
+                // Update voice model record with new paths
+                $updates = [];
+                
+                if (!empty($result['model_path'])) {
+                    // Convert absolute path to relative path
+                    $relativePath = $this->getRelativeModelPath($result['model_path']);
+                    if ($relativePath) {
+                        $updates['model_path'] = $relativePath;
+                    }
+                }
+                
+                if (!empty($result['index_path'])) {
+                    $relativePath = $this->getRelativeModelPath($result['index_path']);
+                    if ($relativePath) {
+                        $updates['index_path'] = $relativePath;
+                        $updates['has_index'] = true;
+                    }
+                }
+                
+                if (!empty($updates)) {
+                    $updates['status'] = 'ready';
+                    $voiceModel->update($updates);
+                }
+
+                return redirect()->route('admin.models.edit', $voiceModel)->with('status', 
+                    "Model extraction completed: " . ($result['message'] ?? 'Success')
+                );
+            }
+
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Extraction failed: ' . ($result['message'] ?? 'Unknown error')
+            );
+        } catch (\Exception $e) {
+            return redirect()->route('admin.models.edit', $voiceModel)->with('error', 
+                'Extraction failed: ' . $e->getMessage()
+            );
+        }
+    }
+
+    /**
+     * Convert absolute path to relative model path.
+     */
+    private function getRelativeModelPath(string $absolutePath): ?string
+    {
+        // Remove common prefixes to get relative path
+        $prefixes = [
+            '/app/assets/models/',
+            '/var/www/html/storage/models/',
+            storage_path('models') . '/',
+        ];
+        
+        foreach ($prefixes as $prefix) {
+            if (str_starts_with($absolutePath, $prefix)) {
+                return substr($absolutePath, strlen($prefix));
+            }
+        }
+        
+        // Try to extract just the model_dir/filename part
+        if (preg_match('#/([^/]+/[^/]+\.(?:pth|index))$#', $absolutePath, $matches)) {
+            return $matches[1];
+        }
+        
+        return null;
     }
 }

@@ -285,14 +285,45 @@ class TrainerController extends Controller
      */
     public function uploadAudio(Request $request): JsonResponse
     {
+        // Normalize files to always be an array (handles both single file and multiple files)
+        // Check both 'files' and 'files[]' field names - different clients may use different conventions
+        $uploadedFiles = $request->file('files');
+        
+        \Log::info('Upload audio request received', [
+            'exp_name' => $request->input('exp_name'),
+            'has_files_field' => $request->hasFile('files'),
+            'files_field_type' => $uploadedFiles ? gettype($uploadedFiles) : 'null',
+            'all_inputs' => array_keys($request->all()),
+            'all_files' => array_keys($request->allFiles()),
+        ]);
+        
+        if ($uploadedFiles && !is_array($uploadedFiles)) {
+            $uploadedFiles = [$uploadedFiles];
+        }
+        
         $request->validate([
             'exp_name' => ['required', 'string', 'max:100'],
-            'files' => ['required', 'array'],
-            'files.*' => ['file', 'mimes:wav,mp3,flac,ogg', 'max:102400'], // 100MB max per file
+            'files' => ['required'],
         ]);
+        
+        if (!$uploadedFiles || count($uploadedFiles) === 0) {
+            return response()->json(['error' => 'No files uploaded'], 422);
+        }
 
         $files = [];
-        foreach ($request->file('files') as $file) {
+        foreach ($uploadedFiles as $file) {
+            // Validate each file
+            if (!in_array($file->getClientOriginalExtension(), ['wav', 'mp3', 'flac', 'ogg'])) {
+                return response()->json(['error' => 'Invalid file type: ' . $file->getClientOriginalName()], 422);
+            }
+            if ($file->getSize() > 102400 * 1024) { // 100MB
+                return response()->json(['error' => 'File too large: ' . $file->getClientOriginalName()], 422);
+            }
+            
+            \Log::info('Processing uploaded file', [
+                'name' => $file->getClientOriginalName(),
+                'size' => $file->getSize(),
+            ]);
             $files[] = [
                 'name' => $file->getClientOriginalName(),
                 'content' => file_get_contents($file->getRealPath()),
@@ -364,6 +395,39 @@ class TrainerController extends Controller
             'success' => $success,
             'job_id' => $jobId,
         ]);
+    }
+
+    /**
+     * Request a checkpoint save for a training job
+     */
+    public function requestCheckpoint(Request $request, string $jobId): JsonResponse
+    {
+        $stopAfter = $request->boolean('stop_after', false);
+        
+        $result = $this->trainer->requestCheckpoint($jobId, $stopAfter);
+
+        if (!$result) {
+            return response()->json([
+                'error' => 'Failed to request checkpoint',
+                'job_id' => $jobId,
+            ], 500);
+        }
+
+        return response()->json($result);
+    }
+
+    /**
+     * Get checkpoint request status
+     */
+    public function getCheckpointStatus(string $jobId): JsonResponse
+    {
+        $status = $this->trainer->getCheckpointStatus($jobId);
+
+        if (!$status) {
+            return response()->json(['error' => 'Failed to get checkpoint status'], 500);
+        }
+
+        return response()->json($status);
     }
 
     /**
@@ -635,6 +699,48 @@ class TrainerController extends Controller
         }
 
         return response()->json($result);
+    }
+
+    /**
+     * Get comprehensive model training info including checkpoint status
+     * 
+     * Returns information about recordings, preprocessed data,
+     * training status, and checkpoint info for resuming training.
+     */
+    public function getModelTrainingInfo(Request $request, string $modelSlug): JsonResponse
+    {
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        // Check authorization
+        $user = $request->user();
+        if ($model->user_id !== $user->id && !$user->hasRole('admin')) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        $info = $this->trainer->getModelTrainingInfo($expName);
+
+        if (!$info) {
+            return response()->json(['error' => 'Failed to get training info'], 500);
+        }
+
+        // Add model database info
+        $info['model'] = [
+            'id' => $model->id,
+            'name' => $model->name,
+            'slug' => $model->slug,
+            'status' => $model->status,
+            'en_readiness_score' => $model->en_readiness_score,
+            'language_scanned_at' => $model->language_scanned_at,
+        ];
+
+        return response()->json($info);
     }
 
     // =========================================================================

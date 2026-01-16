@@ -78,6 +78,28 @@
           <i data-lucide="list-music" class="w-5 h-5"></i>
           <span>Jobs Queue</span>
         </a>
+        
+        <!-- Divider -->
+        <div class="my-4 border-t border-gray-800"></div>
+        <p class="px-4 text-xs font-semibold text-gray-500 uppercase tracking-wider mb-2">System</p>
+        
+        <a href="{{ route('admin.logs.index') }}" 
+           class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('admin.logs.*') ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white' }}">
+          <i data-lucide="scroll-text" class="w-5 h-5"></i>
+          <span>Logs</span>
+        </a>
+        
+        <a href="{{ route('admin.metrics.index') }}" 
+           class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('admin.metrics.*') ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white' }}">
+          <i data-lucide="activity" class="w-5 h-5"></i>
+          <span>System Metrics</span>
+        </a>
+        
+        <a href="{{ route('admin.assets.index') }}" 
+           class="flex items-center gap-3 px-4 py-3 rounded-lg transition-colors {{ request()->routeIs('admin.assets.*') ? 'bg-primary-600 text-white' : 'text-gray-400 hover:bg-gray-800 hover:text-white' }}">
+          <i data-lucide="box" class="w-5 h-5"></i>
+          <span>Assets</span>
+        </a>
       </nav>
 
       <!-- User Menu -->
