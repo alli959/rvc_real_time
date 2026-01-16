@@ -83,6 +83,7 @@ docker-compose -f docker-compose.prod.yml up -d
 docker-compose -f docker-compose.prod.yml restart api
 docker-compose -f docker-compose.prod.yml restart web
 docker-compose -f docker-compose.prod.yml restart nginx
+docker-compose -f docker-compose.prod.yml restart voice-engine
 ```
 
 ---
@@ -215,7 +216,70 @@ docker inspect morphvox-api
 
 ---
 
-## 🌐 Network
+## � Voice Engine Diagnostics
+
+### Check GPU usage
+```bash
+docker exec morphvox-voice-engine nvidia-smi
+```
+
+### List trained models
+```bash
+docker exec morphvox-voice-engine ls -la /app/assets/weights/
+docker exec morphvox-voice-engine ls -la /app/logs/
+```
+
+### Check model for corruption (NaN/Inf weights)
+```bash
+docker exec morphvox-voice-engine python3 -c "
+import torch
+cpt = torch.load('/app/assets/weights/MODEL_NAME.pth', map_location='cpu', weights_only=False)
+print('Keys:', list(cpt.keys()))
+print('Config:', cpt.get('config'))
+print('SR:', cpt.get('sr'))
+print('Version:', cpt.get('version'))
+weights = cpt.get('weight', {})
+nan_count = sum(1 for t in weights.values() if torch.isnan(t).any())
+print(f'Layers with NaN: {nan_count}/{len(weights)}')
+"
+```
+
+### Check training loss (tensorboard)
+```bash
+docker exec morphvox-voice-engine python3 -c "
+from tensorboard.backend.event_processing import event_accumulator
+import glob
+for f in glob.glob('/app/logs/MODEL_NAME/events.out.tfevents.*')[-1:]:
+    ea = event_accumulator.EventAccumulator(f)
+    ea.Reload()
+    for tag in ['loss/g/total', 'loss/d/total'][:2]:
+        if tag in ea.Tags().get('scalars', []):
+            last = ea.Scalars(tag)[-1]
+            print(f'{tag}: step={last.step}, value={last.value:.2f}')
+"
+```
+
+### Check training data stats
+```bash
+docker exec morphvox-voice-engine bash -c "
+echo 'Training segments:'; ls /app/logs/MODEL_NAME/0_gt_wavs/*.wav 2>/dev/null | wc -l
+echo 'Feature files:'; ls /app/logs/MODEL_NAME/3_feature768/*.npy 2>/dev/null | wc -l
+"
+```
+
+### Clean up failed training (keep preprocessed data)
+```bash
+docker exec morphvox-voice-engine bash -c "
+rm -f /app/logs/MODEL_NAME/G_*.pth /app/logs/MODEL_NAME/D_*.pth
+rm -f /app/logs/MODEL_NAME/events.out.tfevents.*
+rm -f /app/assets/weights/MODEL_NAME*.pth
+echo 'Cleaned checkpoints, kept preprocessed data'
+"
+```
+
+---
+
+## �🌐 Network
 
 ### Test internal connectivity
 ```bash
