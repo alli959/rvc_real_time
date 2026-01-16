@@ -249,24 +249,12 @@ def _separate_vocals_single(
             if not vocal_files or not instrumental_files:
                 raise RuntimeError("UVR5 separation produced no output")
             
-            # IMPORTANT: UVR5 vr.py has inverted output logic for HP3 models!
-            # When is_hp3=True:
-            #   - ins_root gets VOCALS (with head="vocal_")
-            #   - vocal_root gets INSTRUMENTALS (with head="instrument_")
-            # When is_hp3=False (HP5, etc):
-            #   - ins_root gets INSTRUMENTALS (with head="instrument_")
-            #   - vocal_root gets VOCALS (with head="vocal_")
-            # So we need to swap the reads for HP3 models.
-            
-            if is_hp3:
-                # HP3: vocals are in instrumental_dir, instrumentals are in vocals_dir
-                vocals, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
-                instrumental, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
-                logger.info(f"HP3 mode: swapped reads (vocals from ins_dir, instrumental from vocal_dir)")
-            else:
-                # HP5 and others: normal read
-                vocals, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
-                instrumental, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
+            # Note: UVR5 vr.py swaps the FILENAME prefix for HP3 models, but NOT the actual content.
+            # - ins_root always contains the instrumental audio (y_spec_m)
+            # - vocal_root always contains the vocal audio (v_spec_m)
+            # So we always read the same way regardless of HP3/HP5.
+            vocals, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
+            instrumental, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
             
             # Convert to mono if stereo
             if vocals.ndim > 1:
