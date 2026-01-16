@@ -181,15 +181,38 @@ class ModelManager:
             info = self.vc.get_vc(str(model_file))
             self.model_name = model_file.name
 
-            # Auto-pick index if not provided: try matching by stem.
+            # Auto-pick index if not provided
+            # Priority: 1) added_*.index 2) trained_*.index 3) any .index in model dir
+            # Then fall back to index_dir with stem matching
             if index_path:
                 idx = Path(index_path)
                 idx_file = idx if idx.exists() else (self.index_dir / index_path)
                 self.index_path = str(idx_file) if idx_file.exists() else None
             else:
-                stem = model_file.stem
-                candidates = sorted(self.index_dir.glob(f"{stem}*.index"))
-                self.index_path = str(candidates[0]) if candidates else None
+                self.index_path = None
+                model_parent = model_file.parent
+                
+                # First, check model's own directory with priority order
+                added_indexes = sorted(model_parent.glob("added_*.index"))
+                trained_indexes = sorted(model_parent.glob("trained_*.index"))
+                any_indexes = sorted(model_parent.glob("*.index"))
+                
+                if added_indexes:
+                    self.index_path = str(added_indexes[-1])  # Latest added
+                    logger.info(f"Auto-picked added_*.index from model dir: {self.index_path}")
+                elif trained_indexes:
+                    self.index_path = str(trained_indexes[-1])  # Latest trained
+                    logger.info(f"Auto-picked trained_*.index from model dir: {self.index_path}")
+                elif any_indexes:
+                    self.index_path = str(any_indexes[-1])  # Latest any
+                    logger.info(f"Auto-picked *.index from model dir: {self.index_path}")
+                else:
+                    # Fall back to index_dir with stem matching
+                    stem = model_file.stem
+                    candidates = sorted(self.index_dir.glob(f"{stem}*.index"))
+                    if candidates:
+                        self.index_path = str(candidates[0])
+                        logger.info(f"Auto-picked index from index_dir: {self.index_path}")
 
             if self.index_path:
                 logger.info(f"Using index file: {self.index_path}")
