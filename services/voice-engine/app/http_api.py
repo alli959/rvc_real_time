@@ -1839,9 +1839,13 @@ async def multi_voice_tts(request: MultiVoiceTTSRequest):
                         
                         converted = model_manager.infer(audio_16k.astype(np.float32), params=params)
                         if converted is not None and len(converted) > 0:
-                            # Resample back to target_sr
-                            audio = librosa.resample(converted.astype(np.float32), orig_sr=16000, target_sr=target_sr)
-                            logger.info(f"Segment {i+1}: Voice conversion applied")
+                            # Determine actual RVC output sample rate
+                            rvc_out_sr = int(getattr(params, "resample_sr", 0) or 0)
+                            if rvc_out_sr <= 0:
+                                rvc_out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+                            # Resample back to target_sr from actual output rate
+                            audio = librosa.resample(converted.astype(np.float32), orig_sr=rvc_out_sr, target_sr=target_sr)
+                            logger.info(f"Segment {i+1}: Voice conversion applied (RVC output: {rvc_out_sr}Hz → {target_sr}Hz)")
                 
                 audio_chunks.append(audio)
                 
@@ -2019,21 +2023,29 @@ async def convert_voice(request: ConvertRequest):
         if output_audio is None or len(output_audio) == 0:
             raise HTTPException(status_code=500, detail="Voice conversion failed")
         
+        # Determine actual output sample rate from model
+        # Priority: params.resample_sr (if > 0) -> model's tgt_sr -> fallback 16000
+        out_sr = int(getattr(params, "resample_sr", 0) or 0)
+        if out_sr <= 0:
+            out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+        
+        logger.info(f"Output sample rate: {out_sr}Hz")
+        
         # Apply audio effects after conversion if specified
         if request.apply_effects:
             effects = get_emotion_effects(request.apply_effects)
             if effects:
                 logger.info(f"Applying post-conversion effects for '{request.apply_effects}': {list(effects.keys())}")
-                output_audio = apply_audio_effects(output_audio, 16000, effects)
+                output_audio = apply_audio_effects(output_audio, out_sr, effects)
         
-        # Convert to WAV bytes
+        # Convert to WAV bytes with correct sample rate
         wav_buffer = io.BytesIO()
-        sf.write(wav_buffer, output_audio, 16000, format='WAV')
+        sf.write(wav_buffer, output_audio, out_sr, format='WAV')
         wav_buffer.seek(0)
         
         return ConvertResponse(
             audio=base64.b64encode(wav_buffer.read()).decode('utf-8'),
-            sample_rate=16000,
+            sample_rate=out_sr,
             format="wav"
         )
         
@@ -2453,11 +2465,16 @@ async def process_audio(request: AudioProcessRequest):
             if output_audio is None or len(output_audio) == 0:
                 raise HTTPException(status_code=500, detail="Voice conversion failed")
             
+            # Determine actual output sample rate from model
+            out_sr = int(getattr(params, "resample_sr", 0) or 0)
+            if out_sr <= 0:
+                out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+            
             success = True
             return AudioProcessResponse(
                 mode="convert",
-                converted=encode_audio(output_audio.astype(np.float32), 16000),
-                sample_rate=16000,
+                converted=encode_audio(output_audio.astype(np.float32), out_sr),
+                sample_rate=out_sr,
                 format="wav"
             )
             
@@ -2610,8 +2627,13 @@ async def process_audio(request: AudioProcessRequest):
                     if converted is None or len(converted) == 0:
                         raise HTTPException(status_code=500, detail=f"Voice {voice_num} conversion failed")
                     
-                    # Resample back to 44.1kHz
-                    converted_44k = librosa.resample(converted.astype(np.float32), orig_sr=16000, target_sr=uvr_output_sr)
+                    # Determine actual RVC output sample rate (model's tgt_sr, not 16000!)
+                    rvc_out_sr = int(getattr(params, "resample_sr", 0) or 0)
+                    if rvc_out_sr <= 0:
+                        rvc_out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+                    
+                    # Resample back to 44.1kHz from actual output rate
+                    converted_44k = librosa.resample(converted.astype(np.float32), orig_sr=rvc_out_sr, target_sr=uvr_output_sr)
                     converted_44k = ensure_length(converted_44k, target_length_44k)
                     
                     # Measure converted RMS
