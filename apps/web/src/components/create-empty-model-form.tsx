@@ -54,12 +54,16 @@ export function CreateEmptyModelForm({ onSuccess, onCancel }: CreateEmptyModelFo
         has_consent: hasConsent,
       });
 
-      if (onSuccess) {
-        onSuccess(result.data);
-      }
+      // API returns { model: VoiceModel, upload_urls: {...} }
+      const createdModel = result.model;
 
-      // Navigate to the training page with the new model selected
-      router.push(`/dashboard/train?model=${result.data.id}`);
+      if (onSuccess) {
+        // Parent component handles the state transition, don't navigate
+        onSuccess(createdModel);
+      } else {
+        // Standalone usage: navigate to the training page with the new model selected
+        router.push(`/dashboard/train?model=${createdModel.id}`);
+      }
     } catch (err: any) {
       console.error('Failed to create model:', err);
       setError(err.response?.data?.message || 'Failed to create model');

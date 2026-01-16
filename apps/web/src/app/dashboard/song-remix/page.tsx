@@ -570,7 +570,7 @@ export default function SongRemixPage() {
             ) : (
               <div className="space-y-4">
                 {/* Search Input */}
-                <div className="flex gap-2">
+                <div className="flex flex-col sm:flex-row gap-2">
                   <div className="flex-1 relative">
                     <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-500" />
                     <input
@@ -585,7 +585,7 @@ export default function SongRemixPage() {
                   <button
                     onClick={handleSearch}
                     disabled={isSearching || !searchQuery.trim()}
-                    className="px-6 py-3 bg-accent-600 text-white rounded-lg hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                    className="w-full sm:w-auto px-6 py-3 bg-accent-600 text-white rounded-lg hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                   >
                     {isSearching ? (
                       <Loader2 className="h-5 w-5 animate-spin" />
@@ -599,12 +599,12 @@ export default function SongRemixPage() {
                 {/* Selected Song Display */}
                 {youtubeAudio && (
                   <div className="p-4 bg-gray-800 rounded-lg">
-                    <div className="flex items-center gap-4">
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-4">
                       <img 
                         src={youtubeAudio.thumbnail} 
                         alt={youtubeAudio.title}
                         referrerPolicy="no-referrer"
-                        className="w-20 h-20 rounded-lg object-cover"
+                        className="w-full sm:w-20 h-32 sm:h-20 rounded-lg object-cover"
                       />
                       <div className="flex-1 min-w-0">
                         <p className="text-white font-medium truncate">{youtubeAudio.title}</p>
@@ -613,7 +613,7 @@ export default function SongRemixPage() {
                           {formatDuration(youtubeAudio.duration)}
                         </p>
                       </div>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center justify-end gap-2">
                         <CheckCircle2 className="h-5 w-5 text-green-400" />
                         <button
                           onClick={() => setYoutubeAudio(null)}
@@ -635,19 +635,19 @@ export default function SongRemixPage() {
                         key={result.id}
                         onClick={() => handleYouTubeDownload(result)}
                         disabled={isDownloading}
-                        className="w-full p-3 bg-gray-800 hover:bg-gray-700 rounded-lg flex items-center gap-3 transition-colors disabled:opacity-50"
+                        className="w-full p-3 bg-gray-800 hover:bg-gray-700 rounded-lg flex flex-col sm:flex-row sm:items-center gap-3 transition-colors disabled:opacity-50"
                       >
                         <img 
                           src={result.thumbnail} 
                           alt={result.title}
                           referrerPolicy="no-referrer"
-                          className="w-16 h-12 rounded object-cover"
+                          className="w-full sm:w-16 h-24 sm:h-12 rounded object-cover"
                         />
                         <div className="flex-1 text-left min-w-0">
                           <p className="text-white font-medium truncate text-sm">{result.title}</p>
                           <p className="text-gray-400 text-xs truncate">{result.artist}</p>
                         </div>
-                        <div className="flex items-center gap-3 text-gray-500 text-xs">
+                        <div className="flex items-center justify-between sm:justify-end gap-3 text-gray-500 text-xs">
                           <span className="flex items-center gap-1">
                             <Clock className="h-3 w-3" />
                             {formatDuration(result.duration)}
@@ -657,12 +657,12 @@ export default function SongRemixPage() {
                               Cached
                             </span>
                           )}
+                          {downloadingVideoId === result.id ? (
+                            <Loader2 className="h-5 w-5 text-accent-400 animate-spin" />
+                          ) : (
+                            <Download className="h-5 w-5 text-gray-400" />
+                          )}
                         </div>
-                        {downloadingVideoId === result.id ? (
-                          <Loader2 className="h-5 w-5 text-accent-400 animate-spin" />
-                        ) : (
-                          <Download className="h-5 w-5 text-gray-400" />
-                        )}
                       </button>
                     ))}
                   </div>
@@ -830,13 +830,13 @@ export default function SongRemixPage() {
                 
                 {/* Voice 1 (main selected model) */}
                 <div className="bg-gray-800/50 rounded-lg p-3 space-y-2">
-                  <div className="flex items-center gap-3">
-                    <span className="text-sm text-gray-400 w-20">Voice 1:</span>
-                    <span className="text-sm text-accent-400 flex-1">
+                  <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                    <span className="text-sm text-gray-400 sm:w-20 shrink-0">Voice 1:</span>
+                    <span className="text-sm text-accent-400 flex-1 truncate">
                       {availableModels.find(m => m.id === selectedModelId)?.name || 'Select above'}
                     </span>
                   </div>
-                  <div className="flex items-center gap-2 ml-20">
+                  <div className="flex flex-wrap items-center gap-2 sm:ml-20">
                     <span className="text-xs text-gray-500">Extract:</span>
                     <select
                       value={voice1ExtractionMode}
@@ -846,7 +846,7 @@ export default function SongRemixPage() {
                       <option value="main">Lead Only (HP5)</option>
                       <option value="all">All Vocals (HP3)</option>
                     </select>
-                    <span className="text-xs text-gray-500 ml-2">
+                    <span className="text-xs text-gray-500">
                       {voice1ExtractionMode === 'main' ? 'Main/dominant voice' : 'Includes harmonies'}
                     </span>
                   </div>
@@ -855,8 +855,8 @@ export default function SongRemixPage() {
                 {/* Additional voices */}
                 {additionalVoices.slice(0, voiceCount - 1).map((voice, index) => (
                   <div key={index} className="bg-gray-800/50 rounded-lg p-3 space-y-2">
-                    <div className="flex items-center gap-3">
-                      <span className="text-sm text-gray-400 w-20">Voice {index + 2}:</span>
+                    <div className="flex flex-col sm:flex-row sm:items-center gap-2 sm:gap-3">
+                      <span className="text-sm text-gray-400 sm:w-20 shrink-0">Voice {index + 2}:</span>
                       <select
                         value={voice.modelId || ''}
                         onChange={(e) => {
@@ -864,14 +864,14 @@ export default function SongRemixPage() {
                           newVoices[index] = { ...newVoices[index], modelId: parseInt(e.target.value) || null };
                           setAdditionalVoices(newVoices);
                         }}
-                        className="flex-1 text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white"
+                        className="flex-1 text-sm bg-gray-700 border border-gray-600 rounded-lg px-3 py-2 text-white min-w-0"
                       >
                         <option value="">Select model...</option>
                         {availableModels.map(m => (
                           <option key={m.id} value={m.id}>{m.name}</option>
                         ))}
                       </select>
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 shrink-0">
                         <span className="text-xs text-gray-500">Pitch:</span>
                         <input
                           type="number"
@@ -887,7 +887,7 @@ export default function SongRemixPage() {
                         />
                       </div>
                     </div>
-                    <div className="flex items-center gap-2 ml-20">
+                    <div className="flex flex-wrap items-center gap-2 sm:ml-20">
                       <span className="text-xs text-gray-500">Extract:</span>
                       <select
                         value={voice.extractionMode}

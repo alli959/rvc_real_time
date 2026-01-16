@@ -153,6 +153,7 @@ function TrainPageContent() {
   // Import tab state
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importUploading, setImportUploading] = useState(false);
+  const [filesUploadedCount, setFilesUploadedCount] = useState(0); // Track uploaded file count
   const fileInputRef = useRef<HTMLInputElement>(null);
   
   // Training state
@@ -205,6 +206,15 @@ function TrainPageContent() {
       ? trainerApi.getModelRecordings(selectedModel.slug)
       : null,
     enabled: !!selectedModel?.slug && (step === 'training-areas' || step === 'start-training'),
+  });
+
+  // Fetch model training info (includes checkpoint status)
+  const { data: modelTrainingInfo, refetch: refetchTrainingInfo } = useQuery({
+    queryKey: ['model-training-info', selectedModel?.slug],
+    queryFn: () => selectedModel?.slug 
+      ? trainerApi.getModelTrainingInfo(selectedModel.slug)
+      : null,
+    enabled: !!selectedModel?.slug && (step === 'training-areas' || step === 'start-training' || step === 'training-progress'),
   });
   
   // Memoize models
@@ -374,10 +384,15 @@ function TrainPageContent() {
   
   // Handle model creation success
   const handleModelCreated = (model: VoiceModel) => {
+    // First hide the form and set the model
     setShowCreateForm(false);
+    // Use the model directly from the API response - it has all needed fields
+    // including slug which is generated server-side
     setSelectedModel(model);
-    refetchModels();
+    // Navigate to language selection step
     setStep('select-language');
+    // Refetch models in background to update the list
+    refetchModels();
   };
   
   // Start recording session for a category
@@ -504,22 +519,27 @@ function TrainPageContent() {
         formData.append('files[]', file);
       });
       
-      const token = localStorage.getItem('morphvox_token');
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://morphvox.alexandergudmunsson.com/api'}/trainer/upload`, {
+      // Use 'auth_token' to match the axios interceptor
+      const token = localStorage.getItem('auth_token');
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://morphvox.net/api'}/trainer/upload`, {
         method: 'POST',
         headers: {
           'Authorization': `Bearer ${token}`,
+          'Accept': 'application/json',
         },
         body: formData,
       });
       
       if (!response.ok) {
         const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || 'Failed to upload audio files');
+        throw new Error(data.message || data.error || 'Failed to upload audio files');
       }
       
+      const uploadedCount = importFiles.length;
+      setFilesUploadedCount(uploadedCount);
       setImportFiles([]);
-      // Go to training step after upload
+      // Refresh recordings data then go to training step
+      await refetchModelRecordings();
       setStep('start-training');
     } catch (err: any) {
       setError(err.message || 'Failed to upload audio files');
@@ -565,7 +585,12 @@ function TrainPageContent() {
       clearRecording();
       
       if (result.next_prompt) {
-        setCurrentPrompt(result.next_prompt);
+        // Normalize the prompt - backend returns prompt_text, frontend expects text
+        const normalizedPrompt = {
+          ...result.next_prompt,
+          text: result.next_prompt.text || result.next_prompt.prompt_text || '',
+        };
+        setCurrentPrompt(normalizedPrompt);
       } else if (result.session?.status === 'completed') {
         // Refresh category status to show the new recordings
         refetchCategoryStatus();
@@ -597,7 +622,12 @@ function TrainPageContent() {
       clearRecording();
       
       if (result.next_prompt) {
-        setCurrentPrompt(result.next_prompt);
+        // Normalize the prompt - backend returns prompt_text, frontend expects text
+        const normalizedPrompt = {
+          ...result.next_prompt,
+          text: result.next_prompt.text || result.next_prompt.prompt_text || '',
+        };
+        setCurrentPrompt(normalizedPrompt);
       } else if (result.session?.status === 'completed') {
         // Refresh category status to show the new recordings
         refetchCategoryStatus();
@@ -660,7 +690,21 @@ function TrainPageContent() {
       try {
         const status = await trainerApi.trainingStatus(jobId);
         setTrainingProgress(status.progress || 0);
-        setTrainingStatus(status.status_message || status.status);
+        
+        // Build a meaningful status message
+        let statusMessage = status.message || status.status_message || status.status;
+        if (status.status === 'training' && status.current_epoch && status.total_epochs) {
+          statusMessage = `Training... Epoch ${status.current_epoch}/${status.total_epochs}`;
+        } else if (status.status === 'preprocessing') {
+          statusMessage = 'Preprocessing audio files...';
+        } else if (status.status === 'extracting_f0') {
+          statusMessage = 'Extracting pitch (F0)...';
+        } else if (status.status === 'extracting_features') {
+          statusMessage = 'Extracting audio features...';
+        } else if (status.status === 'building_index') {
+          statusMessage = 'Building model index...';
+        }
+        setTrainingStatus(statusMessage);
         
         if (status.status === 'completed') {
           // Rescan model to update scores
@@ -668,9 +712,17 @@ function TrainPageContent() {
             await trainerApi.scanModel(selectedModel.id, [selectedLanguage]);
             queryClient.invalidateQueries({ queryKey: ['my-models-for-training'] });
           }
+          // Refresh training info to update checkpoint status
+          refetchTrainingInfo();
           setTrainingStatus('Training complete! Model updated.');
         } else if (status.status === 'failed') {
+          // Refresh training info - checkpoint may have been saved before failure
+          refetchTrainingInfo();
           setError(status.error || 'Training failed');
+        } else if (status.status === 'cancelled') {
+          // Refresh training info - checkpoint may have been saved
+          refetchTrainingInfo();
+          setTrainingStatus('Training cancelled. You can continue from the saved checkpoint.');
         } else {
           // Continue polling
           setTimeout(poll, 5000);
@@ -1110,72 +1162,72 @@ function TrainPageContent() {
                             </button>
                           ))}
                         </div>
-                        
-                        {/* Import option */}
-                        <div className="mt-4 pt-4 border-t border-gray-700">
-                          <p className="text-sm text-gray-400 mb-3">Or import existing audio files:</p>
-                          <div 
-                            className="border-2 border-dashed border-gray-600 hover:border-primary-500 rounded-xl p-6 text-center cursor-pointer transition-colors"
-                            onClick={() => fileInputRef.current?.click()}
-                          >
-                            <input
-                              ref={fileInputRef}
-                              type="file"
-                              multiple
-                              accept="audio/*,.wav,.mp3,.ogg,.flac"
-                              onChange={handleFileSelect}
-                              className="hidden"
-                            />
-                            <FolderUp className="w-8 h-8 mx-auto text-gray-500 mb-2" />
-                            <p className="text-gray-300 text-sm">Click to select audio files</p>
-                          </div>
-                          
-                          {importFiles.length > 0 && (
-                            <div className="mt-4 space-y-2">
-                              <h4 className="text-sm font-medium text-gray-300">
-                                Selected files ({importFiles.length})
-                              </h4>
-                              <div className="max-h-32 overflow-y-auto space-y-1">
-                                {importFiles.map((file, i) => (
-                                  <div key={i} className="flex items-center justify-between p-2 bg-gray-800/50 rounded-lg">
-                                    <div className="flex items-center gap-2 min-w-0">
-                                      <FileAudio className="w-4 h-4 text-gray-400 flex-shrink-0" />
-                                      <span className="text-sm truncate">{file.name}</span>
-                                    </div>
-                                    <button
-                                      onClick={(e) => { e.stopPropagation(); removeImportFile(i); }}
-                                      className="p-1 text-gray-400 hover:text-red-400 transition-colors"
-                                    >
-                                      <X className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                ))}
-                              </div>
-                              
-                              <button
-                                onClick={uploadImportFiles}
-                                disabled={importUploading}
-                                className="w-full py-2 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-600 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
-                              >
-                                {importUploading ? (
-                                  <>
-                                    <Loader2 className="w-4 h-4 animate-spin" />
-                                    Uploading...
-                                  </>
-                                ) : (
-                                  <>
-                                    <Upload className="w-4 h-4" />
-                                    Upload &amp; Continue to Training
-                                  </>
-                                )}
-                              </button>
-                            </div>
-                          )}
-                        </div>
                       </div>
                     )}
                   </div>
                 ))}
+              </div>
+
+              {/* Import existing audio files section - OUTSIDE dropdowns */}
+              <div className="rounded-xl border border-gray-700 p-6">
+                <p className="text-sm text-gray-400 mb-3">Or import existing audio files:</p>
+                <div 
+                  className="border-2 border-dashed border-gray-600 hover:border-primary-500 rounded-xl p-6 text-center cursor-pointer transition-colors"
+                  onClick={() => fileInputRef.current?.click()}
+                >
+                  <input
+                    ref={fileInputRef}
+                    type="file"
+                    multiple
+                    accept="audio/*,.wav,.mp3,.ogg,.flac"
+                    onChange={handleFileSelect}
+                    className="hidden"
+                  />
+                  <FolderUp className="w-8 h-8 mx-auto text-gray-500 mb-2" />
+                  <p className="text-gray-300 text-sm">Click to select audio files</p>
+                </div>
+                
+                {importFiles.length > 0 && (
+                  <div className="mt-4 space-y-2">
+                    <h4 className="text-sm font-medium text-gray-300">
+                      Selected files ({importFiles.length})
+                    </h4>
+                    <div className="max-h-32 overflow-y-auto space-y-1">
+                      {importFiles.map((file, i) => (
+                        <div key={i} className="flex items-center justify-between p-2 bg-gray-800/50 rounded-lg">
+                          <div className="flex items-center gap-2 min-w-0">
+                            <FileAudio className="w-4 h-4 text-gray-400 flex-shrink-0" />
+                            <span className="text-sm truncate">{file.name}</span>
+                          </div>
+                          <button
+                            onClick={(e) => { e.stopPropagation(); removeImportFile(i); }}
+                            className="p-1 text-gray-400 hover:text-red-400 transition-colors"
+                          >
+                            <X className="w-4 h-4" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    
+                    <button
+                      onClick={uploadImportFiles}
+                      disabled={importUploading}
+                      className="w-full py-2 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-600 rounded-lg font-medium transition-colors flex items-center justify-center gap-2"
+                    >
+                      {importUploading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 animate-spin" />
+                          Uploading...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="w-4 h-4" />
+                          Upload &amp; Continue to Training
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
               
               {/* Skip to training button if model already has data */}
@@ -1342,12 +1394,39 @@ function TrainPageContent() {
                 <p className="text-gray-400">
                   {modelRecordings && modelRecordings.total_recordings > 0
                     ? `You have ${modelRecordings.total_recordings} recordings (${Math.round(modelRecordings.total_duration_seconds / 60)} min). Ready to train your model!`
-                    : session 
-                      ? `You recorded ${session.completed} samples. Ready to train your model!`
-                      : 'Your audio files have been uploaded. Ready to train your model!'
+                    : filesUploadedCount > 0
+                      ? `You uploaded ${filesUploadedCount} audio file${filesUploadedCount > 1 ? 's' : ''}. Ready to train your model!`
+                      : session 
+                        ? `You recorded ${session.completed} samples. Ready to train your model!`
+                        : 'Your audio files have been uploaded. Ready to train your model!'
                   }
                 </p>
               </div>
+
+              {/* Show checkpoint info - training can be resumed */}
+              {modelTrainingInfo?.training?.latest_checkpoint && (
+                <div className="max-w-md mx-auto p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <RotateCcw className="w-5 h-5 text-blue-400" />
+                    <span className="font-medium text-blue-300">Previous Training Found</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-3">
+                    {modelTrainingInfo.training.epochs_trained > 0 
+                      ? `Training was stopped at ~${modelTrainingInfo.training.epochs_trained} epochs. You can continue from this checkpoint.`
+                      : 'A checkpoint exists from a previous training session. You can continue from where you left off.'}
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="p-2 bg-gray-800/50 rounded">
+                      <div className="text-lg font-bold text-blue-400">{modelTrainingInfo.training.epochs_trained || 0}</div>
+                      <div className="text-xs text-gray-500">Epochs Completed</div>
+                    </div>
+                    <div className="p-2 bg-gray-800/50 rounded">
+                      <div className="text-lg font-bold text-orange-400">{100 - (modelTrainingInfo.training.epochs_trained || 0)}</div>
+                      <div className="text-xs text-gray-500">Epochs Remaining</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {/* Show total recordings from all sessions */}
               {modelRecordings && modelRecordings.total_recordings > 0 && (
@@ -1367,8 +1446,18 @@ function TrainPageContent() {
                 </div>
               )}
 
-              {/* Show current session stats if no total recordings */}
-              {(!modelRecordings || modelRecordings.total_recordings === 0) && session && (
+              {/* Show uploaded files count if files were uploaded but not tracked as recordings */}
+              {(!modelRecordings || modelRecordings.total_recordings === 0) && filesUploadedCount > 0 && (
+                <div className="grid grid-cols-1 gap-4 max-w-xs mx-auto">
+                  <div className="p-4 bg-gray-800/50 rounded-lg">
+                    <div className="text-2xl font-bold text-green-400">{filesUploadedCount}</div>
+                    <div className="text-sm text-gray-400">Files Uploaded</div>
+                  </div>
+                </div>
+              )}
+
+              {/* Show current session stats if no total recordings and no uploaded files */}
+              {(!modelRecordings || modelRecordings.total_recordings === 0) && filesUploadedCount === 0 && session && (
                 <div className="grid grid-cols-2 gap-4 max-w-sm mx-auto">
                   <div className="p-4 bg-gray-800/50 rounded-lg">
                     <div className="text-2xl font-bold text-green-400">{session.completed}</div>
@@ -1398,21 +1487,35 @@ function TrainPageContent() {
                 >
                   Add More Data
                 </button>
+                {/* Show Continue Training button if checkpoint exists */}
+                {modelTrainingInfo?.training?.latest_checkpoint && (
+                  <button
+                    onClick={startTraining}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors flex items-center gap-2"
+                  >
+                    <RotateCcw className="w-5 h-5" />
+                    Continue Training
+                  </button>
+                )}
                 <button
                   onClick={startTraining}
-                  disabled={!modelRecordings || modelRecordings.total_recordings < 10}
+                  disabled={
+                    // Allow if: checkpoint exists OR files were uploaded OR have 10+ recordings OR have 2+ min of audio
+                    !(modelTrainingInfo?.training?.latest_checkpoint ||
+                      filesUploadedCount > 0 || 
+                      (modelRecordings && (modelRecordings.total_recordings >= 10 || modelRecordings.total_duration_seconds >= 120)))
+                  }
                   className="px-6 py-3 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center gap-2"
-                  title={modelRecordings && modelRecordings.total_recordings < 10 ? 'Need at least 10 recordings to start training' : ''}
                 >
                   <Play className="w-5 h-5" />
-                  Start Training
+                  {modelTrainingInfo?.training?.latest_checkpoint ? 'Start Fresh' : 'Start Training'}
                 </button>
               </div>
 
-              {/* Minimum recordings warning */}
-              {modelRecordings && modelRecordings.total_recordings < 10 && (
+              {/* Show requirement info - only for recordings mode, not file uploads */}
+              {!modelTrainingInfo?.training?.latest_checkpoint && filesUploadedCount === 0 && modelRecordings && modelRecordings.total_recordings < 10 && modelRecordings.total_duration_seconds < 120 && (
                 <p className="text-sm text-yellow-400">
-                  Need at least 10 recordings to start training. Currently have {modelRecordings.total_recordings}.
+                  Need at least 10 recordings or 2 minutes of audio to start training. Currently have {modelRecordings.total_recordings} recordings ({Math.round(modelRecordings.total_duration_seconds)} sec).
                 </p>
               )}
             </div>
@@ -1424,6 +1527,10 @@ function TrainPageContent() {
               <div className="w-16 h-16 mx-auto bg-primary-600/20 rounded-full flex items-center justify-center">
                 {trainingProgress >= 100 ? (
                   <Check className="w-8 h-8 text-green-400" />
+                ) : error ? (
+                  <AlertCircle className="w-8 h-8 text-red-400" />
+                ) : trainingStatus.includes('cancelled') ? (
+                  <RotateCcw className="w-8 h-8 text-yellow-400" />
                 ) : (
                   <Activity className="w-8 h-8 text-primary-400 animate-pulse" />
                 )}
@@ -1431,7 +1538,13 @@ function TrainPageContent() {
               
               <div>
                 <h2 className="text-xl font-semibold mb-2">
-                  {trainingProgress >= 100 ? 'Training Complete!' : 'Training in Progress'}
+                  {trainingProgress >= 100 
+                    ? 'Training Complete!' 
+                    : error 
+                      ? 'Training Failed'
+                      : trainingStatus.includes('cancelled')
+                        ? 'Training Cancelled'
+                        : 'Training in Progress'}
                 </h2>
                 <p className="text-gray-400">{trainingStatus}</p>
               </div>
@@ -1444,12 +1557,39 @@ function TrainPageContent() {
                 <div className="h-3 bg-gray-700 rounded-full overflow-hidden">
                   <div 
                     className={`h-full transition-all ${
-                      trainingProgress >= 100 ? 'bg-green-500' : 'bg-primary-500'
+                      trainingProgress >= 100 ? 'bg-green-500' 
+                        : error ? 'bg-red-500'
+                        : trainingStatus.includes('cancelled') ? 'bg-yellow-500'
+                        : 'bg-primary-500'
                     }`}
                     style={{ width: `${trainingProgress}%` }}
                   />
                 </div>
               </div>
+
+              {/* Show checkpoint info for failed/cancelled training */}
+              {(error || trainingStatus.includes('cancelled')) && modelTrainingInfo?.training?.latest_checkpoint && (
+                <div className="max-w-md mx-auto p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                  <div className="flex items-center justify-center gap-2 mb-2">
+                    <RotateCcw className="w-5 h-5 text-blue-400" />
+                    <span className="font-medium text-blue-300">Checkpoint Saved</span>
+                  </div>
+                  <p className="text-sm text-gray-400 mb-3">
+                    Training progress was saved at ~{modelTrainingInfo.training.epochs_trained || 0} epochs. 
+                    You can continue from this checkpoint to complete training.
+                  </p>
+                  <div className="grid grid-cols-2 gap-3 text-sm">
+                    <div className="p-2 bg-gray-800/50 rounded">
+                      <div className="text-lg font-bold text-blue-400">{modelTrainingInfo.training.epochs_trained || 0}</div>
+                      <div className="text-xs text-gray-500">Epochs Completed</div>
+                    </div>
+                    <div className="p-2 bg-gray-800/50 rounded">
+                      <div className="text-lg font-bold text-orange-400">{100 - (modelTrainingInfo.training.epochs_trained || 0)}</div>
+                      <div className="text-xs text-gray-500">Epochs Remaining</div>
+                    </div>
+                  </div>
+                </div>
+              )}
               
               {trainingProgress >= 100 && (
                 <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
@@ -1465,6 +1605,36 @@ function TrainPageContent() {
                   >
                     View My Models
                   </button>
+                </div>
+              )}
+
+              {/* Show continue/retry buttons for failed/cancelled training */}
+              {(error || trainingStatus.includes('cancelled')) && (
+                <div className="flex flex-col sm:flex-row items-center justify-center gap-4 pt-4">
+                  <button
+                    onClick={() => {
+                      setError(null);
+                      setStep('start-training');
+                      refetchTrainingInfo();
+                    }}
+                    className="px-6 py-3 border border-gray-600 hover:border-gray-500 rounded-lg transition-colors"
+                  >
+                    Back to Training Options
+                  </button>
+                  {modelTrainingInfo?.training?.latest_checkpoint && (
+                    <button
+                      onClick={() => {
+                        setError(null);
+                        setTrainingProgress(0);
+                        setTrainingStatus('Resuming training...');
+                        startTraining();
+                      }}
+                      className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors flex items-center gap-2"
+                    >
+                      <RotateCcw className="w-5 h-5" />
+                      Continue Training
+                    </button>
+                  )}
                 </div>
               )}
             </div>
