@@ -116,7 +116,7 @@ def detect_existing_model(model_dir: Path) -> tuple[Optional[str], int]:
         return str(final_models[0]), epochs
     
     # Check for checkpoints (training in progress or resumable)
-    g_checkpoints = list(model_dir.glob("G_*.pth"))
+    g_checkpoints = sorted(model_dir.glob("G_*.pth"), key=lambda x: int(re.search(r'G_(\d+)\.pth', x.name).group(1)) if re.search(r'G_(\d+)\.pth', x.name) else 0)
     if g_checkpoints:
         # Has checkpoints - estimate epochs from step number
         # Step = epoch * batches_per_epoch, but we don't know batches
@@ -131,8 +131,8 @@ def detect_existing_model(model_dir: Path) -> tuple[Optional[str], int]:
         # Rough epoch estimate (conservative)
         estimated_epochs = max_step // 30  # Assume ~30 steps per epoch average
         
-        # Return the checkpoint as existing model indicator
-        return str(g_checkpoints[0]), estimated_epochs
+        # Return the LATEST checkpoint (last in sorted list)
+        return str(g_checkpoints[-1]), estimated_epochs
     
     return None, 0
 
@@ -390,12 +390,20 @@ async def start_training(
     # Get audio paths
     audio_paths = request.audio_paths
     if not audio_paths:
-        # Check upload directory
-        upload_dir = UPLOAD_DIR / request.exp_name
-        if upload_dir.exists():
+        # Check recordings directory under model folder (primary location)
+        recordings_dir = MODELS_DIR / request.exp_name / "recordings"
+        if recordings_dir.exists():
             audio_paths = []
-            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
-                audio_paths.extend([str(p) for p in upload_dir.glob(f"**/{ext}")])
+            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.webm"]:
+                audio_paths.extend([str(p) for p in recordings_dir.glob(f"**/{ext}")])
+        
+        # Fallback to legacy uploads directory if no recordings found
+        if not audio_paths:
+            upload_dir = UPLOAD_DIR / request.exp_name
+            if upload_dir.exists():
+                audio_paths = []
+                for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
+                    audio_paths.extend([str(p) for p in upload_dir.glob(f"**/{ext}")])
     
     if not audio_paths:
         raise HTTPException(status_code=400, detail="No audio files found")
@@ -759,11 +767,13 @@ async def get_model_info(exp_name: str):
     
     model_dir = storage.get_model_dir(exp_name)
     
-    # Check for trained model files
+    # Check for trained model files (exclude checkpoint files G_*, D_*)
+    import re
     pth_files = list(model_dir.glob("*.pth"))
+    final_model_files = [m for m in pth_files if not re.match(r'^[GD]_\d+\.pth$', m.name)]
     index_files = list(model_dir.glob("*.index"))
     
-    # Check for latest generator checkpoint
+    # Check for latest generator checkpoint (sorted by step number)
     g_files = sorted(model_dir.glob("G_*.pth"), key=lambda x: int(x.stem.split('_')[1]) if x.stem.split('_')[1].isdigit() else 0)
     latest_checkpoint = str(g_files[-1]) if g_files else None
     
@@ -784,11 +794,12 @@ async def get_model_info(exp_name: str):
             "has_data": preprocessed_count > 0
         },
         "training": {
-            "has_model": metadata.has_model or len(pth_files) > 0,
+            "has_model": metadata.has_model or len(final_model_files) > 0,
             "has_index": metadata.has_index or len(index_files) > 0,
             "epochs_trained": metadata.training_epochs,
             "last_trained": metadata.last_trained_at,
-            "latest_checkpoint": latest_checkpoint
+            "latest_checkpoint": latest_checkpoint,
+            "checkpoint_count": len(g_files)
         },
         "coverage": {
             "phoneme_percent": metadata.phoneme_coverage_percent,
