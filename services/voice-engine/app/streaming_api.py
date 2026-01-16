@@ -314,10 +314,12 @@ class WebSocketServer:
                 
                 await communicate.save(tmp_path)
                 
-                # Load the audio at model's expected input sample rate (default 16kHz)
+                # Load the audio at a high quality sample rate for processing
+                # We'll resample as needed for RVC and output
                 import librosa
-                target_in_sr = int(self.model_manager.input_sample_rate) if self.model_manager else 16000
-                audio, _ = librosa.load(tmp_path, sr=target_in_sr, mono=True)
+                # Load at native rate first, then handle resampling
+                audio, native_sr = librosa.load(tmp_path, sr=None, mono=True)
+                logger.info(f"TTS audio loaded: native_sr={native_sr}, samples={len(audio)}")
                 
                 # Clean up temp file
                 if os.path.exists(tmp_path):
@@ -331,9 +333,11 @@ class WebSocketServer:
                 await self.send_error(websocket, f"TTS generation failed: {str(e)}")
                 return
             
-            # Track the sample rate for output
-            target_in_sr = int(self.model_manager.input_sample_rate) if self.model_manager else 16000
-            out_sr = target_in_sr  # Default to input SR if no conversion
+            # Determine output sample rate - use model's target rate if available
+            if self.model_manager and hasattr(self.model_manager, 'vc') and self.model_manager.vc.tgt_sr:
+                out_sr = int(self.model_manager.vc.tgt_sr)
+            else:
+                out_sr = native_sr  # Keep native rate if no model loaded
             
             # Step 2: Convert the TTS audio using RVC model if loaded
             if self.model_manager and self.model_manager.model_name:
@@ -341,18 +345,37 @@ class WebSocketServer:
                     # Get inference params with settings overrides
                     params = self.get_client_params(client_id, settings)
                     
+                    # Resample to 16kHz for RVC (model_manager expects 16kHz input)
+                    audio_16k = librosa.resample(audio, orig_sr=native_sr, target_sr=16000)
+                    
                     # Run voice conversion
-                    converted_audio = self.model_manager.infer(audio, params=params)
+                    converted_audio = self.model_manager.infer(audio_16k, params=params)
                     
                     if converted_audio is not None:
+                        # RVC output is at model's tgt_sr or resample_sr if set
+                        if params and int(params.resample_sr) > 0:
+                            out_sr = int(params.resample_sr)
+                        elif self.model_manager.vc.tgt_sr:
+                            out_sr = int(self.model_manager.vc.tgt_sr)
+                        else:
+                            out_sr = 40000  # Default RVC output rate
+                        
+                        # Resample converted audio to output rate if needed
+                        # RVC outputs at 16kHz * upscale, we assume output matches tgt_sr
                         audio = converted_audio
-                        # Use resample_sr if set, otherwise keep input SR
-                        out_sr = int(params.resample_sr) if params and int(params.resample_sr) else target_in_sr
                         logger.info(f"TTS audio converted with model {self.model_manager.model_name}, output SR: {out_sr}")
+                    else:
+                        # Conversion failed, resample original to out_sr
+                        audio = librosa.resample(audio, orig_sr=native_sr, target_sr=out_sr)
                     
                 except Exception as e:
                     logger.error(f"Voice conversion failed: {e}")
-                    # Continue with unconverted TTS audio
+                    # Continue with unconverted TTS audio, resampled to out_sr
+                    audio = librosa.resample(audio, orig_sr=native_sr, target_sr=out_sr)
+            else:
+                # No model loaded - resample to out_sr
+                if native_sr != out_sr:
+                    audio = librosa.resample(audio, orig_sr=native_sr, target_sr=out_sr)
             
             # Step 3: Convert to WAV and encode as base64
             wav_buffer = io.BytesIO()
