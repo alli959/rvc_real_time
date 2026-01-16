@@ -230,6 +230,8 @@ services:
       dockerfile: Dockerfile
     container_name: morphvox-voice-engine
     restart: unless-stopped
+    # Increase shared memory for PyTorch DataLoader multiprocessing
+    shm_size: '4gb'
     depends_on:
       minio:
         condition: service_healthy
@@ -257,7 +259,8 @@ services:
     volumes:
       - ../../services/voice-engine:/app
       - voice_engine_cache:/app/.cache
-      - voice_engine_models:/app/assets/models
+      # Use bind mount for models so they persist on host (not a Docker volume)
+      # This allows models to be shared and survive container rebuilds
       # Mount UVR5 weights for vocal separation
       - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
       # Mount same models path that API uses so model paths match
