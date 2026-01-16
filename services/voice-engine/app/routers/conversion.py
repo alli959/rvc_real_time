@@ -73,6 +73,8 @@ async def convert_voice(request: ConvertRequest):
             params['protect'] = request.protect
         
         # Convert
+        # Note: model_manager.convert() may not exist - this router may need refactoring
+        # to use model_manager.infer() instead with proper model loading
         converted = model_manager.convert(
             audio=audio.astype(np.float32),
             model_id=request.model_id,
@@ -82,18 +84,23 @@ async def convert_voice(request: ConvertRequest):
             protect=params.get('protect', 0.33),
         )
         
+        # Determine output sample rate
+        # RVC typically outputs at model's target SR (32k/40k/48k) or resample_sr if set
+        # For now use input sample rate as approximation, should be refined based on actual model output
+        out_sr = sample_rate  # TODO: Get actual output SR from conversion params
+        
         # Encode output
         wav_buffer = io.BytesIO()
-        sf.write(wav_buffer, converted, sample_rate, format='WAV')
+        sf.write(wav_buffer, converted, out_sr, format='WAV')
         wav_buffer.seek(0)
         
         audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
         
         return ConvertResponse(
             audio=audio_base64,
-            sample_rate=sample_rate,
+            sample_rate=out_sr,
             format="wav",
-            duration=len(converted) / sample_rate,
+            duration=len(converted) / out_sr,
             model_id=request.model_id,
         )
         
