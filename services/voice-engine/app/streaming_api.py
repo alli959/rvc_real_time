@@ -314,9 +314,10 @@ class WebSocketServer:
                 
                 await communicate.save(tmp_path)
                 
-                # Load the audio
+                # Load the audio at model's expected input sample rate (default 16kHz)
                 import librosa
-                audio, sr = librosa.load(tmp_path, sr=40000, mono=True)  # RVC expects 40kHz
+                target_in_sr = int(self.model_manager.input_sample_rate) if self.model_manager else 16000
+                audio, _ = librosa.load(tmp_path, sr=target_in_sr, mono=True)
                 
                 # Clean up temp file
                 if os.path.exists(tmp_path):
@@ -330,6 +331,10 @@ class WebSocketServer:
                 await self.send_error(websocket, f"TTS generation failed: {str(e)}")
                 return
             
+            # Track the sample rate for output
+            target_in_sr = int(self.model_manager.input_sample_rate) if self.model_manager else 16000
+            out_sr = target_in_sr  # Default to input SR if no conversion
+            
             # Step 2: Convert the TTS audio using RVC model if loaded
             if self.model_manager and self.model_manager.model_name:
                 try:
@@ -341,7 +346,9 @@ class WebSocketServer:
                     
                     if converted_audio is not None:
                         audio = converted_audio
-                        logger.info(f"TTS audio converted with model {self.model_manager.model_name}")
+                        # Use resample_sr if set, otherwise keep input SR
+                        out_sr = int(params.resample_sr) if params and int(params.resample_sr) else target_in_sr
+                        logger.info(f"TTS audio converted with model {self.model_manager.model_name}, output SR: {out_sr}")
                     
                 except Exception as e:
                     logger.error(f"Voice conversion failed: {e}")
@@ -349,7 +356,7 @@ class WebSocketServer:
             
             # Step 3: Convert to WAV and encode as base64
             wav_buffer = io.BytesIO()
-            sf.write(wav_buffer, audio, 40000, format='WAV')
+            sf.write(wav_buffer, audio, out_sr, format='WAV')
             wav_buffer.seek(0)
             audio_base64 = base64.b64encode(wav_buffer.read()).decode('utf-8')
             
@@ -357,7 +364,7 @@ class WebSocketServer:
             response = {
                 'type': 'tts_audio',
                 'data': audio_base64,
-                'sample_rate': 40000,
+                'sample_rate': out_sr,
                 'model_applied': self.model_manager.model_name if self.model_manager and self.model_manager.model_name else None
             }
             await websocket.send(json.dumps(response))
