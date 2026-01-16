@@ -169,7 +169,22 @@ class VoiceModel extends Model
                 $model->uuid = (string) Str::uuid();
             }
             if (empty($model->slug)) {
-                $model->slug = Str::slug($model->name) . '-' . Str::random(6);
+                // Generate clean slug from name (e.g., "Bjarni Ben" -> "bjarni-ben")
+                $baseSlug = Str::slug($model->name);
+                
+                // Check if slug already exists (including soft-deleted records)
+                $existingCount = static::withTrashed()
+                    ->where('slug', $baseSlug)
+                    ->orWhere('slug', 'like', $baseSlug . '-%')
+                    ->count();
+                
+                if ($existingCount === 0) {
+                    // No conflicts - use clean slug
+                    $model->slug = $baseSlug;
+                } else {
+                    // Conflict exists - append version number
+                    $model->slug = $baseSlug . '-' . ($existingCount + 1);
+                }
             }
         });
     }

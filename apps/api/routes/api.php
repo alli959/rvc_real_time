@@ -218,6 +218,10 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/jobs/{jobId}', [TrainerController::class, 'trainingStatus']);
         Route::post('/jobs/{jobId}/cancel', [TrainerController::class, 'cancelTraining']);
         
+        // Checkpoint management
+        Route::post('/checkpoint/{jobId}', [TrainerController::class, 'requestCheckpoint']);
+        Route::get('/checkpoint/{jobId}/status', [TrainerController::class, 'getCheckpointStatus']);
+        
         // Recording wizard
         Route::post('/wizard/sessions', [TrainerController::class, 'createWizardSession']);
         Route::get('/wizard/sessions/{sessionId}', [TrainerController::class, 'getWizardSession']);
@@ -234,6 +238,7 @@ Route::middleware('auth:sanctum')->group(function () {
         // Model training data (cumulative recordings from all sessions)
         Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
         Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
+        Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
         Route::post('/model/{modelSlug}/train', [TrainerController::class, 'trainModel']);
     });
 

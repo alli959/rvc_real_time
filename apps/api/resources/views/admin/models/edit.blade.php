@@ -274,6 +274,125 @@
       </div>
     </div>
 
+    <!-- Training Status Card (if training is active) -->
+    @if(isset($trainingInfo) && isset($trainingInfo['training']) && $trainingInfo['training']['status'] === 'training')
+    <div class="bg-gray-900 border border-blue-500/50 rounded-xl p-6">
+      <h3 class="text-sm font-medium text-blue-400 mb-4 flex items-center gap-2">
+        <i data-lucide="loader-2" class="w-4 h-4 animate-spin"></i>
+        Training In Progress
+      </h3>
+      
+      <div class="space-y-3">
+        <div class="flex justify-between text-sm">
+          <span class="text-gray-500">Progress</span>
+          <span class="text-gray-300">{{ $trainingInfo['training']['epochs_trained'] ?? 0 }} / {{ $trainingInfo['training']['total_epochs'] ?? '?' }} epochs</span>
+        </div>
+        
+        @if(isset($trainingInfo['training']['job_id']))
+        <div class="flex justify-between text-sm">
+          <span class="text-gray-500">Job ID</span>
+          <span class="text-gray-400 font-mono text-xs">{{ $trainingInfo['training']['job_id'] }}</span>
+        </div>
+        
+        <!-- Checkpoint Controls -->
+        <div class="pt-3 border-t border-gray-800 space-y-2">
+          <p class="text-xs text-gray-500">Training Controls</p>
+          
+          <form method="POST" action="{{ route('admin.models.checkpoint', $voiceModel) }}" class="flex gap-2">
+            @csrf
+            <input type="hidden" name="job_id" value="{{ $trainingInfo['training']['job_id'] }}">
+            
+            <button type="submit" name="stop_after" value="0" 
+              class="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 bg-blue-600 hover:bg-blue-700 rounded-lg text-sm font-medium transition-colors"
+              onclick="return confirm('Save a checkpoint now and continue training?')">
+              <i data-lucide="save" class="w-4 h-4"></i>
+              Save Checkpoint
+            </button>
+            
+            <button type="submit" name="stop_after" value="1" 
+              class="flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg text-sm font-medium transition-colors"
+              onclick="return confirm('Save a checkpoint and STOP training? You can resume later.')">
+              <i data-lucide="square" class="w-4 h-4"></i>
+              Save & Stop
+            </button>
+          </form>
+        </div>
+        @endif
+      </div>
+    </div>
+    @endif
+
+    <!-- Model Tools Card -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <h3 class="text-sm font-medium text-gray-400 mb-4">Model Tools</h3>
+      
+      <div class="space-y-4">
+        <!-- Extract Model / Build Index -->
+        <div>
+          <p class="text-xs text-gray-500 mb-2">Extract & Index</p>
+          <p class="text-xs text-gray-600 mb-3">
+            Extract final model from G_*.pth checkpoint and/or build FAISS index for voice matching.
+          </p>
+          <form method="POST" action="{{ route('admin.models.extract-model', $voiceModel) }}" class="space-y-3">
+            @csrf
+            <div class="grid grid-cols-2 gap-2">
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" name="extract_model" value="1" checked 
+                  class="rounded bg-gray-700 border-gray-600 text-primary-600 focus:ring-primary-500" />
+                <span class="text-gray-300">Extract Model</span>
+              </label>
+              <label class="flex items-center gap-2 text-sm cursor-pointer">
+                <input type="checkbox" name="build_index" value="1" checked 
+                  class="rounded bg-gray-700 border-gray-600 text-primary-600 focus:ring-primary-500" />
+                <span class="text-gray-300">Build Index</span>
+              </label>
+            </div>
+            
+            <div class="grid grid-cols-2 gap-2">
+              <div>
+                <label class="text-xs text-gray-500">Sample Rate</label>
+                <select name="sample_rate" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  <option value="48k" selected>48kHz</option>
+                  <option value="40k">40kHz</option>
+                  <option value="32k">32kHz</option>
+                </select>
+              </div>
+              <div>
+                <label class="text-xs text-gray-500">Version</label>
+                <select name="version" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
+                  <option value="v2" selected>v2</option>
+                  <option value="v1">v1</option>
+                </select>
+              </div>
+            </div>
+            
+            <button type="submit" class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg text-sm font-medium transition-colors"
+              onclick="return confirm('This will extract the model from checkpoint and/or build the FAISS index. Continue?')">
+              <i data-lucide="package" class="w-4 h-4"></i>
+              Extract & Build Index
+            </button>
+          </form>
+        </div>
+
+        <!-- File Paths Info -->
+        @if($voiceModel->model_path || $voiceModel->index_path)
+        <div class="pt-4 border-t border-gray-800">
+          <p class="text-xs text-gray-500 mb-2">Current File Paths</p>
+          @if($voiceModel->model_path)
+            <div class="text-xs text-gray-400 mb-1 break-all">
+              <span class="text-gray-500">Model:</span> {{ $voiceModel->model_path }}
+            </div>
+          @endif
+          @if($voiceModel->index_path)
+            <div class="text-xs text-gray-400 break-all">
+              <span class="text-gray-500">Index:</span> {{ $voiceModel->index_path }}
+            </div>
+          @endif
+        </div>
+        @endif
+      </div>
+    </div>
+
     <!-- Owner / Creator Card -->
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
       <h3 class="text-sm font-medium text-gray-400 mb-4">Owner & Creator</h3>

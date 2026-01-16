@@ -55,7 +55,7 @@ class SyncVoiceModels extends Command
             return Command::SUCCESS;
         }
 
-        $stats = ['created' => 0, 'updated' => 0, 'unchanged' => 0, 'pruned' => 0];
+        $stats = ['created' => 0, 'updated' => 0, 'unchanged' => 0, 'skipped' => 0, 'pruned' => 0];
 
         $bar = $this->output->createProgressBar(count($scannedModels));
         $bar->start();
@@ -65,7 +65,9 @@ class SyncVoiceModels extends Command
         foreach ($scannedModels as $modelData) {
             $result = $this->syncModel($modelData);
             $stats[$result]++;
-            $syncedSlugs[] = $modelData['slug'];
+            if ($result !== 'skipped') {
+                $syncedSlugs[] = $modelData['slug'];
+            }
             $bar->advance();
         }
 
@@ -92,6 +94,7 @@ class SyncVoiceModels extends Command
                 ['Created', $stats['created']],
                 ['Updated', $stats['updated']],
                 ['Unchanged', $stats['unchanged']],
+                ['Skipped (user models)', $stats['skipped']],
                 ['Pruned', $stats['pruned']],
             ]
         );
@@ -101,37 +104,51 @@ class SyncVoiceModels extends Command
 
     protected function syncModel(array $modelData): string
     {
-        // Look for existing system model (user_id IS NULL) with same slug and storage type
-        $existing = VoiceModel::system()
-            ->where('slug', $modelData['slug'])
-            ->where('storage_type', $modelData['storage_type'])
-            ->first();
+        try {
+            // First check if any model (user or system) already has this slug
+            // Use withTrashed() to include soft-deleted models in the check
+            $anyExisting = VoiceModel::withTrashed()->where('slug', $modelData['slug'])->first();
+            
+            // If a user-created model has this slug (even if soft-deleted), skip syncing
+            if ($anyExisting && $anyExisting->user_id !== null) {
+                return 'skipped'; // User model takes precedence
+            }
+            
+            // Look for existing system model (user_id IS NULL) with same slug and storage type
+            $existing = VoiceModel::system()
+                ->where('slug', $modelData['slug'])
+                ->where('storage_type', $modelData['storage_type'])
+                ->first();
 
-        // Ensure system model defaults
-        $modelData['user_id'] = null;        // System models have no owner
-        $modelData['visibility'] = 'public'; // System models are always public
-        $modelData['status'] = 'ready';      // System models are ready immediately
+            // Ensure system model defaults
+            $modelData['user_id'] = null;        // System models have no owner
+            $modelData['visibility'] = 'public'; // System models are always public
+            $modelData['status'] = 'ready';      // System models are ready immediately
 
-        if (!$existing) {
-            VoiceModel::create($modelData);
-            return 'created';
+            if (!$existing) {
+                VoiceModel::create($modelData);
+                return 'created';
+            }
+
+            // Check if update needed
+            $needsUpdate = $this->option('force')
+                || $existing->model_path !== ($modelData['model_path'] ?? null)
+                || $existing->size_bytes !== ($modelData['size_bytes'] ?? null)
+                || $existing->has_index !== ($modelData['has_index'] ?? false);
+
+            if ($needsUpdate) {
+                $existing->update(array_merge($modelData, [
+                    'last_synced_at' => now(),
+                ]));
+                return 'updated';
+            }
+
+            // Just update last_synced_at
+            $existing->update(['last_synced_at' => now()]);
+            return 'unchanged';
+        } catch (\Exception $e) {
+            \Log::error("SyncModel failed for {$modelData['slug']}: " . $e->getMessage());
+            throw $e; // Re-throw to crash - we want to fix these
         }
-
-        // Check if update needed
-        $needsUpdate = $this->option('force')
-            || $existing->model_path !== ($modelData['model_path'] ?? null)
-            || $existing->size_bytes !== ($modelData['size_bytes'] ?? null)
-            || $existing->has_index !== ($modelData['has_index'] ?? false);
-
-        if ($needsUpdate) {
-            $existing->update(array_merge($modelData, [
-                'last_synced_at' => now(),
-            ]));
-            return 'updated';
-        }
-
-        // Just update last_synced_at
-        $existing->update(['last_synced_at' => now()]);
-        return 'unchanged';
     }
 }

@@ -6,6 +6,9 @@ use App\Http\Controllers\Admin\DashboardController;
 use App\Http\Controllers\Admin\UserController;
 use App\Http\Controllers\Admin\VoiceModelAdminController;
 use App\Http\Controllers\Admin\JobsAdminController;
+use App\Http\Controllers\Admin\LogsAdminController;
+use App\Http\Controllers\Admin\MetricsAdminController;
+use App\Http\Controllers\Admin\AssetsAdminController;
 
 /**
  * Define admin routes once so we can mount them on:
@@ -40,6 +43,8 @@ $adminRoutes = function () {
         Route::post('/voice-models/{voiceModel}/scan-languages', [VoiceModelAdminController::class, 'scanModelLanguages'])->name('models.scan-model-languages');
         Route::post('/voice-models/{voiceModel}/transfer-ownership', [VoiceModelAdminController::class, 'transferOwnership'])->name('models.transfer-ownership');
         Route::post('/voice-models/{voiceModel}/test-inference', [VoiceModelAdminController::class, 'testModelInference'])->name('models.test-inference');
+        Route::post('/voice-models/{voiceModel}/extract-model', [VoiceModelAdminController::class, 'extractModel'])->name('models.extract-model');
+        Route::post('/voice-models/{voiceModel}/checkpoint', [VoiceModelAdminController::class, 'requestCheckpoint'])->name('models.checkpoint');
 
         // Per-user access control for models
         Route::get('/voice-models/{voiceModel}/access', [VoiceModelAdminController::class, 'editAccess'])->name('models.access.edit');
@@ -47,6 +52,15 @@ $adminRoutes = function () {
 
         // Jobs queue
         Route::get('/jobs', [JobsAdminController::class, 'index'])->name('jobs.index');
+        
+        // System Logs
+        Route::get('/logs', [LogsAdminController::class, 'index'])->name('logs.index');
+        
+        // System Metrics
+        Route::get('/metrics', [MetricsAdminController::class, 'index'])->name('metrics.index');
+        
+        // System Assets
+        Route::get('/assets', [AssetsAdminController::class, 'index'])->name('assets.index');
     });
 };
 

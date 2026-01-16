@@ -213,20 +213,32 @@ class TrainerService
             $request = Http::timeout($this->timeout)
                 ->asMultipart();
 
+            // Add exp_name as a form field (required by voice-engine)
+            $request->attach('exp_name', $expName);
+            
             foreach ($files as $file) {
-                $request->attach('files[]', $file['content'], $file['name']);
+                $request->attach('files', $file['content'], $file['name']);
             }
 
-            $response = $request->post("{$this->baseUrl}/upload", [
-                'exp_name' => $expName,
-            ]);
+            $response = $request->post("{$this->baseUrl}/upload");
 
             if ($response->successful()) {
+                Log::info('Training audio uploaded successfully', [
+                    'exp_name' => $expName,
+                    'files_count' => count($files),
+                    'response' => $response->json()
+                ]);
                 return $response->json();
             }
+            
+            Log::error('Training upload failed', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'error' => $response->body()
+            ]);
 
         } catch (\Exception $e) {
-            Log::error('Training upload failed', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+            Log::error('Training upload exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
         }
 
         return null;
@@ -269,7 +281,7 @@ class TrainerService
     }
 
     /**
-     * Get training job status
+     * Get training job status and update model when completed
      */
     public function getTrainingStatus(string $jobId): ?array
     {
@@ -278,13 +290,69 @@ class TrainerService
                 ->get("{$this->baseUrl}/status/{$jobId}");
 
             if ($response->successful()) {
-                return $response->json();
+                $status = $response->json();
+                
+                // If training completed, update the model record
+                if (isset($status['status']) && $status['status'] === 'completed') {
+                    $this->handleTrainingCompleted($status);
+                }
+                
+                return $status;
             }
         } catch (\Exception $e) {
             Log::error('Get training status failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
         }
 
         return null;
+    }
+    
+    /**
+     * Handle training completion - update the model record
+     */
+    protected function handleTrainingCompleted(array $status): void
+    {
+        $expName = $status['exp_name'] ?? null;
+        if (!$expName) {
+            Log::warning('Training completed but no exp_name in status');
+            return;
+        }
+        
+        // Find the model by slug or name
+        $model = \App\Models\VoiceModel::where('slug', $expName)
+            ->orWhere('name', $expName)
+            ->first();
+            
+        if (!$model) {
+            Log::warning('Training completed but model not found', ['exp_name' => $expName]);
+            return;
+        }
+        
+        // Skip if already processed
+        if ($model->status === 'ready' && $model->model_path) {
+            return;
+        }
+        
+        // Build the model path
+        $modelPath = "/app/assets/models/{$expName}/{$expName}.pth";
+        $indexPath = null;
+        
+        // Try to find the index file name from result
+        if (isset($status['result']['index_path'])) {
+            $indexPath = $status['result']['index_path'];
+        }
+        
+        // Update the model
+        $model->update([
+            'status' => 'ready',
+            'model_path' => $modelPath,
+            'index_path' => $indexPath,
+        ]);
+        
+        Log::info('Model updated after training completed', [
+            'model_id' => $model->id,
+            'exp_name' => $expName,
+            'model_path' => $modelPath,
+        ]);
     }
 
     /**
@@ -302,6 +370,55 @@ class TrainerService
         }
 
         return false;
+    }
+
+    /**
+     * Request a checkpoint save for a training job
+     * 
+     * @param string $jobId Training job ID
+     * @param bool $stopAfter If true, stop training after saving checkpoint
+     */
+    public function requestCheckpoint(string $jobId, bool $stopAfter = false): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->post("{$this->baseUrl}/checkpoint/{$jobId}", [
+                    'stop_after' => $stopAfter,
+                ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+            
+            Log::warning('Checkpoint request failed', [
+                'job_id' => $jobId,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Checkpoint request exception', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Get checkpoint request status for a training job
+     */
+    public function getCheckpointStatus(string $jobId): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->baseUrl}/checkpoint/{$jobId}/status");
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+        } catch (\Exception $e) {
+            Log::error('Get checkpoint status failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+        }
+
+        return null;
     }
 
     /**
@@ -854,5 +971,120 @@ class TrainerService
         }
 
         return null;
+    }
+
+    /**
+     * Get comprehensive model training info including checkpoint status
+     * 
+     * Returns information about:
+     * - Recording count and duration
+     * - Preprocessed data status
+     * - Training status (has model, has index, epochs trained)
+     * - Checkpoint information for resuming training
+     * - Active training job info (if training is in progress)
+     */
+    public function getModelTrainingInfo(string $expName): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->baseUrl}/model/{$expName}/info");
+
+            if ($response->successful()) {
+                $info = $response->json();
+                
+                // Also check for active training
+                try {
+                    $activeResponse = Http::timeout($this->timeout)
+                        ->get("{$this->baseUrl}/model/{$expName}/active");
+                    
+                    if ($activeResponse->successful() && $activeResponse->json('active')) {
+                        $job = $activeResponse->json('job');
+                        $info['training']['status'] = 'training';
+                        $info['training']['job_id'] = $job['job_id'] ?? null;
+                        $info['training']['current_epoch'] = $job['current_epoch'] ?? 0;
+                        $info['training']['total_epochs'] = $job['total_epochs'] ?? 0;
+                        $info['training']['progress'] = $job['progress'] ?? 0;
+                    } else {
+                        $info['training']['status'] = 'idle';
+                    }
+                } catch (\Exception $e) {
+                    $info['training']['status'] = 'unknown';
+                    Log::warning('Failed to check active training', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+                }
+                
+                return $info;
+            }
+
+            Log::error('Failed to get model training info', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get model training info exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    /**
+     * Extract model from checkpoint and/or build FAISS index.
+     * 
+     * This is used when:
+     * - Training completed but final model wasn't extracted (has G_*.pth but no {name}.pth)
+     * - Index file is missing and needs to be rebuilt
+     * 
+     * @param string $modelDir Model directory name (relative to models dir)
+     * @param bool $extractModel Whether to extract .pth from G_*.pth
+     * @param bool $buildIndex Whether to build FAISS index
+     * @param string $sampleRate Sample rate: 32k, 40k, or 48k
+     * @param string $version RVC version: v1 or v2
+     * @param string|null $modelName Custom model name (defaults to directory name)
+     * @return array|null Result or null on failure
+     */
+    public function extractModelAndBuildIndex(
+        string $modelDir,
+        bool $extractModel = true,
+        bool $buildIndex = true,
+        string $sampleRate = '48k',
+        string $version = 'v2',
+        ?string $modelName = null
+    ): ?array {
+        try {
+            $response = Http::timeout($this->timeout * 2) // Double timeout for potentially long operations
+                ->post("{$this->baseUrl}/model/extract", [
+                    'model_dir' => $modelDir,
+                    'extract_model' => $extractModel,
+                    'build_index' => $buildIndex,
+                    'sample_rate' => $sampleRate,
+                    'version' => $version,
+                    'model_name' => $modelName,
+                ]);
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Extract model failed', [
+                'model_dir' => $modelDir,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => $response->json('detail', 'Unknown error'),
+            ];
+        } catch (\Exception $e) {
+            Log::error('Extract model exception', [
+                'model_dir' => $modelDir,
+                'error' => $e->getMessage(),
+            ]);
+
+            return [
+                'success' => false,
+                'message' => $e->getMessage(),
+            ];
+        }
     }
 }
