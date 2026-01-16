@@ -3,9 +3,12 @@ UVR5 Vocal Separator Module
 
 Provides vocal/instrumental separation using UVR5 models.
 Based on the implementation from Retrieval-based-Voice-Conversion-WebUI.
+
+Memory optimization: Processes long audio in chunks to avoid OOM.
 """
 
 import os
+import gc
 import logging
 import tempfile
 import numpy as np
@@ -19,6 +22,9 @@ logger = logging.getLogger(__name__)
 # Lazy load the heavy imports
 _uvr_model = None
 _model_name = None
+
+# Max audio length in samples before chunking (5 minutes at 44100Hz)
+MAX_CHUNK_SAMPLES = 44100 * 60 * 5  # 5 minutes
 
 
 def get_uvr5_model_path(model_name: str = "HP5_only_main_vocal") -> str:
@@ -87,6 +93,11 @@ def separate_vocals(
     model_path = get_uvr5_model_path(model_name)
     logger.info(f"Using UVR5 model: {model_path}")
     
+    # Clear GPU cache before loading model to free up memory
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
+    
     # Check if we need to reload model
     if _uvr_model is None or _model_name != model_name:
         logger.info(f"Loading UVR5 model: {model_name}")
@@ -112,10 +123,105 @@ def separate_vocals(
         audio_right = librosa.resample(audio[1].astype(np.float32), orig_sr=sample_rate, target_sr=target_sr)
         audio = np.stack([audio_left, audio_right])
     
+    # Check if audio is too long - process in chunks to avoid OOM
+    audio_length = audio.shape[1]
+    if audio_length > MAX_CHUNK_SAMPLES:
+        logger.info(f"Audio is {audio_length / target_sr / 60:.1f} minutes - processing in chunks to save memory")
+        return _separate_vocals_chunked(audio, target_sr, model_name, agg, device, is_half)
+    
+    # Process normally for shorter audio
+    return _separate_vocals_single(audio, target_sr, model_name, agg, device, is_half)
+
+
+def _separate_vocals_chunked(
+    audio: np.ndarray,
+    sample_rate: int,
+    model_name: str,
+    agg: int,
+    device: str,
+    is_half: bool
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Process long audio in chunks to avoid OOM"""
+    global _uvr_model
+    
+    audio_length = audio.shape[1]
+    chunk_size = MAX_CHUNK_SAMPLES
+    overlap = sample_rate * 5  # 5 second overlap for smooth transitions
+    
+    all_vocals = []
+    all_instrumental = []
+    
+    num_chunks = (audio_length + chunk_size - overlap - 1) // (chunk_size - overlap)
+    logger.info(f"Processing {num_chunks} chunks...")
+    
+    for i, start in enumerate(range(0, audio_length, chunk_size - overlap)):
+        end = min(start + chunk_size, audio_length)
+        chunk = audio[:, start:end]
+        
+        logger.info(f"Processing chunk {i+1}/{num_chunks} ({start/sample_rate:.1f}s - {end/sample_rate:.1f}s)")
+        
+        # Clear memory before each chunk
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        gc.collect()
+        
+        # Process this chunk
+        vocals, instrumental = _separate_vocals_single(chunk, sample_rate, model_name, agg, device, is_half)
+        
+        # Handle overlap with crossfade
+        if len(all_vocals) > 0 and i > 0:
+            # Crossfade with previous chunk
+            fade_samples = min(overlap, len(vocals), len(all_vocals[-1]))
+            if fade_samples > 0:
+                # Create fade curves
+                fade_out = np.linspace(1.0, 0.0, fade_samples).astype(np.float32)
+                fade_in = np.linspace(0.0, 1.0, fade_samples).astype(np.float32)
+                
+                # Apply crossfade to the overlap region
+                overlap_vocals = all_vocals[-1][-fade_samples:] * fade_out + vocals[:fade_samples] * fade_in
+                overlap_inst = all_instrumental[-1][-fade_samples:] * fade_out + instrumental[:fade_samples] * fade_in
+                
+                # Replace end of previous chunk and start of current
+                all_vocals[-1] = all_vocals[-1][:-fade_samples]
+                all_instrumental[-1] = all_instrumental[-1][:-fade_samples]
+                
+                all_vocals.append(overlap_vocals)
+                all_instrumental.append(overlap_inst)
+                
+                vocals = vocals[fade_samples:]
+                instrumental = instrumental[fade_samples:]
+        
+        all_vocals.append(vocals)
+        all_instrumental.append(instrumental)
+        
+        # Check if this is the last chunk
+        if end >= audio_length:
+            break
+    
+    # Concatenate all chunks
+    final_vocals = np.concatenate(all_vocals)
+    final_instrumental = np.concatenate(all_instrumental)
+    
+    logger.info(f"Chunked separation complete: vocals={len(final_vocals)}, instrumental={len(final_instrumental)}")
+    
+    return final_vocals, final_instrumental
+
+
+def _separate_vocals_single(
+    audio: np.ndarray,
+    sample_rate: int,
+    model_name: str,
+    agg: int,
+    device: str,
+    is_half: bool
+) -> Tuple[np.ndarray, np.ndarray]:
+    """Process a single audio chunk"""
+    global _uvr_model
+    
     # Save to temp file (UVR5 works with files)
     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tmp_input:
         tmp_input_path = tmp_input.name
-        sf.write(tmp_input_path, audio.T, target_sr)
+        sf.write(tmp_input_path, audio.T, sample_rate)
     
     # Create temp output directories
     with tempfile.TemporaryDirectory() as tmp_dir:
@@ -143,8 +249,24 @@ def separate_vocals(
             if not vocal_files or not instrumental_files:
                 raise RuntimeError("UVR5 separation produced no output")
             
-            vocals, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
-            instrumental, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
+            # IMPORTANT: UVR5 vr.py has inverted output logic for HP3 models!
+            # When is_hp3=True:
+            #   - ins_root gets VOCALS (with head="vocal_")
+            #   - vocal_root gets INSTRUMENTALS (with head="instrument_")
+            # When is_hp3=False (HP5, etc):
+            #   - ins_root gets INSTRUMENTALS (with head="instrument_")
+            #   - vocal_root gets VOCALS (with head="vocal_")
+            # So we need to swap the reads for HP3 models.
+            
+            if is_hp3:
+                # HP3: vocals are in instrumental_dir, instrumentals are in vocals_dir
+                vocals, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
+                instrumental, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
+                logger.info(f"HP3 mode: swapped reads (vocals from ins_dir, instrumental from vocal_dir)")
+            else:
+                # HP5 and others: normal read
+                vocals, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
+                instrumental, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
             
             # Convert to mono if stereo
             if vocals.ndim > 1:
@@ -153,6 +275,11 @@ def separate_vocals(
                 instrumental = np.mean(instrumental, axis=1)
             
             logger.info(f"Separation complete: vocals={len(vocals)}, instrumental={len(instrumental)}")
+            
+            # Clean up GPU memory
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            gc.collect()
             
             return vocals.astype(np.float32), instrumental.astype(np.float32)
             

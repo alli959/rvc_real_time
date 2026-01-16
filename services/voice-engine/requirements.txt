@@ -60,5 +60,11 @@ phonemizer>=3.2.1
 epitran>=1.24
 faiss-cpu>=1.7.4
 
+# TensorBoard for training logging/visualization
+tensorboard>=2.14.0
+
+# Matplotlib for spectrogram visualization during training
+matplotlib>=3.7.0
+
 # Whisper for speech recognition & phoneme detection
 openai-whisper>=20231117

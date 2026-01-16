@@ -1,6 +1,8 @@
 import os
 import sys
 import logging
+import json
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
@@ -10,6 +12,52 @@ sys.path.append(os.path.join(now_dir))
 import datetime
 
 from infer.lib.train import utils
+
+
+# ============================================================================
+# Checkpoint Control System
+# ============================================================================
+
+def check_checkpoint_request(model_dir: str) -> dict:
+    """
+    Check if there's a pending checkpoint request file.
+    
+    The control file format is: {model_dir}/.checkpoint_request.json
+    Contents: {"action": "save_and_stop" | "save_and_continue", "requested_at": "..."}
+    
+    Returns empty dict if no request, otherwise returns the request.
+    """
+    request_file = Path(model_dir) / ".checkpoint_request.json"
+    if request_file.exists():
+        try:
+            with open(request_file, 'r') as f:
+                request = json.load(f)
+            # Clear the request file
+            request_file.unlink()
+            return request
+        except Exception as e:
+            logger.warning(f"Failed to read checkpoint request: {e}")
+    return {}
+
+
+def write_checkpoint_response(model_dir: str, success: bool, checkpoint_path: str = "", error: str = ""):
+    """
+    Write checkpoint response file for the orchestrator to read.
+    
+    File: {model_dir}/.checkpoint_response.json
+    """
+    response_file = Path(model_dir) / ".checkpoint_response.json"
+    response = {
+        "success": success,
+        "checkpoint_path": checkpoint_path,
+        "error": error,
+        "completed_at": datetime.datetime.utcnow().isoformat() + "Z"
+    }
+    try:
+        with open(response_file, 'w') as f:
+            json.dump(response, f)
+    except Exception as e:
+        logger.warning(f"Failed to write checkpoint response: {e}")
 
 hps = utils.get_hparams()
 os.environ["CUDA_VISIBLE_DEVICES"] = hps.gpus.replace("-", ",")
@@ -103,18 +151,25 @@ def main():
         n_gpus = 1
     os.environ["MASTER_ADDR"] = "localhost"
     os.environ["MASTER_PORT"] = str(randint(20000, 55555))
-    children = []
     logger = utils.get_logger(hps.model_dir)
-    for i in range(n_gpus):
-        subproc = mp.Process(
-            target=run,
-            args=(i, n_gpus, hps, logger),
-        )
-        children.append(subproc)
-        subproc.start()
+    
+    # For single GPU, run directly without multiprocessing overhead
+    if n_gpus == 1:
+        logger.info("Single GPU detected - running without multiprocessing")
+        run(0, 1, hps, logger)
+    else:
+        # Multi-GPU: use process spawning
+        children = []
+        for i in range(n_gpus):
+            subproc = mp.Process(
+                target=run,
+                args=(i, n_gpus, hps, logger),
+            )
+            children.append(subproc)
+            subproc.start()
 
-    for i in range(n_gpus):
-        children[i].join()
+        for i in range(n_gpus):
+            children[i].join()
 
 
 def run(rank, n_gpus, hps, logger: logging.Logger):
@@ -126,9 +181,12 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
         writer = SummaryWriter(log_dir=hps.model_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
 
-    dist.init_process_group(
-        backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
-    )
+    # Only use distributed training for multi-GPU
+    use_ddp = n_gpus > 1
+    if use_ddp:
+        dist.init_process_group(
+            backend="gloo", init_method="env://", world_size=n_gpus, rank=rank
+        )
     torch.manual_seed(hps.train.seed)
     if torch.cuda.is_available():
         torch.cuda.set_device(rank)
@@ -147,21 +205,37 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
         shuffle=True,
     )
     # It is possible that dataloader's workers are out of shared memory. Please try to raise your shared memory limit.
-    # num_workers=8 -> num_workers=4
+    # Auto-adjust num_workers based on dataset size
+    dataset_size = len(train_dataset)
+    if dataset_size < 200:
+        num_workers = 0  # Very small dataset: no multiprocessing overhead
+    elif dataset_size < 1000:
+        num_workers = 2  # Small/medium dataset: light prefetching
+    elif dataset_size < 5000:
+        num_workers = 4  # Medium/large dataset: moderate prefetching
+    else:
+        num_workers = 8  # Large dataset: full parallel prefetching
+    
+    if rank == 0:
+        logger.info(f"Dataset size: {dataset_size} samples, using num_workers={num_workers}")
+    
     if hps.if_f0 == 1:
         collate_fn = TextAudioCollateMultiNSFsid()
     else:
         collate_fn = TextAudioCollate()
-    train_loader = DataLoader(
-        train_dataset,
-        num_workers=4,
-        shuffle=False,
-        pin_memory=True,
-        collate_fn=collate_fn,
-        batch_sampler=train_sampler,
-        persistent_workers=True,
-        prefetch_factor=8,
-    )
+    
+    dataloader_kwargs = {
+        "num_workers": num_workers,
+        "shuffle": False,
+        "pin_memory": True,
+        "collate_fn": collate_fn,
+        "batch_sampler": train_sampler,
+    }
+    if num_workers > 0:
+        dataloader_kwargs["persistent_workers"] = True
+        dataloader_kwargs["prefetch_factor"] = 2
+    
+    train_loader = DataLoader(train_dataset, **dataloader_kwargs)
     if hps.if_f0 == 1:
         net_g = RVC_Model_f0(
             hps.data.filter_length // 2 + 1,
@@ -196,14 +270,16 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
     )
     # net_g = DDP(net_g, device_ids=[rank], find_unused_parameters=True)
     # net_d = DDP(net_d, device_ids=[rank], find_unused_parameters=True)
-    if hasattr(torch, "xpu") and torch.xpu.is_available():
-        pass
-    elif torch.cuda.is_available():
-        net_g = DDP(net_g, device_ids=[rank])
-        net_d = DDP(net_d, device_ids=[rank])
-    else:
-        net_g = DDP(net_g)
-        net_d = DDP(net_d)
+    # Only wrap in DDP for multi-GPU training
+    if use_ddp:
+        if hasattr(torch, "xpu") and torch.xpu.is_available():
+            pass
+        elif torch.cuda.is_available():
+            net_g = DDP(net_g, device_ids=[rank])
+            net_d = DDP(net_d, device_ids=[rank])
+        else:
+            net_g = DDP(net_g)
+            net_d = DDP(net_d)
 
     try:  # 如果能加载自动resume
         _, _, _, epoch_str = utils.load_checkpoint(
@@ -616,6 +692,50 @@ def train_and_evaluate(
 
     if rank == 0:
         logger.info("====> Epoch: {} {}".format(epoch, epoch_recorder.record()))
+    
+    # Check for checkpoint request (save & stop, save & continue)
+    if rank == 0:
+        request = check_checkpoint_request(hps.model_dir)
+        if request:
+            action = request.get("action", "")
+            logger.info(f"Checkpoint request received: {action}")
+            
+            try:
+                # Save checkpoint with proper naming
+                g_path = os.path.join(hps.model_dir, "G_{}.pth".format(global_step))
+                d_path = os.path.join(hps.model_dir, "D_{}.pth".format(global_step))
+                
+                utils.save_checkpoint(
+                    net_g, optim_g, hps.train.learning_rate, epoch, g_path
+                )
+                utils.save_checkpoint(
+                    net_d, optim_d, hps.train.learning_rate, epoch, d_path
+                )
+                
+                # Also save extractable model
+                if hasattr(net_g, "module"):
+                    ckpt = net_g.module.state_dict()
+                else:
+                    ckpt = net_g.state_dict()
+                
+                saved_path = savee(
+                    ckpt, hps.sample_rate, hps.if_f0,
+                    hps.name + "_e%s_s%s" % (epoch, global_step),
+                    epoch, hps.version, hps
+                )
+                
+                logger.info(f"Checkpoint saved on request: {saved_path}")
+                write_checkpoint_response(hps.model_dir, True, checkpoint_path=saved_path)
+                
+                if action == "save_and_stop":
+                    logger.info("Stopping training as requested")
+                    sleep(1)
+                    os._exit(0)
+                    
+            except Exception as e:
+                logger.error(f"Failed to save checkpoint on request: {e}")
+                write_checkpoint_response(hps.model_dir, False, error=str(e))
+    
     if epoch >= hps.total_epoch and rank == 0:
         logger.info("Training is done. The program is closed.")
 

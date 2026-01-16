@@ -33,7 +33,7 @@ class RVCInferParams:
     filter_radius: int = 3
     rms_mix_rate: float = 0.25
     protect: float = 0.33
-    resample_sr: int = 16000  # output resample rate (0 disables)
+    resample_sr: int = 0  # output resample rate (0 disables, keeps model's native rate)
 
 
 class ModelManager:
