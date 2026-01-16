@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { jobsApi, Job } from '@/lib/api';
+import { jobsApi, trainerApi } from '@/lib/api';
 import {
   ListMusic,
   Play,
@@ -19,9 +19,21 @@ import {
   Loader2,
   FileAudio,
   ChevronRight,
+  Save,
+  StopCircle,
 } from 'lucide-react';
 
 type JobFilter = 'all' | 'pending' | 'queued' | 'processing' | 'completed' | 'failed';
+
+// Training step definitions (matching backend)
+const TRAINING_STEPS = [
+  { key: 'preprocessing', label: 'Preprocessing Audio', weight: 0.10 },
+  { key: 'f0_extraction', label: 'Extracting Pitch', weight: 0.15 },
+  { key: 'feature_extraction', label: 'Extracting Features', weight: 0.15 },
+  { key: 'training', label: 'Training Model', weight: 0.50 },
+  { key: 'index_building', label: 'Building Index', weight: 0.05 },
+  { key: 'packaging', label: 'Packaging Model', weight: 0.05 },
+];
 
 const getJobTypeLabel = (type: string | undefined): string => {
   if (!type) return 'Job';
@@ -32,14 +44,21 @@ const getJobTypeLabel = (type: string | undefined): string => {
     'audio_split': 'Vocal Separation',
     'audio_swap': 'Voice Swap',
     'training': 'Model Training',
+    'training_rvc': 'Model Training',
     'preprocessing': 'Preprocessing',
   };
   return labels[type] || type.charAt(0).toUpperCase() + type.slice(1).replace(/_/g, ' ');
 };
 
+const isTrainingJob = (type: string | undefined): boolean => {
+  return type === 'training' || type === 'training_rvc' || type === 'training_fine_tune';
+};
+
 export default function JobsPage() {
   const [filter, setFilter] = useState<JobFilter>('all');
   const [page, setPage] = useState(1);
+  const [checkpointPending, setCheckpointPending] = useState<Record<string, boolean>>({});
+  const queryClient = useQueryClient();
 
   const { data, isLoading, error, refetch } = useQuery({
     queryKey: ['jobs', filter, page],
@@ -67,6 +86,17 @@ export default function JobsPage() {
       refetch();
     } catch (err) {
       console.error('Failed to cancel job:', err);
+    }
+  };
+
+  const handleCheckpointAndStop = async (jobId: string) => {
+    try {
+      setCheckpointPending(prev => ({ ...prev, [jobId]: true }));
+      await trainerApi.requestCheckpoint(jobId, true);
+      // The job will save a checkpoint and stop
+    } catch (err) {
+      console.error('Failed to request checkpoint:', err);
+      setCheckpointPending(prev => ({ ...prev, [jobId]: false }));
     }
   };
 
@@ -210,8 +240,60 @@ export default function JobsPage() {
                         Created {new Date(job.created_at).toLocaleString()}
                       </p>
 
-                      {/* Progress bar for processing jobs */}
-                      {job.status === 'processing' && job.progress !== undefined && (
+                      {/* Training-specific progress with steps */}
+                      {job.status === 'processing' && isTrainingJob(job.type) && (
+                        <div className="mt-3 space-y-2">
+                          {/* Step indicators */}
+                          <div className="flex items-center gap-1 text-xs">
+                            {TRAINING_STEPS.map((step, idx) => {
+                              const currentStep = job.step || job.current_step || '';
+                              const stepIdx = TRAINING_STEPS.findIndex(s => s.key === currentStep);
+                              const isComplete = idx < stepIdx;
+                              const isCurrent = step.key === currentStep;
+                              
+                              return (
+                                <div key={step.key} className="flex items-center gap-1">
+                                  <div
+                                    className={`h-2 flex-1 rounded ${
+                                      isComplete
+                                        ? 'bg-green-500'
+                                        : isCurrent
+                                        ? 'bg-primary-500 animate-pulse'
+                                        : 'bg-gray-700'
+                                    }`}
+                                    style={{ minWidth: `${step.weight * 100}px` }}
+                                    title={step.label}
+                                  />
+                                </div>
+                              );
+                            })}
+                          </div>
+                          
+                          {/* Current step label */}
+                          <div className="flex justify-between text-xs text-gray-400">
+                            <span>
+                              {TRAINING_STEPS.find(s => s.key === (job.step || job.current_step))?.label || 'Processing...'}
+                              {job.current_epoch && job.total_epochs && (
+                                <span className="ml-2 text-primary-400">
+                                  Epoch {job.current_epoch}/{job.total_epochs}
+                                </span>
+                              )}
+                            </span>
+                            <span>{job.progress}%</span>
+                          </div>
+                          
+                          {/* Overall progress bar */}
+                          <div className="h-2 bg-gray-800 rounded-full overflow-hidden">
+                            <div
+                              className="h-full bg-primary-500 rounded-full transition-all duration-500"
+                              style={{ width: `${job.progress}%` }}
+                            />
+                          </div>
+                        </div>
+                      )}
+
+                      {/* Regular progress bar for non-training jobs */}
+                      {job.status === 'processing' && !isTrainingJob(job.type) && job.progress !== undefined && (
                         <div className="mt-2">
                           <div className="flex justify-between text-xs text-gray-400 mb-1">
                             <span>Progress</span>
@@ -258,6 +340,27 @@ export default function JobsPage() {
                         title="Download"
                       >
                         <Download className="h-5 w-5" />
+                      </button>
+                    )}
+                    {/* Checkpoint & Stop button for training jobs */}
+                    {job.status === 'processing' && isTrainingJob(job.type) && (
+                      <button
+                        onClick={() => handleCheckpointAndStop(job.id)}
+                        disabled={checkpointPending[job.id]}
+                        className="flex items-center gap-1 px-3 py-1.5 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg transition-colors disabled:opacity-50"
+                        title="Save checkpoint and stop training"
+                      >
+                        {checkpointPending[job.id] ? (
+                          <>
+                            <Loader2 className="h-4 w-4 animate-spin" />
+                            <span>Saving...</span>
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" />
+                            <span>Save & Stop</span>
+                          </>
+                        )}
                       </button>
                     )}
                     {(job.status === 'pending' || job.status === 'queued' || job.status === 'processing') && (

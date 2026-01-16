@@ -1055,7 +1055,10 @@ export const trainerApi = {
     job_id: string;
     status: string;
     progress: number;
+    message?: string;
     status_message?: string;
+    current_epoch?: number;
+    total_epochs?: number;
     error?: string;
   }> => {
     const response = await api.get(`/trainer/jobs/${jobId}`);
@@ -1149,6 +1152,93 @@ export const trainerApi = {
     config: { epochs: number; batch_size: number; sample_rate: number };
   }> => {
     const response = await api.post(`/trainer/model/${modelSlug}/train`, { config });
+    return response.data;
+  },
+
+  /**
+   * Get comprehensive model training info including checkpoint status
+   * 
+   * Returns information about recordings, preprocessed data,
+   * training status, and checkpoint info for resuming training.
+   */
+  getModelTrainingInfo: async (modelSlug: string): Promise<{
+    name: string;
+    model_dir: string;
+    recordings: {
+      count: number;
+      duration_seconds: number;
+      duration_minutes: number;
+    };
+    preprocessed: {
+      count: number;
+      has_data: boolean;
+    };
+    training: {
+      has_model: boolean;
+      has_index: boolean;
+      epochs_trained: number;
+      last_trained: string | null;
+      latest_checkpoint: string | null;
+    };
+    coverage: {
+      phoneme_percent: number | null;
+      phonemes_covered: number;
+      phonemes_missing: number;
+    };
+    categories: Record<string, {
+      name: string;
+      recordings: number;
+      satisfied: boolean;
+    }>;
+    model: {
+      id: number;
+      name: string;
+      slug: string;
+      status: string;
+      en_readiness_score: number | null;
+      language_scanned_at: string | null;
+    };
+  }> => {
+    const response = await api.get(`/trainer/model/${modelSlug}/training-info`);
+    return response.data;
+  },
+
+  // ============================================================================
+  // Checkpoint Management
+  // ============================================================================
+
+  /**
+   * Request a checkpoint save for a training job
+   * 
+   * @param jobId - Training job ID
+   * @param stopAfter - If true, stop training after saving ("Save checkpoint & cancel")
+   */
+  requestCheckpoint: async (jobId: string, stopAfter: boolean = false): Promise<{
+    job_id: string;
+    checkpoint_requested: boolean;
+    stop_after: boolean;
+    status: string;
+    message: string;
+  }> => {
+    const response = await api.post(`/trainer/checkpoint/${jobId}`, null, {
+      params: { stop_after: stopAfter }
+    });
+    return response.data;
+  },
+
+  /**
+   * Get checkpoint request status
+   */
+  getCheckpointStatus: async (jobId: string): Promise<{
+    job_id: string;
+    checkpoint_completed: boolean;
+    success?: boolean;
+    checkpoint_path?: string;
+    error?: string;
+    completed_at?: string;
+    message?: string;
+  }> => {
+    const response = await api.get(`/trainer/checkpoint/${jobId}/status`);
     return response.data;
   },
 };
