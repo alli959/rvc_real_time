@@ -1900,13 +1900,108 @@ def _generate_inference_recommendations(
 # Model Extraction & Index Building
 # ============================================================================
 
+class ModelConfigResponse(BaseModel):
+    """Response with model's training configuration (sample rate, version)"""
+    model_dir: str
+    sample_rate: Optional[str] = None
+    sample_rate_hz: Optional[int] = None
+    version: Optional[str] = None
+    config_found: bool = False
+    has_checkpoints: bool = False
+    has_final_model: bool = False
+    has_index: bool = False
+    message: str = ""
+
+
+@router.get("/model/{model_dir:path}/config", response_model=ModelConfigResponse)
+async def get_model_config(model_dir: str):
+    """
+    Get the training configuration for a model directory.
+    
+    Auto-detects sample_rate and version from config.json if present.
+    This is useful for pre-populating the Extract & Index form.
+    """
+    import json
+    import re
+    
+    # Resolve model directory
+    model_path = Path(model_dir)
+    if not model_path.is_absolute():
+        model_path = MODELS_DIR / model_dir
+    
+    if not model_path.exists():
+        raise HTTPException(status_code=404, detail=f"Model directory not found: {model_dir}")
+    
+    result = {
+        "model_dir": model_dir,
+        "sample_rate": None,
+        "sample_rate_hz": None,
+        "version": None,
+        "config_found": False,
+        "has_checkpoints": False,
+        "has_final_model": False,
+        "has_index": False,
+        "message": "",
+    }
+    
+    # Check for checkpoints
+    g_checkpoints = list(model_path.glob("G_*.pth"))
+    result["has_checkpoints"] = len(g_checkpoints) > 0
+    
+    # Check for final model (*.pth that isn't G_*.pth or D_*.pth)
+    all_pth = list(model_path.glob("*.pth"))
+    final_models = [f for f in all_pth if not re.match(r'^[GD]_\d+\.pth$', f.name)]
+    result["has_final_model"] = len(final_models) > 0
+    
+    # Check for index
+    indexes = list(model_path.glob("*.index"))
+    result["has_index"] = len(indexes) > 0
+    
+    # Try to read config.json
+    config_path = model_path / "config.json"
+    if config_path.exists():
+        result["config_found"] = True
+        try:
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Extract sample rate
+            data_sr = config.get("data", {}).get("sampling_rate")
+            if data_sr:
+                result["sample_rate_hz"] = data_sr
+                sr_map = {32000: "32k", 40000: "40k", 48000: "48k"}
+                result["sample_rate"] = sr_map.get(data_sr)
+            
+            # Detect version from model architecture
+            model_config = config.get("model", {})
+            upsample_rates = model_config.get("upsample_rates", [])
+            if upsample_rates == [12, 10, 2, 2]:  # v2 48k pattern
+                result["version"] = "v2"
+            elif upsample_rates == [10, 10, 2, 2]:  # v2 40k pattern
+                result["version"] = "v2"
+            elif len(upsample_rates) == 5:  # v1 patterns have 5 stages
+                result["version"] = "v1"
+            else:
+                result["version"] = "v2"  # Default to v2
+            
+            result["message"] = f"Config found: {result['sample_rate']} ({data_sr}Hz), {result['version']}"
+        except Exception as e:
+            result["message"] = f"Config found but failed to parse: {e}"
+    else:
+        result["message"] = "No config.json found - using defaults (48k, v2)"
+        result["sample_rate"] = "48k"
+        result["version"] = "v2"
+    
+    return ModelConfigResponse(**result)
+
+
 class ExtractModelRequest(BaseModel):
     """Request to extract a model from checkpoint and/or build FAISS index"""
     model_dir: str = Field(..., description="Path to model directory (absolute or relative to models dir)")
     extract_model: bool = Field(default=True, description="Extract .pth from G_*.pth checkpoint")
     build_index: bool = Field(default=True, description="Build FAISS index from features")
-    sample_rate: str = Field(default="48k", description="Sample rate: 32k, 40k, or 48k")
-    version: str = Field(default="v2", description="RVC version: v1 or v2")
+    sample_rate: Optional[str] = Field(default=None, description="Sample rate: 32k, 40k, or 48k. If not provided, auto-detected from config.json")
+    version: Optional[str] = Field(default=None, description="RVC version: v1 or v2. If not provided, auto-detected from config.json")
     model_name: Optional[str] = Field(default=None, description="Custom model name (defaults to directory name)")
 
 
@@ -1917,6 +2012,7 @@ class ExtractModelResponse(BaseModel):
     index_path: Optional[str] = None
     message: str
     details: Dict[str, Any] = {}
+
 
 
 @router.post("/model/extract", response_model=ExtractModelResponse)
@@ -1950,6 +2046,55 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
     results = {"extracted": False, "indexed": False}
     final_model_path = None
     final_index_path = None
+    
+    # Auto-detect sample_rate and version from config.json if not provided
+    config_path = model_dir / "config.json"
+    detected_sr = None
+    detected_version = None
+    
+    if config_path.exists():
+        try:
+            import json
+            with open(config_path, 'r') as f:
+                config = json.load(f)
+            
+            # Extract sample rate from config
+            data_sr = config.get("data", {}).get("sampling_rate")
+            if data_sr:
+                sr_map = {32000: "32k", 40000: "40k", 48000: "48k"}
+                detected_sr = sr_map.get(data_sr)
+                if detected_sr:
+                    logger.info(f"Auto-detected sample rate from config.json: {detected_sr} ({data_sr}Hz)")
+            
+            # Try to detect version from model architecture
+            # v2 uses 768 feature dimensions, v1 uses 256
+            model_config = config.get("model", {})
+            # v2 typically has different upsample_rates
+            upsample_rates = model_config.get("upsample_rates", [])
+            if upsample_rates == [12, 10, 2, 2]:  # v2 48k pattern
+                detected_version = "v2"
+            elif upsample_rates == [10, 10, 2, 2]:  # v2 40k pattern
+                detected_version = "v2"
+            elif len(upsample_rates) == 5:  # v1 patterns have 5 stages
+                detected_version = "v1"
+            else:
+                detected_version = "v2"  # Default to v2
+            
+            logger.info(f"Auto-detected version from config.json: {detected_version}")
+        except Exception as e:
+            logger.warning(f"Failed to parse config.json for auto-detection: {e}")
+    
+    # Use provided values or fall back to detected/defaults
+    sr = request.sample_rate or detected_sr or "48k"
+    version = request.version or detected_version or "v2"
+    
+    results["sample_rate"] = sr
+    results["version"] = version
+    results["auto_detected"] = {
+        "sample_rate": detected_sr,
+        "version": detected_version,
+        "config_found": config_path.exists()
+    }
     
     try:
         # Step 1: Extract model from checkpoint
@@ -1994,10 +2139,7 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
                         continue
                     opt["weight"][key] = ckpt[key].half()
                 
-                # Set config based on sample rate and version
-                sr = request.sample_rate
-                version = request.version
-                
+                # Set config based on sample rate and version (using auto-detected values)
                 if sr == "40k":
                     opt["config"] = [
                         1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
@@ -2042,7 +2184,7 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
         
         # Step 2: Build FAISS index
         if request.build_index:
-            version = request.version
+            # version already resolved above (auto-detected or provided)
             feature_dim = 768 if version == "v2" else 256
             feature_dir = model_dir / f"3_feature{feature_dim}"
             

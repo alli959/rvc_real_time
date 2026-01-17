@@ -71,14 +71,30 @@ class VoiceModelAdminController extends Controller
         
         // Get training info if model has a model_dir
         $trainingInfo = null;
-        if ($voiceModel->model_dir) {
-            $trainer = app(TrainerService::class);
-            $trainingInfo = $trainer->getModelTrainingInfo($voiceModel->model_dir);
+        $modelConfig = null;
+        $trainer = app(TrainerService::class);
+        
+        // Determine model directory from model_path or slug
+        $modelDir = null;
+        if ($voiceModel->model_path) {
+            $modelDir = dirname($voiceModel->model_path);
+            if ($modelDir === '.' || empty($modelDir)) {
+                $modelDir = $voiceModel->slug;
+            }
+        } else {
+            $modelDir = $voiceModel->slug;
+        }
+        
+        if ($modelDir) {
+            $trainingInfo = $trainer->getModelTrainingInfo($modelDir);
+            // Get model config (sample rate, version) for auto-detection
+            $modelConfig = $trainer->getModelConfig($modelDir);
         }
 
         return view('admin.models.edit', [
             'voiceModel' => $voiceModel,
             'trainingInfo' => $trainingInfo,
+            'modelConfig' => $modelConfig,
         ]);
     }
 
@@ -332,8 +348,8 @@ class VoiceModelAdminController extends Controller
             $validated = $request->validate([
                 'extract_model' => ['nullable', 'boolean'],
                 'build_index' => ['nullable', 'boolean'],
-                'sample_rate' => ['nullable', 'in:32k,40k,48k'],
-                'version' => ['nullable', 'in:v1,v2'],
+                'sample_rate' => ['nullable', 'in:,32k,40k,48k'], // Empty string allowed for auto-detect
+                'version' => ['nullable', 'in:,v1,v2'], // Empty string allowed for auto-detect
             ]);
 
             // Determine model directory from model_path or slug
@@ -348,12 +364,16 @@ class VoiceModelAdminController extends Controller
                 $modelDir = $voiceModel->slug;
             }
 
+            // Pass null for empty strings to trigger auto-detection in the API
+            $sampleRate = !empty($validated['sample_rate']) ? $validated['sample_rate'] : null;
+            $version = !empty($validated['version']) ? $validated['version'] : null;
+
             $result = $trainerService->extractModelAndBuildIndex(
                 $modelDir,
                 $request->boolean('extract_model', true),
                 $request->boolean('build_index', true),
-                $validated['sample_rate'] ?? '48k',
-                $validated['version'] ?? 'v2',
+                $sampleRate,
+                $version,
                 $voiceModel->slug
             );
 
