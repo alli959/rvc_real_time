@@ -217,6 +217,10 @@ services:
       - ../../apps/api/app:/var/www/html/app
       # Mount logs directory for local access
       - ../../apps/api/storage/logs:/var/www/html/storage/logs
+      # Mount Docker socket for accessing container logs (admin panel)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount container log directories for direct access
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     networks:
       - morphvox
 
