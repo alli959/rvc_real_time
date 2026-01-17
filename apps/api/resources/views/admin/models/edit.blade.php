@@ -348,23 +348,71 @@
               </label>
             </div>
             
+            @php
+              $detectedSr = $modelConfig['sample_rate'] ?? null;
+              $detectedVersion = $modelConfig['version'] ?? null;
+              $configFound = $modelConfig['config_found'] ?? false;
+            @endphp
+            
             <div class="grid grid-cols-2 gap-2">
               <div>
-                <label class="text-xs text-gray-500">Sample Rate</label>
-                <select name="sample_rate" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
-                  <option value="48k" selected>48kHz</option>
-                  <option value="40k">40kHz</option>
-                  <option value="32k">32kHz</option>
-                </select>
+                <label class="text-xs text-gray-500 flex items-center gap-1">
+                  Sample Rate
+                  @if($configFound && $detectedSr)
+                    <span class="text-green-400" title="Auto-detected from config.json">✓</span>
+                  @endif
+                </label>
+                @if($configFound && $detectedSr)
+                  {{-- Show detected sample rate as read-only --}}
+                  <input type="hidden" name="sample_rate" value="{{ $detectedSr }}" />
+                  <div class="w-full mt-1 bg-gray-800/50 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-300 cursor-not-allowed" title="Auto-detected from training config">
+                    {{ $detectedSr === '48k' ? '48kHz' : ($detectedSr === '40k' ? '40kHz' : '32kHz') }}
+                    <span class="text-xs text-green-400 ml-1">(detected)</span>
+                  </div>
+                @else
+                  {{-- No config found - let API auto-detect or default --}}
+                  <select name="sample_rate" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
+                    <option value="">Auto-detect</option>
+                    <option value="48k">48kHz</option>
+                    <option value="40k">40kHz</option>
+                    <option value="32k">32kHz</option>
+                  </select>
+                @endif
               </div>
               <div>
-                <label class="text-xs text-gray-500">Version</label>
-                <select name="version" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
-                  <option value="v2" selected>v2</option>
-                  <option value="v1">v1</option>
-                </select>
+                <label class="text-xs text-gray-500 flex items-center gap-1">
+                  Version
+                  @if($configFound && $detectedVersion)
+                    <span class="text-green-400" title="Auto-detected from config.json">✓</span>
+                  @endif
+                </label>
+                @if($configFound && $detectedVersion)
+                  {{-- Show detected version as read-only --}}
+                  <input type="hidden" name="version" value="{{ $detectedVersion }}" />
+                  <div class="w-full mt-1 bg-gray-800/50 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-300 cursor-not-allowed" title="Auto-detected from training config">
+                    {{ $detectedVersion }}
+                    <span class="text-xs text-green-400 ml-1">(detected)</span>
+                  </div>
+                @else
+                  {{-- No config found - let API auto-detect or default --}}
+                  <select name="version" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
+                    <option value="">Auto-detect</option>
+                    <option value="v2">v2</option>
+                    <option value="v1">v1</option>
+                  </select>
+                @endif
               </div>
             </div>
+            
+            @if($modelConfig)
+              <div class="text-xs text-gray-500">
+                @if($configFound)
+                  <span class="text-green-400">✓</span> Config detected: {{ $modelConfig['sample_rate_hz'] ?? 'unknown' }}Hz
+                @else
+                  <span class="text-yellow-400">⚠</span> No config.json found - will use defaults (48kHz, v2)
+                @endif
+              </div>
+            @endif
             
             <button type="submit" class="w-full inline-flex items-center justify-center gap-2 px-3 py-2 bg-orange-600 hover:bg-orange-700 rounded-lg text-sm font-medium transition-colors"
               onclick="return confirm('This will extract the model from checkpoint and/or build the FAISS index. Continue?')">
@@ -392,6 +440,7 @@
         @endif
       </div>
     </div>
+
 
     <!-- Owner / Creator Card -->
     <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">

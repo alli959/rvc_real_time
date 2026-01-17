@@ -1028,6 +1028,41 @@ class TrainerService
     }
 
     /**
+     * Get model configuration (sample rate, version) from training config.
+     * 
+     * Auto-detects settings from config.json if present in the model directory.
+     * Useful for pre-populating the Extract & Index form.
+     * 
+     * @param string $modelDir Model directory name (relative to models dir)
+     * @return array|null Config data or null on failure
+     */
+    public function getModelConfig(string $modelDir): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->baseUrl}/model/{$modelDir}/config");
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::warning('Get model config failed', [
+                'model_dir' => $modelDir,
+                'status' => $response->status(),
+            ]);
+
+            return null;
+        } catch (\Exception $e) {
+            Log::warning('Get model config exception', [
+                'model_dir' => $modelDir,
+                'error' => $e->getMessage(),
+            ]);
+
+            return null;
+        }
+    }
+
+    /**
      * Extract model from checkpoint and/or build FAISS index.
      * 
      * This is used when:
@@ -1037,8 +1072,8 @@ class TrainerService
      * @param string $modelDir Model directory name (relative to models dir)
      * @param bool $extractModel Whether to extract .pth from G_*.pth
      * @param bool $buildIndex Whether to build FAISS index
-     * @param string $sampleRate Sample rate: 32k, 40k, or 48k
-     * @param string $version RVC version: v1 or v2
+     * @param string|null $sampleRate Sample rate: 32k, 40k, or 48k (null = auto-detect)
+     * @param string|null $version RVC version: v1 or v2 (null = auto-detect)
      * @param string|null $modelName Custom model name (defaults to directory name)
      * @return array|null Result or null on failure
      */
@@ -1046,20 +1081,29 @@ class TrainerService
         string $modelDir,
         bool $extractModel = true,
         bool $buildIndex = true,
-        string $sampleRate = '48k',
-        string $version = 'v2',
+        ?string $sampleRate = null,
+        ?string $version = null,
         ?string $modelName = null
     ): ?array {
         try {
+            $payload = [
+                'model_dir' => $modelDir,
+                'extract_model' => $extractModel,
+                'build_index' => $buildIndex,
+                'model_name' => $modelName,
+            ];
+            
+            // Only include sample_rate and version if explicitly provided
+            // Otherwise let the API auto-detect from config.json
+            if ($sampleRate !== null) {
+                $payload['sample_rate'] = $sampleRate;
+            }
+            if ($version !== null) {
+                $payload['version'] = $version;
+            }
+
             $response = Http::timeout($this->timeout * 2) // Double timeout for potentially long operations
-                ->post("{$this->baseUrl}/model/extract", [
-                    'model_dir' => $modelDir,
-                    'extract_model' => $extractModel,
-                    'build_index' => $buildIndex,
-                    'sample_rate' => $sampleRate,
-                    'version' => $version,
-                    'model_name' => $modelName,
-                ]);
+                ->post("{$this->baseUrl}/model/extract", $payload);
 
             if ($response->successful()) {
                 return $response->json();
