@@ -13,7 +13,15 @@
       </h1>
       <p class="text-gray-400 mt-1">View logs from all services in real-time</p>
     </div>
-    <div class="flex items-center gap-2">
+    <div class="flex items-center gap-4">
+      <div class="flex items-center gap-2 text-sm" x-show="!paused">
+        <span class="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+        <span class="text-gray-400">Live (2s)</span>
+      </div>
+      <div class="flex items-center gap-2 text-sm" x-show="paused">
+        <span class="w-2 h-2 rounded-full bg-yellow-500"></span>
+        <span class="text-gray-400">Paused</span>
+      </div>
       <button @click="refreshServices()" class="flex items-center gap-2 px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition-colors">
         <i data-lucide="refresh-cw" class="w-4 h-4" :class="{'animate-spin': refreshing}"></i>
         Refresh
@@ -139,7 +147,7 @@
                   'text-gray-300': !line.includes('ERROR') && !line.includes('error') && !line.includes('WARN') && !line.includes('INFO') && !line.includes('DEBUG')
                 }"
               >
-                <span x-text="line"></span>
+                <span x-html="highlightSearch(line)"></span>
               </div>
             </template>
           </div>
@@ -174,6 +182,9 @@ function logsPage() {
     refreshing: false,
     autoScroll: true,
     ws: null,
+    pollInterval: null,
+    lastLineCount: 0,
+    isTrainingService: false,
     
     async init() {
       await this.loadServices();
@@ -186,8 +197,10 @@ function logsPage() {
     
     async loadServices() {
       try {
-        const response = await fetch('{{ config("services.voice_engine.url") }}/api/v1/admin/logs/services');
+        // Try to load services from Docker logs endpoint
+        const response = await fetch('{{ route("admin.logs.services") }}');
         const data = await response.json();
+        
         this.services = data.services || [];
         
         if (this.services.length > 0) {
@@ -197,11 +210,20 @@ function logsPage() {
         console.error('Failed to load services:', error);
         // Fallback services
         this.services = [
-          { name: 'nginx', container_name: 'morphvox-nginx', status: 'unknown' },
-          { name: 'api', container_name: 'morphvox-api', status: 'unknown' },
-          { name: 'voice-engine', container_name: 'morphvox-voice-engine', status: 'unknown' },
+          { name: 'training', container_name: 'training-jobs', status: 'running', log_sources: [
+            { id: 'training_all', name: 'All Training Jobs', type: 'training' }
+          ]},
+          { name: 'api', container_name: 'morphvox-api', status: 'running', log_sources: [
+            { id: 'api_stdout', name: 'Container Logs', type: 'stdout' },
+            { id: 'api_laravel', name: 'laravel.log', type: 'file' }
+          ]},
+          { name: 'voice-engine', container_name: 'morphvox-voice-engine', status: 'running', log_sources: [
+            { id: 'voice_stdout', name: 'Container Logs', type: 'stdout' }
+          ]},
         ];
-        this.selectService(this.services[0].name);
+        if (this.services.length > 0) {
+          this.selectService(this.services[0].name);
+        }
       }
     },
     
@@ -213,7 +235,8 @@ function logsPage() {
     
     selectService(serviceName) {
       this.selectedService = serviceName;
-      this.disconnectWs();
+      this.isTrainingService = serviceName === 'training';
+      this.stopPolling();
       
       const service = this.services.find(s => s.name === serviceName);
       this.currentSources = service?.log_sources || [];
@@ -236,82 +259,70 @@ function logsPage() {
       this.logLines = [];
       
       // Load initial logs
-      try {
-        const response = await fetch(`{{ config("services.voice_engine.url") }}/api/v1/admin/logs/tail/${this.selectedService}/${sourceId}?lines=200`);
-        const data = await response.json();
-        this.logLines = data.lines || [];
-      } catch (error) {
-        console.error('Failed to load logs:', error);
-        this.logLines = ['Error loading logs: ' + error.message];
-      }
+      await this.fetchLogs();
       
       this.loading = false;
       this.scrollToBottom();
       
-      // Connect WebSocket for live updates
-      this.connectWs();
+      // Start polling for live updates
+      this.startPolling();
     },
     
-    connectWs() {
-      this.disconnectWs();
-      
-      const wsUrl = '{{ config("services.voice_engine.url") }}'.replace('http', 'ws');
-      const fullUrl = `${wsUrl}/api/v1/admin/logs/stream/${this.selectedService}/${this.selectedSource}`;
-      
+    async fetchLogs() {
       try {
-        this.ws = new WebSocket(fullUrl);
+        let response;
         
-        this.ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
+        if (this.isTrainingService) {
+          // Fetch from trainer API via proxy
+          response = await fetch('{{ route("admin.proxy.trainer.logs") }}?lines=500');
+        } else {
+          // Fetch from Docker logs service (handles all containers)
+          response = await fetch(`{{ route("admin.logs.service", ["service" => "__service__"]) }}`.replace('__service__', this.selectedService) + `?lines=500&source=${this.selectedSource}`);
+        }
+        
+        const data = await response.json();
+        const newLines = data.lines || [];
+        
+        // Only update if we have new content
+        if (newLines.length !== this.lastLineCount || (newLines.length > 0 && newLines[newLines.length - 1] !== this.logLines[this.logLines.length - 1])) {
+          this.logLines = newLines;
+          this.lastLineCount = newLines.length;
           
-          if (data.type === 'line') {
-            this.logLines.push(data.line);
-            // Keep only last 5000 lines
-            if (this.logLines.length > 5000) {
-              this.logLines = this.logLines.slice(-5000);
-            }
-            if (this.autoScroll && !this.paused) {
-              this.scrollToBottom();
-            }
-          } else if (data.type === 'initial') {
-            // Already loaded via REST
+          if (this.autoScroll && !this.paused) {
+            this.scrollToBottom();
           }
-        };
-        
-        this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
-        };
-        
-        this.ws.onclose = () => {
-          // Reconnect after delay if not paused
-          if (!this.paused) {
-            setTimeout(() => {
-              if (this.selectedSource && !this.paused) {
-                this.connectWs();
-              }
-            }, 5000);
-          }
-        };
+        }
       } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
+        console.error('Failed to load logs:', error);
+        if (this.logLines.length === 0) {
+          this.logLines = ['Error loading logs: ' + error.message];
+        }
       }
     },
     
-    disconnectWs() {
-      if (this.ws) {
-        this.ws.close();
-        this.ws = null;
+    startPolling() {
+      this.stopPolling();
+      
+      // Poll every 2 seconds for new logs
+      this.pollInterval = setInterval(async () => {
+        if (!this.paused && this.selectedService && this.selectedSource) {
+          await this.fetchLogs();
+        }
+      }, 2000);
+    },
+    
+    stopPolling() {
+      if (this.pollInterval) {
+        clearInterval(this.pollInterval);
+        this.pollInterval = null;
       }
     },
     
     togglePause() {
       this.paused = !this.paused;
       
-      if (this.ws) {
-        this.ws.send(JSON.stringify({ action: this.paused ? 'pause' : 'resume' }));
-      }
-      
       if (!this.paused) {
+        this.fetchLogs();
         this.scrollToBottom();
       }
     },
@@ -320,6 +331,21 @@ function logsPage() {
       if (!this.filterText) return this.logLines;
       const filter = this.filterText.toLowerCase();
       return this.logLines.filter(line => line.toLowerCase().includes(filter));
+    },
+    
+    highlightSearch(line) {
+      if (!this.filterText) return this.escapeHtml(line);
+      
+      const escaped = this.escapeHtml(line);
+      const searchText = this.escapeHtml(this.filterText);
+      const regex = new RegExp(`(${searchText.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')})`, 'gi');
+      return escaped.replace(regex, '<mark class="bg-yellow-500 text-black px-0.5 rounded">$1</mark>');
+    },
+    
+    escapeHtml(text) {
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
     },
     
     handleScroll() {
@@ -353,11 +379,12 @@ function logsPage() {
       a.download = `${this.selectedService}_${this.selectedSource}_${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.log`;
       a.click();
       URL.revokeObjectURL(url);
+    },
+    
+    destroy() {
+      this.stopPolling();
     }
   };
 }
 </script>
-
-<!-- Alpine.js CDN -->
-<script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.x.x/dist/cdn.min.js"></script>
 @endsection
