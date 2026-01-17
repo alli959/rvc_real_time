@@ -193,7 +193,11 @@ def _run_uvr5_separation(
         
         try:
             # Run separation
-            is_hp3 = "HP3" in model_name
+            # HP3 models work differently - they're "vocals removers" and the 
+            # UVR5 code swaps the naming (not directories) when is_hp3=True.
+            # This means for HP3, the file saved to ins_root is labeled "vocal_" 
+            # and file saved to vocal_root is labeled "instrument_".
+            is_hp3 = "HP3" in model_name or "HP2" in model_name
             uvr_model._path_audio_(
                 tmp_input_path,
                 ins_root=instrumental_dir,
@@ -202,21 +206,44 @@ def _run_uvr5_separation(
                 is_hp3=is_hp3
             )
             
-            # Load outputs
-            vocal_files = [f for f in os.listdir(vocals_dir) if f.endswith(".wav")]
-            instrumental_files = [f for f in os.listdir(instrumental_dir) if f.endswith(".wav")]
+            # Load outputs - for HP3/HP2 models, the naming is swapped by UVR5
+            # HP3/HP2: ins_root contains "vocal_*" files, vocal_root contains "instrument_*" files
+            # HP5: ins_root contains "instrument_*" files, vocal_root contains "vocal_*" files
             
-            if not vocal_files or not instrumental_files:
-                raise RuntimeError("UVR5 separation produced no output")
-            
-            vocals, _ = sf.read(
-                os.path.join(vocals_dir, vocal_files[0]), 
-                dtype='float32'
-            )
-            instrumental, _ = sf.read(
-                os.path.join(instrumental_dir, instrumental_files[0]), 
-                dtype='float32'
-            )
+            if is_hp3:
+                # HP3/HP2 model: files are named opposite to directories
+                # ins_root (instrumental_dir) has "vocal_*.wav" → these are actually vocals
+                # vocal_root (vocals_dir) has "instrument_*.wav" → these are actually instrumental
+                vocal_files = [f for f in os.listdir(instrumental_dir) if f.endswith(".wav")]
+                instrumental_files = [f for f in os.listdir(vocals_dir) if f.endswith(".wav")]
+                
+                if not vocal_files or not instrumental_files:
+                    raise RuntimeError("UVR5 separation produced no output")
+                
+                vocals, _ = sf.read(
+                    os.path.join(instrumental_dir, vocal_files[0]), 
+                    dtype='float32'
+                )
+                instrumental, _ = sf.read(
+                    os.path.join(vocals_dir, instrumental_files[0]), 
+                    dtype='float32'
+                )
+            else:
+                # HP5 model: standard naming
+                vocal_files = [f for f in os.listdir(vocals_dir) if f.endswith(".wav")]
+                instrumental_files = [f for f in os.listdir(instrumental_dir) if f.endswith(".wav")]
+                
+                if not vocal_files or not instrumental_files:
+                    raise RuntimeError("UVR5 separation produced no output")
+                
+                vocals, _ = sf.read(
+                    os.path.join(vocals_dir, vocal_files[0]), 
+                    dtype='float32'
+                )
+                instrumental, _ = sf.read(
+                    os.path.join(instrumental_dir, instrumental_files[0]), 
+                    dtype='float32'
+                )
             
             # Convert to mono if stereo
             if vocals.ndim > 1:
@@ -224,7 +251,7 @@ def _run_uvr5_separation(
             if instrumental.ndim > 1:
                 instrumental = np.mean(instrumental, axis=1)
             
-            logger.info(f"Separation complete: vocals={len(vocals)}, instrumental={len(instrumental)}")
+            logger.info(f"Separation complete ({model_name}): vocals={len(vocals)}, instrumental={len(instrumental)}")
             
             return vocals.astype(np.float32), instrumental.astype(np.float32)
             
