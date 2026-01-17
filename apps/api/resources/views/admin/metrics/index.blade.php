@@ -285,66 +285,47 @@ function metricsPage() {
     },
     connected: false,
     lastUpdate: 'Never',
-    ws: null,
+    pollInterval: null,
     
     init() {
-      this.connectWs();
+      this.startPolling();
       
       this.$nextTick(() => {
         if (window.lucide) lucide.createIcons();
       });
     },
     
-    connectWs() {
-      const wsUrl = '{{ config("services.voice_engine.url") }}'.replace('http', 'ws');
-      const fullUrl = `${wsUrl}/api/v1/admin/metrics/stream`;
-      
+    async fetchMetrics() {
       try {
-        this.ws = new WebSocket(fullUrl);
-        
-        this.ws.onopen = () => {
+        const response = await fetch('{{ route("admin.proxy.metrics") }}');
+        if (response.ok) {
+          this.metrics = await response.json();
+          this.lastUpdate = new Date().toLocaleTimeString();
           this.connected = true;
-        };
-        
-        this.ws.onmessage = (event) => {
-          const data = JSON.parse(event.data);
-          
-          if (data.type === 'metrics') {
-            this.metrics = data.data;
-            this.lastUpdate = new Date().toLocaleTimeString();
-          }
-        };
-        
-        this.ws.onerror = (error) => {
-          console.error('WebSocket error:', error);
+        } else {
           this.connected = false;
-        };
-        
-        this.ws.onclose = () => {
-          this.connected = false;
-          // Reconnect after delay
-          setTimeout(() => this.connectWs(), 3000);
-        };
-      } catch (error) {
-        console.error('Failed to connect WebSocket:', error);
-        // Fallback to REST polling
-        this.pollMetrics();
-      }
-    },
-    
-    async pollMetrics() {
-      try {
-        const response = await fetch('{{ config("services.voice_engine.url") }}/api/v1/admin/metrics');
-        this.metrics = await response.json();
-        this.lastUpdate = new Date().toLocaleTimeString();
-        this.connected = true;
+        }
       } catch (error) {
         console.error('Failed to fetch metrics:', error);
         this.connected = false;
       }
+    },
+    
+    startPolling() {
+      // Fetch immediately
+      this.fetchMetrics();
       
-      // Continue polling
-      setTimeout(() => this.pollMetrics(), 2000);
+      // Then poll every 2 seconds
+      this.pollInterval = setInterval(() => {
+        this.fetchMetrics();
+      }, 2000);
+    },
+    
+    stopPolling() {
+      if (this.pollInterval) {
+        clearInterval(this.pollInterval);
+        this.pollInterval = null;
+      }
     },
     
     formatBytes(bytes) {
@@ -353,6 +334,10 @@ function metricsPage() {
       const sizes = ['B', 'KB', 'MB', 'GB', 'TB'];
       const i = Math.floor(Math.log(bytes) / Math.log(k));
       return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+    },
+    
+    destroy() {
+      this.stopPolling();
     }
   };
 }
