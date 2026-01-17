@@ -125,12 +125,18 @@ async def search_youtube(
                     artist = parts[0].strip()
                     title = parts[1].strip()
                 
+                video_id = entry.get('id', '') or ''
+                thumbnail = entry.get('thumbnail', '') or ''
+                # Fallback to YouTube's default thumbnail URL if not provided
+                if not thumbnail and video_id:
+                    thumbnail = f"https://i.ytimg.com/vi/{video_id}/hqdefault.jpg"
+                
                 results.append(SearchResult(
-                    id=entry.get('id', ''),
+                    id=video_id,
                     title=title,
                     artist=artist,
                     duration=entry.get('duration', 0) or 0,
-                    thumbnail=entry.get('thumbnail', '') or '',
+                    thumbnail=thumbnail,
                     url=entry.get('url', '') or entry.get('webpage_url', ''),
                     view_count=entry.get('view_count', 0) or 0,
                 ))

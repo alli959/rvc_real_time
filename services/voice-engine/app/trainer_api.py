@@ -588,6 +588,64 @@ async def get_model_active_training(exp_name: str):
     }
 
 
+@router.get("/logs")
+async def get_training_logs(
+    lines: int = 200,
+    job_id: Optional[str] = None,
+):
+    """
+    Get training logs from all or a specific job.
+    
+    Args:
+        lines: Maximum number of lines to return
+        job_id: Optional job ID to filter logs
+    
+    Returns combined logs from all training jobs if no job_id specified.
+    """
+    pipeline = get_pipeline()
+    all_logs = []
+    
+    if job_id:
+        # Get logs for specific job
+        progress = pipeline.get_progress(job_id)
+        if progress and progress.logs:
+            all_logs = progress.logs[-lines:]
+    else:
+        # Combine logs from all jobs (most recent first)
+        for jid, progress in pipeline._jobs.items():
+            if progress.logs:
+                # Add job prefix to logs
+                for log in progress.logs:
+                    all_logs.append(f"[{progress.exp_name or jid[:8]}] {log}")
+        
+        # Sort by timestamp if possible, else just get last N lines
+        all_logs = all_logs[-lines:]
+    
+    return {
+        "lines": all_logs,
+        "line_count": len(all_logs),
+        "job_id": job_id,
+    }
+
+
+@router.get("/logs/{job_id}")
+async def get_job_logs(job_id: str, lines: int = 500):
+    """Get logs for a specific training job"""
+    pipeline = get_pipeline()
+    progress = pipeline.get_progress(job_id)
+    
+    if not progress:
+        raise HTTPException(status_code=404, detail="Job not found")
+    
+    return {
+        "job_id": job_id,
+        "exp_name": progress.exp_name,
+        "status": progress.status.value,
+        "lines": progress.logs[-lines:] if progress.logs else [],
+        "line_count": len(progress.logs) if progress.logs else 0,
+    }
+
+
 # ============================================================================
 # Model Storage Endpoints (New Architecture)
 # ============================================================================

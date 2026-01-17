@@ -198,7 +198,8 @@ class WebSocketServer:
     async def handle_audio(self, websocket, data: dict, client_id: int):
         """Handle audio processing request"""
         audio_format = data.get('format')  # raw, webm, wav, mp3, flac, etc.
-        audio_data = self.decode_audio(data.get('data'), audio_format)
+        input_sample_rate = data.get('sample_rate')  # Client's input sample rate (for raw format)
+        audio_data = self.decode_audio(data.get('data'), audio_format, input_sample_rate)
         is_final = data.get('final', False)
         settings = data.get('settings', {})
         
@@ -442,13 +443,14 @@ class WebSocketServer:
         
         return params
     
-    def decode_audio(self, encoded_data: str, audio_format: str = None) -> Optional[np.ndarray]:
+    def decode_audio(self, encoded_data: str, audio_format: str = None, input_sample_rate: int = None) -> Optional[np.ndarray]:
         """
         Decode base64 encoded audio data. Supports various audio formats.
         
         Args:
             encoded_data: Base64 encoded audio
             audio_format: Optional format hint ('wav', 'mp3', 'flac', 'webm', 'raw')
+            input_sample_rate: Sample rate of the input audio (required for 'raw' format)
             
         Returns:
             Numpy array of audio samples (float32, mono, resampled to 16kHz)
@@ -458,7 +460,7 @@ class WebSocketServer:
             import librosa
             
             audio_bytes = base64.b64decode(encoded_data)
-            logger.info(f"Decoding audio: {len(audio_bytes)} bytes, format hint: {audio_format}")
+            logger.info(f"Decoding audio: {len(audio_bytes)} bytes, format hint: {audio_format}, input_sr: {input_sample_rate}")
             
             # If it's raw float32 PCM and size is valid
             if audio_format == 'raw' or (audio_format is None and len(audio_bytes) % 4 == 0):
@@ -466,7 +468,18 @@ class WebSocketServer:
                     audio_array = np.frombuffer(audio_bytes, dtype=np.float32)
                     if len(audio_array) > 0 and np.abs(audio_array).max() <= 2.0:
                         # Looks like valid float32 PCM
-                        logger.info(f"Decoded as raw float32 PCM: {len(audio_array)} samples")
+                        sr = input_sample_rate or 16000  # Default to 16kHz if not specified
+                        if input_sample_rate is None and audio_format == 'raw':
+                            logger.warning(f"Raw audio received without sample_rate - assuming 16kHz. "
+                                          f"Client should send 'sample_rate' field for proper resampling!")
+                        logger.info(f"Decoded as raw float32 PCM: {len(audio_array)} samples at {sr}Hz")
+                        
+                        # Resample to 16kHz if needed (RVC/HuBERT expects 16kHz input)
+                        if sr != 16000:
+                            logger.info(f"Resampling raw audio from {sr}Hz to 16000Hz")
+                            audio_array = librosa.resample(audio_array, orig_sr=sr, target_sr=16000)
+                            logger.info(f"Resampled to {len(audio_array)} samples")
+                        
                         return audio_array
                 except Exception:
                     pass
