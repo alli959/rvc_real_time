@@ -705,9 +705,39 @@ class RVCTrainingPipeline:
                 message="Creating model metadata..."
             )
             
-            # Find the final model file
-            model_files = list(exp_dir.glob("*.pth"))
-            model_path = str(model_files[0]) if model_files else None
+            # Find the final model file with priority:
+            # 1) <exp>_infer.pth (preferred stable runtime file)
+            # 2) <exp>.pth (final extracted model)
+            # 3) latest G_*.pth by step number (highest step)
+            # Never use D_*.pth as a model
+            import re
+            model_path = None
+            exp_name = config.exp_name
+            
+            # Priority 1: <exp>_infer.pth
+            infer_pth = exp_dir / f"{exp_name}_infer.pth"
+            if infer_pth.exists():
+                model_path = str(infer_pth)
+                logger.info(f"Selected model (priority 1 - _infer.pth): {model_path}")
+            
+            # Priority 2: <exp>.pth
+            if not model_path:
+                final_pth = exp_dir / f"{exp_name}.pth"
+                if final_pth.exists():
+                    model_path = str(final_pth)
+                    logger.info(f"Selected model (priority 2 - final .pth): {model_path}")
+            
+            # Priority 3: latest G_*.pth by step number
+            if not model_path:
+                g_checkpoints = list(exp_dir.glob("G_*.pth"))
+                if g_checkpoints:
+                    # Sort by step number (extract from G_<step>.pth)
+                    def get_step(p):
+                        match = re.search(r'G_(\d+)\.pth', p.name)
+                        return int(match.group(1)) if match else 0
+                    g_checkpoints.sort(key=get_step, reverse=True)
+                    model_path = str(g_checkpoints[0])  # Latest checkpoint
+                    logger.info(f"Selected model (priority 3 - latest checkpoint): {model_path}")
             
             # Create metadata
             metadata = self._create_metadata(

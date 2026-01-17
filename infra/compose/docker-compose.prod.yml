@@ -63,9 +63,9 @@ services:
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
     volumes:
       - postgres_data:/var/lib/mysql
-    # Don't expose ports in production - access via internal network only
-    # ports:
-    #   - "3306:3306"
+    # Expose port for local development tools (DataGrip, etc.)
+    ports:
+      - "3307:3306"
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 5s
@@ -215,6 +215,8 @@ services:
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
       # Mount API source code for development
       - ../../apps/api/app:/var/www/html/app
+      # Mount logs directory for local access
+      - ../../apps/api/storage/logs:/var/www/html/storage/logs
     networks:
       - morphvox
 
@@ -247,6 +249,8 @@ services:
     volumes:
       # Mount API source code for development
       - ../../apps/api/app:/var/www/html/app
+      # Mount logs directory for local access
+      - ../../apps/api/storage/logs:/var/www/html/storage/logs
     networks:
       - morphvox
 
