@@ -9,6 +9,7 @@ use App\Http\Controllers\Admin\JobsAdminController;
 use App\Http\Controllers\Admin\LogsAdminController;
 use App\Http\Controllers\Admin\MetricsAdminController;
 use App\Http\Controllers\Admin\AssetsAdminController;
+use App\Http\Controllers\Admin\VoiceEngineProxyController;
 
 /**
  * Define admin routes once so we can mount them on:
@@ -55,12 +56,28 @@ $adminRoutes = function () {
         
         // System Logs
         Route::get('/logs', [LogsAdminController::class, 'index'])->name('logs.index');
+        Route::get('/logs/laravel', [LogsAdminController::class, 'laravelLogs'])->name('logs.laravel');
+        Route::get('/logs/worker', [LogsAdminController::class, 'workerLogs'])->name('logs.worker');
+        Route::get('/logs/services', [LogsAdminController::class, 'services'])->name('logs.services');
+        Route::get('/logs/service/{service}', [LogsAdminController::class, 'serviceLogs'])->name('logs.service');
         
         // System Metrics
         Route::get('/metrics', [MetricsAdminController::class, 'index'])->name('metrics.index');
         
         // System Assets
         Route::get('/assets', [AssetsAdminController::class, 'index'])->name('assets.index');
+        
+        // Voice Engine Proxy Routes (browser can't reach internal Docker hostnames)
+        Route::prefix('proxy')->name('proxy.')->group(function () {
+            Route::get('/metrics', [VoiceEngineProxyController::class, 'metrics'])->name('metrics');
+            Route::get('/assets', [VoiceEngineProxyController::class, 'assets'])->name('assets');
+            Route::get('/assets/by-category', [VoiceEngineProxyController::class, 'assetsByCategory'])->name('assets.byCategory');
+            Route::post('/assets/{assetId}/{action}', [VoiceEngineProxyController::class, 'assetAction'])->name('assets.action');
+            Route::get('/logs/services', [VoiceEngineProxyController::class, 'logsServices'])->name('logs.services');
+            Route::get('/logs/{service}', [VoiceEngineProxyController::class, 'logsByService'])->name('logs.service');
+            Route::get('/trainer/logs', [VoiceEngineProxyController::class, 'trainerLogs'])->name('trainer.logs');
+            Route::get('/trainer/logs/{jobId}', [VoiceEngineProxyController::class, 'trainerJobLogs'])->name('trainer.job.logs');
+        });
     });
 };
 
