@@ -7,6 +7,20 @@ export DB_HOST="${DB_HOST:-db}"
 export DB_PORT="${DB_PORT:-3306}"
 export REDIS_HOST="${REDIS_HOST:-redis}"
 
+# Set up Docker socket permissions if mounted
+# This allows PHP (running as www-data) to access Docker logs
+if [ -S /var/run/docker.sock ]; then
+  DOCKER_GID=$(stat -c '%g' /var/run/docker.sock)
+  # Create docker group with the same GID if it doesn't exist
+  if ! getent group docker >/dev/null 2>&1; then
+    addgroup -g "$DOCKER_GID" docker 2>/dev/null || true
+  fi
+  # Add www-data to docker group
+  adduser www-data docker 2>/dev/null || true
+  # Fix socket permissions as fallback
+  chmod 666 /var/run/docker.sock 2>/dev/null || true
+fi
+
 # Wait for MariaDB to be ready (disable SSL for connection check)
 until mysql -h "$DB_HOST" -u "$DB_USERNAME" -p"$DB_PASSWORD" "$DB_DATABASE" --skip-ssl -e "SELECT 1;" >/dev/null 2>&1; do
   echo "Waiting for MariaDB..."

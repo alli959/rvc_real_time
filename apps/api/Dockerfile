@@ -57,8 +57,8 @@ WORKDIR /var/www/html
 
 FROM base AS development
 
-# Install development dependencies
-RUN apk add --no-cache git mariadb-client
+# Install development dependencies and docker-cli for log access
+RUN apk add --no-cache git mariadb-client docker-cli
 
 # Copy application code
 COPY . .
@@ -87,7 +87,8 @@ ENTRYPOINT ["/entrypoint.sh"]
 FROM base AS production
 
 # Install mariadb-client for entrypoint database check
-RUN apk add --no-cache mariadb-client
+# Install docker-cli for log access via socket
+RUN apk add --no-cache mariadb-client docker-cli
 
 # Copy application code
 COPY --chown=www-data:www-data . .
