@@ -77,7 +77,7 @@ class ModelUploadController extends Controller
             'model_file' => [
                 'required',
                 'file',
-                'max:204800', // 200MB max (increased to match PHP upload_max_filesize)
+                'max:1048576', // 1GB max for large model files
                 function ($attribute, $value, $fail) {
                     $ext = strtolower($value->getClientOriginalExtension());
                     if ($ext !== 'pth') {
@@ -88,7 +88,7 @@ class ModelUploadController extends Controller
             'index_file' => [
                 'nullable',
                 'file',
-                'max:204800', // 200MB max
+                'max:1048576', // 1GB max
                 function ($attribute, $value, $fail) {
                     if ($value) {
                         $ext = strtolower($value->getClientOriginalExtension());

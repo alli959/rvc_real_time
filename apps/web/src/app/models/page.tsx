@@ -410,9 +410,17 @@ function ModelsPageContent() {
                   <ChevronLeft className="h-6 w-6" />
                 </button>
                 <div className="flex items-center gap-3 flex-1">
-                  <div className="w-12 h-12 bg-gradient-to-br from-primary-600 to-accent-600 rounded-lg flex items-center justify-center">
-                    <Mic2 className="h-6 w-6 text-white" />
-                  </div>
+                  {selectedModel.image_url ? (
+                    <img 
+                      src={selectedModel.image_url} 
+                      alt={selectedModel.name}
+                      className="w-12 h-12 rounded-lg object-cover"
+                    />
+                  ) : (
+                    <div className="w-12 h-12 bg-gradient-to-br from-primary-600 to-accent-600 rounded-lg flex items-center justify-center">
+                      <Mic2 className="h-6 w-6 text-white" />
+                    </div>
+                  )}
                   <div>
                     <h2 className="text-xl font-bold">{selectedModel.name}</h2>
                     <p className="text-sm text-gray-400">{selectedModel.model_file} • {selectedModel.size}</p>

@@ -28,6 +28,7 @@ type SelectedModelInfo = {
   name: string;
   model_file?: string;
   size?: string;
+  image_url?: string | null;
 };
 
 function DashboardModelsContent() {
@@ -311,7 +312,7 @@ function DashboardModelsContent() {
                     key={model.slug} 
                     model={model} 
                     isSelected={selectedModel?.id === model.id}
-                    onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined })}
+                    onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
                   />
                 ))}
               </div>
@@ -390,7 +391,7 @@ function DashboardModelsContent() {
                       key={model.id}
                       model={model}
                       isSelected={selectedModel?.id === model.id}
-                      onSelect={() => setSelectedModel({ id: model.id, name: model.name })}
+                      onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
                       onEdit={() => handleEdit(model)}
                       onDelete={() => handleDelete(model.id)}
                       deletingId={deletingId}
@@ -445,7 +446,7 @@ function DashboardModelsContent() {
                       key={model.id}
                       model={model}
                       isSelected={selectedModel?.id === model.id}
-                      onSelect={() => setSelectedModel({ id: model.id, name: model.name })}
+                      onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
                     />
                   ))}
               </div>
@@ -505,9 +506,17 @@ function DashboardModelsContent() {
                   <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
                 </button>
                 <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
-                  <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-primary-600 to-accent-600 rounded-lg flex items-center justify-center flex-shrink-0">
-                    <Mic2 className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
-                  </div>
+                  {selectedModel.image_url ? (
+                    <img 
+                      src={selectedModel.image_url} 
+                      alt={selectedModel.name}
+                      className="w-10 h-10 sm:w-12 sm:h-12 rounded-lg object-cover flex-shrink-0"
+                    />
+                  ) : (
+                    <div className="w-10 h-10 sm:w-12 sm:h-12 bg-gradient-to-br from-primary-600 to-accent-600 rounded-lg flex items-center justify-center flex-shrink-0">
+                      <Mic2 className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
+                    </div>
+                  )}
                   <div className="min-w-0">
                     <h2 className="text-lg sm:text-xl font-bold truncate">{selectedModel.name}</h2>
                     {(selectedModel.model_file || selectedModel.size) && (
