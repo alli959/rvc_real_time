@@ -40,14 +40,44 @@ import soundfile as sf
 
 
 def setup_logging(log_level: str = "INFO"):
-    """Setup logging configuration"""
-    logging.basicConfig(
-        level=getattr(logging, log_level.upper()),
-        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-        handlers=[
-            logging.StreamHandler(sys.stdout)
-        ]
+    """Setup logging configuration with both stdout and file handlers"""
+    import os
+    from logging.handlers import RotatingFileHandler
+    
+    # Ensure log directory exists
+    log_dir = "/app/logs"
+    os.makedirs(log_dir, exist_ok=True)
+    
+    # Configure root logger
+    root_logger = logging.getLogger()
+    root_logger.setLevel(getattr(logging, log_level.upper()))
+    
+    # Clear existing handlers
+    root_logger.handlers = []
+    
+    # Format
+    formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    
+    # Console handler
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(formatter)
+    root_logger.addHandler(console_handler)
+    
+    # File handler with rotation (5MB max, keep 3 backups)
+    file_handler = RotatingFileHandler(
+        os.path.join(log_dir, "voice_engine.log"),
+        maxBytes=5*1024*1024,
+        backupCount=3,
     )
+    file_handler.setFormatter(formatter)
+    root_logger.addHandler(file_handler)
+    
+    # Also create empty placeholder files for expected logs
+    for log_name in ["trainer.log", "training.log", "inference.log"]:
+        log_path = os.path.join(log_dir, log_name)
+        if not os.path.exists(log_path):
+            with open(log_path, 'w') as f:
+                f.write(f"# {log_name} - Created on startup\n")
 
 def _resample_poly(y: np.ndarray, orig_sr: int, target_sr: int) -> np.ndarray:
     """Resample 1D float waveform using polyphase filtering."""

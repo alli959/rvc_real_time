@@ -2016,6 +2016,7 @@ async def convert_voice(request: ConvertRequest):
         )
         
         logger.info(f"Conversion params: index_rate={index_rate}, protect={protect}, rms_mix={rms_mix_rate}")
+        logger.info(f"Input audio: {len(audio)} samples at 16kHz ({len(audio)/16000:.2f}s)")
         
         # Run inference
         output_audio = model_manager.infer(audio, params=params)
@@ -2029,7 +2030,8 @@ async def convert_voice(request: ConvertRequest):
         if out_sr <= 0:
             out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
         
-        logger.info(f"Output sample rate: {out_sr}Hz")
+        logger.info(f"Output audio: {len(output_audio)} samples at {out_sr}Hz ({len(output_audio)/out_sr:.2f}s)")
+        logger.info(f"Output sample rate: {out_sr}Hz, model tgt_sr: {getattr(getattr(model_manager, 'vc', None), 'tgt_sr', 'N/A')}")
         
         # Apply audio effects after conversion if specified
         if request.apply_effects:
@@ -2623,6 +2625,8 @@ async def process_audio(request: AudioProcessRequest):
                         rms_mix_rate=rms_mix_rate,
                     )
                     
+                    logger.info(f"vocals_{voice_num} RVC params: f0_up_key={vc['f0_up_key']}, index_rate={index_rate}, protect={protect}")
+                    
                     converted = model_manager.infer(vocal_16k, params=params)
                     if converted is None or len(converted) == 0:
                         raise HTTPException(status_code=500, detail=f"Voice {voice_num} conversion failed")
@@ -2631,6 +2635,8 @@ async def process_audio(request: AudioProcessRequest):
                     rvc_out_sr = int(getattr(params, "resample_sr", 0) or 0)
                     if rvc_out_sr <= 0:
                         rvc_out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+                    
+                    logger.info(f"vocals_{voice_num} RVC output: {len(converted)} samples at {rvc_out_sr}Hz, resampling to {uvr_output_sr}Hz")
                     
                     # Resample back to 44.1kHz from actual output rate
                     converted_44k = librosa.resample(converted.astype(np.float32), orig_sr=rvc_out_sr, target_sr=uvr_output_sr)
