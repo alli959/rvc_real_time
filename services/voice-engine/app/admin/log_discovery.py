@@ -107,8 +107,17 @@ SERVICE_LOG_CONFIGS = {
         "known_paths": [
             "/app/logs/voice_engine.log",
             "/app/logs/training.log",
+            "/app/logs/trainer.log",
+            "/app/logs/inference.log",
         ],
-        "patterns": [r"uvicorn", r"fastapi"],
+        "patterns": [r"uvicorn", r"fastapi", r"training", r"trainer"],
+    },
+    "trainer": {
+        "known_paths": [
+            "/app/logs/training.log",
+            "/app/logs/trainer.log",
+        ],
+        "patterns": [r"training", r"trainer", r"rvc"],
     },
     "db": {
         "known_paths": [
@@ -132,10 +141,8 @@ class LogDiscovery:
     """
     Discovers log sources from docker-compose and running containers.
     
-    Uses deterministic rules based on:
-    1. Production compose file parsing
-    2. Known service configurations
-    3. File system scanning
+    IMPORTANT: Since we're running inside the voice-engine container,
+    we can only read LOCAL files. We cannot access other containers' files.
     """
     
     def __init__(self, compose_file: Optional[str] = None):
@@ -167,28 +174,86 @@ class LogDiscovery:
     
     def discover_services(self) -> List[ServiceInfo]:
         """
-        Discover services from compose file and running containers.
+        Discover services with their log sources.
         
-        Returns:
-            List of ServiceInfo objects with discovered log sources.
+        Since we're inside voice-engine, we can only reliably read:
+        - voice-engine's own logs in /app/logs/
+        - Any other local files
+        
+        For other services, we indicate that their logs aren't accessible.
         """
         if self._discovered and self._services:
             return list(self._services.values())
         
-        # Parse compose file to get service definitions
-        services = self._parse_compose_file()
-        
-        # Check which containers are actually running
-        running_containers = self._get_running_containers()
-        
-        # Discover log sources for each service
-        for service_name, service in services.items():
-            service.status = "running" if service.container_name in running_containers else "stopped"
-            service.log_sources = self._discover_log_sources(service)
-            self._services[service_name] = service
+        # Only voice-engine has accessible logs from within this container
+        self._services = {
+            "voice-engine": ServiceInfo(
+                name="voice-engine",
+                container_name="morphvox-voice-engine",
+                image="services/voice-engine",
+                status="running",
+                log_sources=self._get_voice_engine_logs(),
+            ),
+        }
         
         self._discovered = True
         return list(self._services.values())
+    
+    def _get_voice_engine_logs(self) -> List[LogSource]:
+        """Get available log sources for voice-engine (local files only)"""
+        sources = []
+        
+        # Check known log paths
+        log_paths = [
+            ("/app/logs/voice_engine.log", "Voice Engine Log", "Main voice engine application log"),
+            ("/app/logs/trainer.log", "Trainer Log", "Model training logs"),
+            ("/app/logs/training.log", "Training Log", "Training session logs"),
+            ("/app/logs/inference.log", "Inference Log", "Voice conversion inference logs"),
+            ("/app/logs/uvicorn.log", "Uvicorn Log", "HTTP server logs"),
+        ]
+        
+        for path, name, desc in log_paths:
+            if os.path.exists(path):
+                sources.append(LogSource(
+                    id=f"voice-engine_{Path(path).stem}",
+                    name=name,
+                    type="file",
+                    path=path,
+                    container="morphvox-voice-engine",
+                    priority=20,
+                    description=desc,
+                ))
+        
+        # Also scan /app/logs for any other .log files
+        logs_dir = "/app/logs"
+        if os.path.isdir(logs_dir):
+            for filename in os.listdir(logs_dir):
+                if filename.endswith('.log'):
+                    full_path = os.path.join(logs_dir, filename)
+                    # Skip if already added
+                    if any(s.path == full_path for s in sources):
+                        continue
+                    sources.append(LogSource(
+                        id=f"voice-engine_{Path(filename).stem}",
+                        name=filename,
+                        type="file",
+                        path=full_path,
+                        container="morphvox-voice-engine",
+                        priority=50,
+                        description=f"Discovered log: {full_path}",
+                    ))
+        
+        if not sources:
+            sources.append(LogSource(
+                id="voice-engine_no_logs",
+                name="No logs found",
+                type="none",
+                container="morphvox-voice-engine",
+                priority=100,
+                description="No log files found in /app/logs",
+            ))
+        
+        return sources
     
     def _parse_compose_file(self) -> Dict[str, ServiceInfo]:
         """Parse docker-compose file to extract services"""
@@ -232,17 +297,19 @@ class LogDiscovery:
     
     def _get_running_containers(self) -> set:
         """Get set of running container names"""
-        try:
-            result = subprocess.run(
-                ["docker", "ps", "--format", "{{.Names}}"],
-                capture_output=True,
-                text=True,
-                timeout=10,
-            )
-            return set(result.stdout.strip().split('\n')) if result.stdout.strip() else set()
-        except Exception as e:
-            logger.warning(f"Could not list running containers: {e}")
-            return set()
+        # Since we're running inside a container, we can't easily run docker commands
+        # Instead, assume common services are running and let the actual log reading
+        # determine if they're accessible
+        return {
+            "morphvox-nginx",
+            "morphvox-api", 
+            "morphvox-api-worker",
+            "morphvox-web",
+            "morphvox-voice-engine",
+            "morphvox-db",
+            "morphvox-redis",
+            "morphvox-minio",
+        }
     
     def _discover_log_sources(self, service: ServiceInfo) -> List[LogSource]:
         """Discover log sources for a service"""
@@ -315,32 +382,26 @@ class LogDiscovery:
         return sources
     
     def _scan_container_logs(self, container_name: str) -> List[tuple]:
-        """Scan container for log files"""
+        """Scan for log files in local directories (since we're inside the container)"""
         discovered = []
         
         for log_dir in LOG_DIRECTORIES:
             try:
-                # Use docker exec to list files
-                result = subprocess.run(
-                    ["docker", "exec", container_name, "ls", "-la", log_dir],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-                
-                if result.returncode == 0:
-                    for line in result.stdout.split('\n'):
-                        # Parse ls output to get filenames
-                        parts = line.split()
-                        if len(parts) >= 9:
-                            filename = parts[-1]
-                            full_path = f"{log_dir}/{filename}"
-                            priority = self._get_path_priority(full_path)
-                            if priority < 100:  # Valid log file
-                                discovered.append((full_path, priority))
+                # Check if directory exists locally
+                if not os.path.isdir(log_dir):
+                    continue
+                    
+                # Scan directory for log files
+                for filename in os.listdir(log_dir):
+                    full_path = os.path.join(log_dir, filename)
+                    if os.path.isfile(full_path):
+                        priority = self._get_path_priority(full_path)
+                        if priority < 100:  # Valid log file
+                            discovered.append((full_path, priority))
                                 
             except Exception as e:
-                # Directory doesn't exist or container not accessible
+                # Directory doesn't exist or not accessible
+                logger.debug(f"Could not scan {log_dir}: {e}")
                 continue
         
         return discovered

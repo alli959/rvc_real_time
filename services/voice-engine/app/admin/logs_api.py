@@ -275,91 +275,107 @@ async def stream_logs(
 async def _read_log_lines(source: LogSource, lines: int) -> list[str]:
     """Read the last N lines from a log source"""
     if source.type == "stdout":
-        return await _read_container_logs(source.container, lines)
+        # For stdout, we can only read local logs since we can't run docker commands
+        # Try to read from local log files that capture stdout
+        return await _read_local_service_logs(source.container, lines)
     elif source.type == "file":
-        return await _read_file_logs(source.container, source.path, lines)
+        # Read file directly if it's local
+        return await _read_local_file(source.path, lines)
     else:
         return []
 
 
-async def _read_container_logs(container: str, lines: int) -> list[str]:
-    """Read container stdout/stderr logs via docker logs"""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "logs", "--tail", str(lines), container,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
-        
-        stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=30)
-        return stdout.decode('utf-8', errors='replace').strip().split('\n')
-        
-    except asyncio.TimeoutError:
-        return ["Error: Timeout reading container logs"]
-    except Exception as e:
-        return [f"Error: {str(e)}"]
+async def _read_local_service_logs(container: str, lines: int) -> list[str]:
+    """Read service logs from local files based on container name"""
+    # Map container names to local log locations
+    log_mappings = {
+        "morphvox-voice-engine": ["/app/logs/voice_engine.log", "/app/logs/uvicorn.log"],
+        "morphvox-api": ["/app/storage/logs/laravel.log"],
+    }
+    
+    container_logs = log_mappings.get(container, [])
+    
+    for log_path in container_logs:
+        result = await _read_local_file(log_path, lines)
+        if result and result[0] != f"Log file not found: {log_path}":
+            return result
+    
+    # If no mapped logs found, return helpful message
+    return [f"Container stdout logs not available (docker not accessible from within container). Check file-based logs instead."]
 
 
-async def _read_file_logs(container: str, path: str, lines: int) -> list[str]:
-    """Read log file from inside container via docker exec"""
+async def _read_local_file(path: str, lines: int) -> list[str]:
+    """Read log file from local filesystem"""
+    import os
+    
     try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "exec", container, "tail", "-n", str(lines), path,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
+        if not os.path.exists(path):
+            return [f"Log file not found: {path}"]
         
-        stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+        # Use tail command if available, otherwise read directly
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                "tail", "-n", str(lines), path,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            
+            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            
+            if proc.returncode != 0:
+                error_msg = stderr.decode('utf-8', errors='replace').strip()
+                return [f"Error reading log file: {error_msg}"]
+            
+            return stdout.decode('utf-8', errors='replace').strip().split('\n')
+        except FileNotFoundError:
+            # tail command not available, read manually
+            pass
         
-        if proc.returncode != 0:
-            error_msg = stderr.decode('utf-8', errors='replace').strip()
-            if "No such file" in error_msg:
-                return [f"Log file not found: {path}"]
-            return [f"Error reading log file: {error_msg}"]
-        
-        return stdout.decode('utf-8', errors='replace').strip().split('\n')
-        
+        # Fallback: read file directly
+        with open(path, 'r', errors='replace') as f:
+            all_lines = f.readlines()
+            return [line.rstrip() for line in all_lines[-lines:]]
+            
     except asyncio.TimeoutError:
         return ["Error: Timeout reading log file"]
     except Exception as e:
         return [f"Error: {str(e)}"]
 
 
+async def _read_container_logs(container: str, lines: int) -> list[str]:
+    """Read container stdout/stderr logs - not available from inside container"""
+    return await _read_local_service_logs(container, lines)
+
+
 async def _stream_log_lines(source: LogSource) -> AsyncGenerator[str, None]:
     """Stream log lines in real-time (tail -f behavior)"""
     if source.type == "stdout":
-        async for line in _stream_container_logs(source.container):
-            yield line
+        # For stdout, try to stream from local service logs
+        log_mappings = {
+            "morphvox-voice-engine": "/app/logs/voice_engine.log",
+        }
+        log_path = log_mappings.get(source.container)
+        if log_path:
+            async for line in _stream_local_file(log_path):
+                yield line
+        else:
+            yield "Streaming not available for this container"
     elif source.type == "file":
-        async for line in _stream_file_logs(source.container, source.path):
+        async for line in _stream_local_file(source.path):
             yield line
 
 
-async def _stream_container_logs(container: str) -> AsyncGenerator[str, None]:
-    """Stream container logs via docker logs -f"""
-    try:
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "logs", "-f", "--tail", "0", container,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
-        )
+async def _stream_local_file(path: str) -> AsyncGenerator[str, None]:
+    """Stream log file using tail -F on local file"""
+    import os
+    
+    if not os.path.exists(path):
+        yield f"Log file not found: {path}"
+        return
         
-        while True:
-            line = await proc.stdout.readline()
-            if not line:
-                break
-            yield line.decode('utf-8', errors='replace').rstrip()
-            
-    except Exception as e:
-        logger.error(f"Error streaming container logs: {e}")
-        yield f"Stream error: {str(e)}"
-
-
-async def _stream_file_logs(container: str, path: str) -> AsyncGenerator[str, None]:
-    """Stream log file via docker exec tail -F"""
     try:
         proc = await asyncio.create_subprocess_exec(
-            "docker", "exec", container, "tail", "-F", "-n", "0", path,
+            "tail", "-F", "-n", "0", path,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
@@ -377,3 +393,8 @@ async def _stream_file_logs(container: str, path: str) -> AsyncGenerator[str, No
     except Exception as e:
         logger.error(f"Error streaming file logs: {e}")
         yield f"Stream error: {str(e)}"
+
+
+async def _stream_container_logs(container: str) -> AsyncGenerator[str, None]:
+    """Stream container logs - not available from inside container"""
+    yield "Container log streaming not available from within container"
