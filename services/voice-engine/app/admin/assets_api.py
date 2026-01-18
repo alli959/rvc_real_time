@@ -109,6 +109,10 @@ class Asset:
     last_status_check: Optional[str] = None
     file_path: Optional[str] = None
     can_preload: bool = True
+    # Tracking fields for load/usage timing
+    loaded_at: Optional[str] = None  # ISO timestamp when asset was loaded
+    last_used_at: Optional[str] = None  # ISO timestamp when asset was last used
+    use_count: int = 0  # Number of times asset has been used since load
     
     def to_dict(self) -> dict:
         return {
@@ -128,6 +132,9 @@ class Asset:
             "last_status_check": self.last_status_check,
             "file_path": self.file_path,
             "can_preload": self.can_preload,
+            "loaded_at": self.loaded_at,
+            "last_used_at": self.last_used_at,
+            "use_count": self.use_count,
         }
 
 
@@ -253,6 +260,59 @@ class AssetManager:
         self._in_use_assets: Set[str] = set()  # Assets currently being used
         self._discovery_cache: Dict[str, List[Asset]] = {}
         self._last_discovery: Optional[datetime] = None
+        
+        # Register usage callback with the model manager
+        self._register_usage_callback()
+    
+    def _register_usage_callback(self):
+        """Register callback to track voice model usage from inference."""
+        # Register voice conversion callback
+        try:
+            from app.services.voice_conversion import set_usage_callback
+            
+            def on_model_used(model_name: str):
+                """Called when a voice model is used for inference."""
+                # Find the asset by model name and record usage
+                for asset_id, asset in self._assets.items():
+                    if asset.category == AssetCategory.VOICE_MODELS:
+                        # Match by model file name or asset name
+                        if model_name and (
+                            model_name in asset.name or 
+                            model_name in asset.id or
+                            (asset.file_path and model_name in asset.file_path)
+                        ):
+                            self.record_asset_usage(asset_id)
+                            return
+            
+            set_usage_callback(on_model_used)
+            logger.info("Voice model usage callback registered with AssetManager")
+        except Exception as e:
+            logger.warning(f"Could not register voice model usage callback: {e}")
+        
+        # Register UVR5 callback
+        try:
+            from app.vocal_separator import set_uvr_usage_callback
+            
+            def on_uvr_used(model_name: str):
+                """Called when a UVR5 model is used for separation."""
+                # Find the UVR asset by model name
+                for asset_id, asset in self._assets.items():
+                    if asset.category == AssetCategory.UVR_WEIGHTS:
+                        if model_name and (
+                            model_name in asset.name or
+                            model_name in asset.id or
+                            (asset.file_path and model_name in asset.file_path)
+                        ):
+                            self.record_asset_usage(asset_id)
+                            return
+                # Also track the main uvr5 asset
+                if "uvr5" in self._assets:
+                    self.record_asset_usage("uvr5")
+            
+            set_uvr_usage_callback(on_uvr_used)
+            logger.info("UVR5 usage callback registered with AssetManager")
+        except Exception as e:
+            logger.warning(f"Could not register UVR5 usage callback: {e}")
     
     async def get_all_assets(self, category: Optional[str] = None) -> List[Asset]:
         """Get all registered assets with updated status"""
@@ -474,11 +534,15 @@ class AssetManager:
             success = await self._load_asset(asset)
             if success:
                 asset.status = AssetStatus.RUNNING
+                asset.loaded_at = datetime.utcnow().isoformat() + "Z"
+                asset.use_count = 0  # Reset use count on load
                 self._loaded_models[asset_id] = True
+                logger.info(f"Asset {asset_id} loaded at {asset.loaded_at}")
                 return {
                     "success": True,
                     "asset_id": asset_id,
                     "status": asset.status.value,
+                    "loaded_at": asset.loaded_at,
                 }
             else:
                 asset.status = AssetStatus.ERROR
@@ -552,7 +616,12 @@ class AssetManager:
             success = await self._unload_asset(asset)
             if success:
                 asset.status = AssetStatus.STOPPED
+                # Clear tracking info on unload
+                asset.loaded_at = None
+                asset.last_used_at = None
+                asset.use_count = 0
                 self._loaded_models.pop(asset_id, None)
+                logger.info(f"Asset {asset_id} unloaded")
                 return {
                     "success": True,
                     "asset_id": asset_id,
@@ -572,6 +641,83 @@ class AssetManager:
                 "success": False,
                 "asset_id": asset_id,
                 "error": str(e),
+            }
+    
+    def record_asset_usage(self, asset_id: str) -> None:
+        """
+        Record that an asset was just used.
+        Updates last_used_at timestamp and increments use_count.
+        
+        Call this whenever an asset is used for inference/processing.
+        """
+        asset = self._assets.get(asset_id)
+        if asset and asset.status in [AssetStatus.RUNNING, AssetStatus.IN_USE]:
+            asset.last_used_at = datetime.utcnow().isoformat() + "Z"
+            asset.use_count += 1
+            logger.debug(f"Asset {asset_id} used (count: {asset.use_count})")
+    
+    def get_actual_memory(self) -> Dict:
+        """
+        Get actual system/container memory usage from /proc/meminfo.
+        
+        Returns:
+            Dict with actual memory stats in MB and bytes
+        """
+        try:
+            with open('/proc/meminfo', 'r') as f:
+                meminfo = {}
+                for line in f:
+                    parts = line.split(':')
+                    if len(parts) == 2:
+                        key = parts[0].strip()
+                        value = parts[1].strip().split()[0]
+                        meminfo[key] = int(value) * 1024  # Convert kB to bytes
+            
+            total = meminfo.get('MemTotal', 0)
+            available = meminfo.get('MemAvailable', meminfo.get('MemFree', 0))
+            used = total - available
+            
+            # Get GPU memory if available
+            gpu_used_mb = 0
+            gpu_total_mb = 0
+            try:
+                result = subprocess.run(
+                    ['nvidia-smi', '--query-gpu=memory.used,memory.total', '--format=csv,noheader,nounits'],
+                    capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    lines = result.stdout.strip().split('\n')
+                    for line in lines:
+                        parts = line.split(',')
+                        if len(parts) == 2:
+                            gpu_used_mb += int(parts[0].strip())
+                            gpu_total_mb += int(parts[1].strip())
+            except Exception:
+                pass  # nvidia-smi not available
+            
+            return {
+                "ram_used_bytes": used,
+                "ram_total_bytes": total,
+                "ram_available_bytes": available,
+                "ram_used_mb": round(used / (1024 * 1024), 1),
+                "ram_total_mb": round(total / (1024 * 1024), 1),
+                "ram_used_percent": round(used / total * 100, 1) if total > 0 else 0,
+                "vram_used_mb": gpu_used_mb,
+                "vram_total_mb": gpu_total_mb,
+                "vram_used_percent": round(gpu_used_mb / gpu_total_mb * 100, 1) if gpu_total_mb > 0 else 0,
+            }
+        except Exception as e:
+            logger.warning(f"Error getting actual memory: {e}")
+            return {
+                "ram_used_bytes": 0,
+                "ram_total_bytes": 0,
+                "ram_available_bytes": 0,
+                "ram_used_mb": 0,
+                "ram_total_mb": 0,
+                "ram_used_percent": 0,
+                "vram_used_mb": 0,
+                "vram_total_mb": 0,
+                "vram_used_percent": 0,
             }
     
     def register_job_assets(self, job_id: str, asset_ids: List[str]):
@@ -960,6 +1106,10 @@ def _build_category_summary(by_category: Dict[str, List[Asset]]) -> Dict:
         }
         all_assets.extend(cat_assets)
     
+    # Get actual memory usage
+    manager = get_asset_manager()
+    actual_memory = manager.get_actual_memory()
+    
     return {
         "categories": result,
         "assets": [a.to_dict() for a in all_assets],  # Flat list for backwards compatibility
@@ -968,7 +1118,8 @@ def _build_category_summary(by_category: Dict[str, List[Asset]]) -> Dict:
             "total_running": total_running,
             "total_vram_mb": total_vram,
             "total_ram_mb": total_ram,
-        }
+        },
+        "actual_memory": actual_memory,
     }
 
 
@@ -1046,13 +1197,17 @@ async def get_assets_by_category():
             "ram_mb": ram,
         }
     
+    # Get actual memory usage
+    actual_memory = manager.get_actual_memory()
+    
     return {
         "categories": result,
         "summary": {
             "total_running": total_running,
             "total_vram_mb": total_vram,
             "total_ram_mb": total_ram,
-        }
+        },
+        "actual_memory": actual_memory,
     }
 
 

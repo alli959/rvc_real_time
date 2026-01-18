@@ -15,7 +15,7 @@ import numpy as np
 import soundfile as sf
 import torch
 import librosa
-from typing import Tuple, Optional
+from typing import Tuple, Optional, Callable
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,23 @@ _model_name = None
 
 # Max audio length in samples before chunking (5 minutes at 44100Hz)
 MAX_CHUNK_SAMPLES = 44100 * 60 * 5  # 5 minutes
+
+# Global usage tracking callback
+_uvr_usage_callback: Optional[Callable[[str], None]] = None
+
+def set_uvr_usage_callback(callback: Callable[[str], None]) -> None:
+    """Set the global callback for tracking UVR5 model usage."""
+    global _uvr_usage_callback
+    _uvr_usage_callback = callback
+    logger.info("UVR5 usage callback registered")
+
+def _notify_uvr_usage(model_name: str) -> None:
+    """Notify that a UVR5 model was used."""
+    if _uvr_usage_callback and model_name:
+        try:
+            _uvr_usage_callback(model_name)
+        except Exception as e:
+            logger.debug(f"UVR usage callback error: {e}")
 
 
 def get_uvr5_model_path(model_name: str = "HP5_only_main_vocal") -> str:
@@ -263,6 +280,9 @@ def _separate_vocals_single(
                 instrumental = np.mean(instrumental, axis=1)
             
             logger.info(f"Separation complete: vocals={len(vocals)}, instrumental={len(instrumental)}")
+            
+            # Track UVR5 usage
+            _notify_uvr_usage(model_name)
             
             # Clean up GPU memory
             if torch.cuda.is_available():
