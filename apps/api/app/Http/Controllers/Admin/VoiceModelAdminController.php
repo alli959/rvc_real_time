@@ -360,6 +360,16 @@ class VoiceModelAdminController extends Controller
                 if ($modelDir === '.' || empty($modelDir)) {
                     $modelDir = $voiceModel->slug;
                 }
+                
+                // Strip the storage prefix to get just the model directory name
+                // Handle both API container path and relative paths
+                $modelDir = preg_replace('#^/var/www/html/storage/models/#', '', $modelDir);
+                $modelDir = preg_replace('#^/app/assets/models/#', '', $modelDir);
+                
+                // If still a full path or empty after stripping, use slug
+                if (str_starts_with($modelDir, '/') || empty($modelDir)) {
+                    $modelDir = $voiceModel->slug;
+                }
             } else {
                 $modelDir = $voiceModel->slug;
             }
