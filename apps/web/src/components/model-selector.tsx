@@ -158,7 +158,23 @@ export function ModelSelector({
             Loading models...
           </span>
         ) : selectedModel ? (
-          <span className="text-white truncate">{selectedModel.name}</span>
+          <span className="flex items-center gap-2 text-white truncate">
+            {/* Selected Model Image */}
+            <div className="w-6 h-6 rounded overflow-hidden bg-gray-700 flex-shrink-0">
+              {selectedModel.image_url ? (
+                <img
+                  src={selectedModel.image_url}
+                  alt={selectedModel.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-gray-500">
+                  <User className="w-3 h-3" />
+                </div>
+              )}
+            </div>
+            <span className="truncate">{selectedModel.name}</span>
+          </span>
         ) : (
           <span className="text-gray-400">{placeholder}</span>
         )}
@@ -269,13 +285,28 @@ function ModelGroup({ title, icon, models, selectedId, onSelect, colors }: Model
           <button
             key={model.id}
             onClick={() => onSelect(model)}
-            className={`w-full px-4 py-2 text-left text-sm transition-colors ${
+            className={`w-full px-3 py-2 text-left text-sm transition-colors flex items-center gap-3 ${
               selectedId === model.id
                 ? colors.selected
                 : `text-white ${colors.hover}`
             }`}
           >
-            {model.name}
+            {/* Model Image */}
+            <div className="w-8 h-8 rounded-md overflow-hidden bg-gray-700 flex-shrink-0">
+              {model.image_url ? (
+                <img
+                  src={model.image_url}
+                  alt={model.name}
+                  className="w-full h-full object-cover"
+                />
+              ) : (
+                <div className="w-full h-full flex items-center justify-center text-gray-500">
+                  <User className="w-4 h-4" />
+                </div>
+              )}
+            </div>
+            {/* Model Name */}
+            <span className="truncate">{model.name}</span>
           </button>
         ))}
       </div>
