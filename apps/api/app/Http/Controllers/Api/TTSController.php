@@ -527,7 +527,16 @@ class TTSController extends Controller
                 }
 
                 $audioBase64 = $convertResponse->json('audio');
-                $sampleRate = $convertResponse->json('sample_rate', 16000);
+                // IMPORTANT: Use sample_rate from voice engine - it reflects the model's actual output rate (32k/40k/48k)
+                // Fallback to 48000 only if missing (most common RVC model rate)
+                $sampleRate = $convertResponse->json('sample_rate');
+                if (!$sampleRate) {
+                    Log::warning('Voice engine /convert response missing sample_rate', [
+                        'model' => $voiceModel->model_path,
+                        'response_keys' => array_keys($convertResponse->json() ?? []),
+                    ]);
+                    $sampleRate = 48000; // Safe fallback - most RVC models are 48kHz
+                }
 
                 // Record usage
                 UsageEvent::recordTTS($user->id, $voiceModel->id, strlen($text), true);
