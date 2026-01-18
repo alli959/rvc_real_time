@@ -49,6 +49,20 @@ services:
       - morphvox
 
   # ===========================================================================
+  # Docker Socket Proxy (enables container log access from API container)
+  # ===========================================================================
+  
+  docker-proxy:
+    image: alpine/socat
+    container_name: morphvox-docker-proxy
+    restart: unless-stopped
+    command: TCP-LISTEN:2375,fork,reuseaddr UNIX-CONNECT:/var/run/docker.sock
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+    networks:
+      - morphvox
+
+  # ===========================================================================
   # Database Layer
   # ===========================================================================
   
