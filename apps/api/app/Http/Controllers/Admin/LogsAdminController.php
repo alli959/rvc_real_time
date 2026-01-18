@@ -57,8 +57,23 @@ class LogsAdminController extends Controller
         ];
         
         $containerName = $containerMap[$service] ?? $service;
+        $logLines = [];
         
-        // Determine if this is stdout/stderr or a file log
+        // For API/Worker services, try to read local files directly first
+        if (in_array($service, ['api', 'api-worker'])) {
+            $logLines = $this->getLocalServiceLogs($service, $source, $lines);
+        }
+        
+        // If we got local logs, return them
+        if (!empty($logLines) && !str_starts_with($logLines[0] ?? '', 'No ') && !str_starts_with($logLines[0] ?? '', 'Log source')) {
+            return response()->json([
+                'lines' => $logLines,
+                'service' => $service,
+                'source' => $source,
+            ]);
+        }
+        
+        // Fall back to Docker-based log retrieval
         if (str_contains($source, '_stdout') || $source === 'stdout') {
             // Container stdout/stderr logs
             $logLines = $this->dockerLogs->getContainerLogs($containerName, $lines);
@@ -78,6 +93,41 @@ class LogsAdminController extends Controller
             'service' => $service,
             'source' => $source,
         ]);
+    }
+    
+    /**
+     * Get logs for local API/Worker services directly from mounted files.
+     */
+    private function getLocalServiceLogs(string $service, string $source, int $lines): array
+    {
+        // Map source IDs to local file paths (accessible within this container)
+        $localFiles = [
+            // API service logs
+            'api_laravel' => storage_path('logs/laravel.log'),
+            'api_stdout' => null, // stdout not available locally - will fall through to Docker
+            'api_dpkg' => '/var/log/dpkg.log',
+            'api_alternatives' => '/var/log/alternatives.log',
+            'api_bootstrap' => '/var/log/bootstrap.log',
+            // Worker service logs (shares the same laravel.log)
+            'worker_laravel' => storage_path('logs/laravel.log'),
+            'worker_stdout' => null,
+            'worker_dpkg' => '/var/log/dpkg.log',
+            'worker_alternatives' => '/var/log/alternatives.log',
+            'worker_bootstrap' => '/var/log/bootstrap.log',
+        ];
+        
+        $filePath = $localFiles[$source] ?? null;
+        
+        // If source is stdout, we can't read it locally
+        if ($filePath === null) {
+            return [];
+        }
+        
+        if (!file_exists($filePath)) {
+            return ["Log file not found: {$source}"];
+        }
+        
+        return $this->tailFile($filePath, $lines);
     }
 
     /**

@@ -55,12 +55,17 @@
         <template x-for="source in currentSources" :key="source.id">
           <button 
             @click="selectSource(source.id)"
-            :class="selectedSource === source.id 
-              ? 'bg-primary-600 text-white border-primary-500' 
-              : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'"
+            :class="[
+              selectedSource === source.id 
+                ? 'bg-primary-600 text-white border-primary-500' 
+                : source.disabled 
+                  ? 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed opacity-60'
+                  : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+            ]"
             class="px-3 py-1.5 text-sm rounded-lg border transition-colors flex items-center gap-2"
+            :disabled="source.disabled"
           >
-            <span class="w-1.5 h-1.5 rounded-full" :class="source.type === 'stdout' ? 'bg-blue-400' : 'bg-green-400'"></span>
+            <span class="w-1.5 h-1.5 rounded-full" :class="source.disabled ? 'bg-gray-500' : (source.type === 'stdout' ? 'bg-blue-400' : 'bg-green-400')"></span>
             <span x-text="source.name"></span>
           </button>
         </template>
@@ -242,7 +247,9 @@ function logsPage() {
       this.currentSources = service?.log_sources || [];
       
       if (this.currentSources.length > 0) {
-        this.selectSource(this.currentSources[0].id);
+        // Find first non-disabled source, or fall back to first source
+        const enabledSource = this.currentSources.find(s => !s.disabled) || this.currentSources[0];
+        this.selectSource(enabledSource.id);
       } else {
         this.logLines = ['No log sources available for this service'];
         this.loading = false;
@@ -254,6 +261,15 @@ function logsPage() {
     },
     
     async selectSource(sourceId) {
+      const source = this.currentSources.find(s => s.id === sourceId);
+      
+      // Don't allow selecting disabled sources
+      if (source?.disabled) {
+        this.logLines = ['This log source requires Docker access which is not available in the current environment.', '', 'Try selecting a different log source such as laravel.log.'];
+        this.loading = false;
+        return;
+      }
+      
       this.selectedSource = sourceId;
       this.loading = true;
       this.logLines = [];
