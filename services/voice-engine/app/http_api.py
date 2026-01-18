@@ -2075,6 +2075,46 @@ async def list_models():
         return {"models": [], "current_model": model_manager.model_name}
 
 
+class ModelValidateRequest(BaseModel):
+    """Model validation request"""
+    model_path: str = Field(..., description="Path to model file or directory")
+    index_path: Optional[str] = Field(default=None, description="Optional path to index file")
+
+
+@app.post("/models/validate")
+async def validate_model_endpoint(request: ModelValidateRequest):
+    """
+    Validate an RVC model before deployment.
+    
+    Checks for common issues:
+    - Sample rate configuration (most common cause of "chipmunk" audio)
+    - Corrupted weights (NaN/Inf values)
+    - Version mismatches (v1 vs v2)
+    - Index dimension compatibility
+    
+    Use this after training to catch issues early!
+    """
+    try:
+        from app.services.voice_conversion.model_validator import validate_model
+        result = validate_model(request.model_path, request.index_path)
+        
+        # Log warnings for monitoring
+        if result.get('warnings'):
+            for w in result['warnings']:
+                logger.warning(f"Model validation warning: {w}")
+        
+        # Log issues as errors
+        if result.get('issues'):
+            for i in result['issues']:
+                logger.error(f"Model validation issue: {i}")
+        
+        return result
+        
+    except Exception as e:
+        logger.exception(f"Model validation failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Validation failed: {str(e)}")
+
+
 # =============================================================================
 # Voice Detection Endpoints
 # =============================================================================

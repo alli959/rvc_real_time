@@ -9,7 +9,7 @@ import base64
 import logging
 from typing import Optional
 
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Header
 
 from app.models.conversion import (
     ConvertRequest,
@@ -232,4 +232,153 @@ async def get_model(model_id: int):
         raise
     except Exception as e:
         logger.exception(f"Failed to get model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/models/validate/{model_name}")
+async def validate_model(
+    model_name: str, 
+    run_smoke_test: bool = True,
+    x_internal_key: str = Header(None, alias="X-Internal-Key")
+):
+    """
+    Validate a model's quality and detect training failures.
+    
+    This endpoint runs comprehensive quality checks on a trained model:
+    - Training log analysis (detects stuck/NaN loss patterns)
+    - F0/pitch extraction quality (detects bad preprocessing)
+    - Checkpoint smoke test (detects collapsed/broken generators)
+    
+    Args:
+        model_name: Name of the model directory (e.g., "lexi-11")
+        run_smoke_test: Whether to run inference smoke test (slower but comprehensive)
+    
+    Returns:
+        Validation result with pass/fail status, issues, warnings, and metrics.
+        
+    Example failure response for a collapsed model:
+    {
+        "passed": false,
+        "issues": [
+            "[Training] Mel loss STUCK at 75.0 for ALL iterations! Generator has COLLAPSED.",
+            "[SmokeTest] Low crest factor: 1.06 (min: 3.0). Output may be collapsed/compressed."
+        ],
+        "warnings": [...],
+        "metrics": {...}
+    }
+    """
+    # Security: Validate model_name to prevent path traversal
+    import os
+    if '..' in model_name or model_name.startswith('/') or os.path.isabs(model_name):
+        raise HTTPException(status_code=400, detail="Invalid model name")
+    
+    # Security: Optional internal key check (configure INTERNAL_API_KEY env var)
+    expected_key = os.environ.get('INTERNAL_API_KEY')
+    if expected_key and x_internal_key != expected_key:
+        logger.warning(f"Unauthorized validation attempt for model: {model_name}")
+        raise HTTPException(status_code=403, detail="Forbidden - internal endpoint")
+    
+    try:
+        from pathlib import Path
+        from app.services.voice_conversion.training_quality_validator import validate_trained_model
+        
+        model_dir = Path("assets/models") / model_name
+        
+        # Security: Ensure resolved path is under assets/models
+        model_dir_resolved = model_dir.resolve()
+        base_dir_resolved = Path("assets/models").resolve()
+        if not str(model_dir_resolved).startswith(str(base_dir_resolved)):
+            raise HTTPException(status_code=400, detail="Invalid model path")
+        
+        if not model_dir.exists():
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Model directory not found: {model_name}"
+            )
+        
+        result = validate_trained_model(str(model_dir), run_smoke_test=run_smoke_test)
+        
+        return result.to_dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to validate model: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.post("/models/smoke-test/{model_name}")
+async def smoke_test_model(
+    model_name: str,
+    x_internal_key: str = Header(None, alias="X-Internal-Key")
+):
+    """
+    Quick smoke test to check if a model produces valid output.
+    
+    This is a lightweight check that:
+    1. Runs inference with synthetic test audio
+    2. Checks output quality metrics (DC offset, crest factor, spectral flatness)
+    3. Returns pass/fail with detailed metrics
+    
+    Use this for quick validation before deploying a model.
+    
+    Args:
+        model_name: Name of the model (e.g., "lexi-11/lexi-11.pth")
+    
+    Returns:
+        {
+            "passed": true/false,
+            "issues": [...],
+            "metrics": {
+                "dc_offset": ...,
+                "crest_factor": ...,
+                "spectral_flatness": ...,
+                "zero_crossing_rate": ...
+            }
+        }
+    """
+    import os
+    
+    # Security: Validate model_name to prevent path traversal
+    if '..' in model_name or model_name.startswith('/') or os.path.isabs(model_name):
+        raise HTTPException(status_code=400, detail="Invalid model name")
+    
+    # Security: Optional internal key check
+    expected_key = os.environ.get('INTERNAL_API_KEY')
+    if expected_key and x_internal_key != expected_key:
+        logger.warning(f"Unauthorized smoke test attempt for model: {model_name}")
+        raise HTTPException(status_code=403, detail="Forbidden - internal endpoint")
+    
+    try:
+        from pathlib import Path
+        from app.services.voice_conversion.training_quality_validator import smoke_test_checkpoint
+        
+        # Find model file
+        model_dir = Path("assets/models")
+        
+        # Try exact path first
+        model_path = model_dir / model_name
+        if not model_path.exists():
+            # Try as directory
+            model_path = model_dir / model_name / f"{model_name}.pth"
+        if not model_path.exists():
+            # Search for .pth file
+            matches = list((model_dir / model_name).glob("*.pth")) if (model_dir / model_name).exists() else []
+            inference_models = [f for f in matches if not f.name.startswith(('G_', 'D_'))]
+            if inference_models:
+                model_path = inference_models[0]
+            else:
+                raise HTTPException(
+                    status_code=404,
+                    detail=f"Model not found: {model_name}"
+                )
+        
+        result = smoke_test_checkpoint(str(model_path))
+        
+        return result.to_dict()
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.exception(f"Failed to smoke test model: {e}")
         raise HTTPException(status_code=500, detail=str(e))
