@@ -41,7 +41,7 @@
   </div>
 
   <!-- Resource Summary -->
-  <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+  <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-5 gap-4">
     <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
       <div class="flex items-center gap-3">
         <div class="p-3 bg-green-500/20 rounded-lg">
@@ -54,26 +54,60 @@
       </div>
     </div>
     
+    <!-- Actual VRAM -->
     <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
       <div class="flex items-center gap-3">
         <div class="p-3 bg-purple-500/20 rounded-lg">
           <i data-lucide="cpu" class="w-6 h-6 text-purple-400"></i>
         </div>
         <div>
-          <p class="text-2xl font-bold text-white" x-text="formatMB(summary.total_vram_mb)">0 MB</p>
-          <p class="text-sm text-gray-400">Estimated VRAM Used</p>
+          <p class="text-2xl font-bold text-white">
+            <span x-text="formatMB(actualMemory.vram_used_mb)">0 MB</span>
+            <span class="text-sm text-gray-500">/ <span x-text="formatMB(actualMemory.vram_total_mb)"></span></span>
+          </p>
+          <p class="text-sm text-gray-400">Actual VRAM (<span x-text="actualMemory.vram_used_percent"></span>%)</p>
         </div>
       </div>
     </div>
     
+    <!-- Estimated VRAM -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <div class="flex items-center gap-3">
+        <div class="p-3 bg-purple-500/10 rounded-lg">
+          <i data-lucide="gauge" class="w-6 h-6 text-purple-300"></i>
+        </div>
+        <div>
+          <p class="text-2xl font-bold text-white" x-text="formatMB(summary.total_vram_mb)">0 MB</p>
+          <p class="text-sm text-gray-400">Est. VRAM (models)</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Actual RAM -->
     <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
       <div class="flex items-center gap-3">
         <div class="p-3 bg-blue-500/20 rounded-lg">
           <i data-lucide="memory-stick" class="w-6 h-6 text-blue-400"></i>
         </div>
         <div>
+          <p class="text-2xl font-bold text-white">
+            <span x-text="formatMB(actualMemory.ram_used_mb)">0 MB</span>
+            <span class="text-sm text-gray-500">/ <span x-text="formatMB(actualMemory.ram_total_mb)"></span></span>
+          </p>
+          <p class="text-sm text-gray-400">Actual RAM (<span x-text="actualMemory.ram_used_percent"></span>%)</p>
+        </div>
+      </div>
+    </div>
+    
+    <!-- Estimated RAM -->
+    <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
+      <div class="flex items-center gap-3">
+        <div class="p-3 bg-blue-500/10 rounded-lg">
+          <i data-lucide="gauge" class="w-6 h-6 text-blue-300"></i>
+        </div>
+        <div>
           <p class="text-2xl font-bold text-white" x-text="formatMB(summary.total_ram_mb)">0 MB</p>
-          <p class="text-sm text-gray-400">Estimated RAM Used</p>
+          <p class="text-sm text-gray-400">Est. RAM (models)</p>
         </div>
       </div>
     </div>
@@ -197,7 +231,7 @@
                     <span class="px-2 py-0.5 text-xs font-medium rounded-full" :class="getStatusClass(asset.status)" x-text="formatStatus(asset.status)"></span>
                   </div>
                   
-                  <div class="flex items-center justify-between text-xs text-gray-400 mb-3">
+                  <div class="flex items-center justify-between text-xs text-gray-400 mb-2">
                     <span x-show="asset.estimated_vram_mb > 0">
                       <i data-lucide="cpu" class="w-3 h-3 inline"></i>
                       <span x-text="formatMB(asset.estimated_vram_mb)"></span> VRAM
@@ -206,6 +240,31 @@
                       <i data-lucide="memory-stick" class="w-3 h-3 inline"></i>
                       <span x-text="formatMB(asset.estimated_ram_mb)"></span> RAM
                     </span>
+                  </div>
+                  
+                  <!-- Timing info (only when loaded) -->
+                  <div x-show="asset.loaded_at" class="text-xs text-gray-500 mb-2 space-y-1 border-t border-gray-700 pt-2">
+                    <div class="flex items-center justify-between">
+                      <span class="flex items-center gap-1">
+                        <i data-lucide="clock" class="w-3 h-3"></i>
+                        Loaded
+                      </span>
+                      <span x-text="formatRelativeTime(asset.loaded_at)" class="text-gray-400"></span>
+                    </div>
+                    <div x-show="asset.last_used_at" class="flex items-center justify-between">
+                      <span class="flex items-center gap-1">
+                        <i data-lucide="activity" class="w-3 h-3"></i>
+                        Last used
+                      </span>
+                      <span x-text="formatRelativeTime(asset.last_used_at)" class="text-gray-400"></span>
+                    </div>
+                    <div x-show="asset.use_count > 0" class="flex items-center justify-between">
+                      <span class="flex items-center gap-1">
+                        <i data-lucide="hash" class="w-3 h-3"></i>
+                        Uses
+                      </span>
+                      <span x-text="asset.use_count" class="text-gray-400"></span>
+                    </div>
                   </div>
                   
                   <div class="flex gap-2">
@@ -317,7 +376,7 @@
               <template x-for="asset in cat.assets" :key="asset.id">
                 <div class="bg-gray-800/50 border border-gray-700 rounded-lg p-3 hover:border-gray-600 transition-colors"
                      :class="{'ring-1 ring-green-500/50': asset.status === 'running'}">
-                  <div class="flex items-start gap-2">
+                  <div class="flex items-start gap-2 mb-2">
                     <div class="p-1.5 rounded bg-pink-500/20">
                       <i :data-lucide="getAssetIcon(asset)" class="w-3 h-3 text-pink-400"></i>
                     </div>
@@ -328,6 +387,21 @@
                       </p>
                     </div>
                     <span class="px-1.5 py-0.5 text-xs rounded" :class="getStatusClass(asset.status)" x-text="asset.status === 'on_disk' ? 'ready' : asset.status"></span>
+                  </div>
+                  <!-- Timing info for models -->
+                  <div x-show="asset.loaded_at" class="text-xs text-gray-500 border-t border-gray-700 pt-2 mt-2 space-y-0.5">
+                    <div class="flex items-center justify-between">
+                      <span><i data-lucide="clock" class="w-3 h-3 inline"></i> Loaded</span>
+                      <span x-text="formatRelativeTime(asset.loaded_at)" class="text-gray-400"></span>
+                    </div>
+                    <div x-show="asset.last_used_at" class="flex items-center justify-between">
+                      <span><i data-lucide="activity" class="w-3 h-3 inline"></i> Used</span>
+                      <span x-text="formatRelativeTime(asset.last_used_at)" class="text-gray-400"></span>
+                    </div>
+                    <div x-show="asset.use_count > 0" class="flex items-center justify-between">
+                      <span><i data-lucide="hash" class="w-3 h-3 inline"></i> Uses</span>
+                      <span x-text="asset.use_count" class="text-green-400"></span>
+                    </div>
                   </div>
                 </div>
               </template>
@@ -373,6 +447,7 @@ function assetsPage() {
     actionLoading: null,
     categories: {},
     summary: { total_running: 0, total_vram_mb: 0, total_ram_mb: 0 },
+    actualMemory: { ram_used_mb: 0, ram_total_mb: 0, ram_used_percent: 0, vram_used_mb: 0, vram_total_mb: 0, vram_used_percent: 0 },
     mainTab: 'assets', // 'assets' or 'models'
     selectedSystemCategory: null,
     selectedModelCategory: null,
@@ -476,6 +551,9 @@ function assetsPage() {
         }
         if (data.summary) {
           this.summary = data.summary;
+        }
+        if (data.actual_memory) {
+          this.actualMemory = data.actual_memory;
         }
         
         this.error = null;
@@ -593,6 +671,24 @@ function assetsPage() {
       if (!mb || mb === 0) return '0 MB';
       if (mb >= 1024) return (mb / 1024).toFixed(1) + ' GB';
       return Math.round(mb) + ' MB';
+    },
+    
+    formatRelativeTime(isoString) {
+      if (!isoString) return '';
+      const date = new Date(isoString);
+      const now = new Date();
+      const diffMs = now - date;
+      const diffSec = Math.floor(diffMs / 1000);
+      const diffMin = Math.floor(diffSec / 60);
+      const diffHour = Math.floor(diffMin / 60);
+      const diffDay = Math.floor(diffHour / 24);
+      
+      if (diffSec < 5) return 'just now';
+      if (diffSec < 60) return `${diffSec}s ago`;
+      if (diffMin < 60) return `${diffMin}m ago`;
+      if (diffHour < 24) return `${diffHour}h ago`;
+      if (diffDay < 7) return `${diffDay}d ago`;
+      return date.toLocaleDateString();
     },
     
     formatStatus(status) {

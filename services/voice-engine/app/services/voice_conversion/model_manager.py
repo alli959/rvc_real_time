@@ -12,13 +12,30 @@ import logging
 import os
 from math import gcd
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Callable
 
 import numpy as np
 from scipy import signal
 from dataclasses import dataclass
 
 logger = logging.getLogger(__name__)
+
+# Global usage tracking callback (set by assets_api to avoid circular imports)
+_usage_callback: Optional[Callable[[str], None]] = None
+
+def set_usage_callback(callback: Callable[[str], None]) -> None:
+    """Set the global callback for tracking model usage."""
+    global _usage_callback
+    _usage_callback = callback
+    logger.info("Voice model usage callback registered")
+
+def _notify_usage(model_name: str) -> None:
+    """Notify that a model was used for inference."""
+    if _usage_callback and model_name:
+        try:
+            _usage_callback(model_name)
+        except Exception as e:
+            logger.debug(f"Usage callback error: {e}")
 
 
 @dataclass
@@ -253,6 +270,10 @@ class ModelManager:
                 float(p.protect),
                 f0_file=None,
             )
+            
+            # Track usage for the loaded model
+            _notify_usage(self.model_name)
+            
             return audio_int16.astype(np.float32) / 32768.0
 
         except Exception as e:
