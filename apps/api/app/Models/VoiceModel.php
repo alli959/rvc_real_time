@@ -106,6 +106,15 @@ class VoiceModel extends Model
     ];
 
     /**
+     * Get the route key name for Laravel route model binding.
+     * This allows routes to use the slug instead of id.
+     */
+    public function getRouteKeyName(): string
+    {
+        return 'slug';
+    }
+
+    /**
      * Get the model filename from model_path
      */
     public function getModelFileAttribute(): ?string
@@ -211,6 +220,76 @@ class VoiceModel extends Model
     public function usageEvents(): HasMany
     {
         return $this->hasMany(UsageEvent::class);
+    }
+
+    /**
+     * Get all training runs for this model.
+     */
+    public function trainingRuns(): HasMany
+    {
+        return $this->hasMany(TrainingRun::class);
+    }
+
+    /**
+     * Get the current/active training run.
+     */
+    public function currentRun(): BelongsTo
+    {
+        return $this->belongsTo(TrainingRun::class, 'current_run_id');
+    }
+
+    /**
+     * Get all dataset versions for this model.
+     */
+    public function datasetVersions(): HasMany
+    {
+        return $this->hasMany(DatasetVersion::class);
+    }
+
+    /**
+     * Get the current dataset version.
+     */
+    public function currentDatasetVersion(): BelongsTo
+    {
+        return $this->belongsTo(DatasetVersion::class, 'current_dataset_version_id');
+    }
+
+    /**
+     * Get the best checkpoint across all runs.
+     */
+    public function bestCheckpoint(): BelongsTo
+    {
+        return $this->belongsTo(TrainingCheckpoint::class, 'best_checkpoint_id');
+    }
+
+    /**
+     * Get all checkpoints across all runs (via training runs).
+     */
+    public function getAllCheckpoints()
+    {
+        return TrainingCheckpoint::whereHas('trainingRun', function ($query) {
+            $query->where('voice_model_id', $this->id);
+        })->orderBy('created_at', 'desc');
+    }
+
+    /**
+     * Check if the model is currently training.
+     */
+    public function isTraining(): bool
+    {
+        return $this->status === 'training' || 
+               ($this->currentRun && $this->currentRun->isActive());
+    }
+
+    /**
+     * Get the latest completed training run.
+     */
+    public function getLatestCompletedRun(): ?TrainingRun
+    {
+        return $this->trainingRuns()
+            ->where('status', TrainingRun::STATUS_COMPLETED)
+            ->orderBy('completed_at', 'desc')
+            ->first();
     }
 
     public function permittedUsers(): BelongsToMany
