@@ -139,7 +139,7 @@
       </header>
 
       <!-- Page Content -->
-      <div class="p-8">
+      <div class="p-8 relative">
         @if(session('success'))
           <div class="mb-6 p-4 bg-green-500/10 border border-green-500/50 rounded-lg flex items-center gap-3">
             <i data-lucide="check-circle" class="w-5 h-5 text-green-500"></i>
