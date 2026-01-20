@@ -11,6 +11,7 @@ use App\Http\Controllers\Api\RoleRequestController;
 use App\Http\Controllers\Api\YouTubeController;
 use App\Http\Controllers\Api\AudioProcessingController;
 use App\Http\Controllers\Api\TrainerController;
+use App\Http\Controllers\Api\TrainingRunController;
 
 /*
 |--------------------------------------------------------------------------
@@ -240,6 +241,39 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
         Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
         Route::post('/model/{modelSlug}/train', [TrainerController::class, 'trainModel']);
+    });
+
+    // ------------------------------------------------------------------
+    // Training Runs (Git-like training workflow)
+    // ------------------------------------------------------------------
+    Route::prefix('training-runs')->group(function () {
+        // Per-model endpoints
+        Route::get('/model/{voiceModel}', [TrainingRunController::class, 'index']);
+        Route::get('/model/{voiceModel}/tree', [TrainingRunController::class, 'tree']);
+        Route::get('/model/{voiceModel}/resumable', [TrainingRunController::class, 'resumable']);
+        Route::get('/model/{voiceModel}/dataset-versions', [TrainingRunController::class, 'datasetVersions']);
+        
+        // Start new training
+        Route::post('/model/{voiceModel}/start', [TrainingRunController::class, 'startNew']);
+        
+        // Run-specific endpoints
+        Route::get('/{run}', [TrainingRunController::class, 'show']);
+        Route::get('/{run}/status', [TrainingRunController::class, 'status']);
+        Route::post('/{run}/cancel', [TrainingRunController::class, 'cancel']);
+        Route::get('/{run}/checkpoints', [TrainingRunController::class, 'checkpoints']);
+        
+        // Resume/continue/branch from run
+        Route::post('/{run}/resume', [TrainingRunController::class, 'resume']);
+        
+        // Checkpoint endpoints
+        Route::get('/checkpoints/{checkpoint}', [TrainingRunController::class, 'showCheckpoint']);
+        Route::post('/checkpoints/{checkpoint}/continue', [TrainingRunController::class, 'continueFromCheckpoint']);
+        Route::post('/checkpoints/{checkpoint}/branch', [TrainingRunController::class, 'branch']);
+        Route::post('/checkpoints/{checkpoint}/archive', [TrainingRunController::class, 'archiveCheckpoint']);
+        Route::post('/checkpoints/{checkpoint}/note', [TrainingRunController::class, 'addCheckpointNote']);
+        
+        // Dataset version endpoints
+        Route::get('/dataset-versions/{version}', [TrainingRunController::class, 'showDatasetVersion']);
     });
 
     // ------------------------------------------------------------------

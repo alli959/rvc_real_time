@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Api;
 
 use App\Http\Controllers\Controller;
+use App\Models\JobQueue;
 use App\Models\VoiceModel;
 use App\Services\TrainerService;
 use Illuminate\Http\Request;
@@ -357,17 +358,63 @@ class TrainerController extends Controller
             'audio_paths' => ['nullable', 'array'],
         ]);
 
+        $expName = $request->input('exp_name');
+        $config = $request->input('config', []);
+        
+        // Find the associated VoiceModel
+        $voiceModel = VoiceModel::where('slug', $expName)
+            ->orWhere('name', $expName)
+            ->first();
+        
+        // Create a JobQueue record for training tracking
+        $job = JobQueue::create([
+            'user_id' => $request->user()?->id,
+            'voice_model_id' => $voiceModel?->id,
+            'type' => JobQueue::TYPE_TRAINING,
+            'status' => JobQueue::STATUS_PROCESSING,
+            'parameters' => [
+                'exp_name' => $expName,
+                'config' => $config,
+                'total_epochs' => $config['epochs'] ?? 100,
+            ],
+            'progress' => 0,
+            'progress_message' => 'Starting training...',
+            'started_at' => now(),
+        ]);
+
         $result = $this->trainer->startTraining(
-            $request->input('exp_name'),
-            $request->input('config', []),
+            $expName,
+            $config,
             $request->input('audio_paths')
         );
 
         if (!$result) {
+            // Mark job as failed
+            $job->update([
+                'status' => JobQueue::STATUS_FAILED,
+                'completed_at' => now(),
+                'error_message' => 'Failed to start training on voice engine',
+            ]);
             return response()->json(['error' => 'Failed to start training'], 500);
         }
 
-        return response()->json($result);
+        // Store the voice-engine job ID for progress syncing
+        $job->update([
+            'parameters->voice_engine_job_id' => $result['job_id'] ?? null,
+            'progress_message' => 'Training started',
+        ]);
+        
+        // Update VoiceModel status to training
+        if ($voiceModel) {
+            $voiceModel->update([
+                'status' => 'training',
+            ]);
+        }
+
+        return response()->json([
+            ...$result,
+            'queue_job_id' => $job->uuid,
+        ]);
     }
 
     /**
@@ -381,7 +428,69 @@ class TrainerController extends Controller
             return response()->json(['error' => 'Job not found'], 404);
         }
 
+        // Sync progress to JobQueue record
+        $this->syncJobQueueProgress($jobId, $status);
+
         return response()->json($status);
+    }
+    
+    /**
+     * Sync voice-engine training status to JobQueue record
+     */
+    protected function syncJobQueueProgress(string $voiceEngineJobId, array $status): void
+    {
+        // Find the JobQueue record by voice_engine_job_id
+        $job = JobQueue::where('type', JobQueue::TYPE_TRAINING)
+            ->whereJsonContains('parameters->voice_engine_job_id', $voiceEngineJobId)
+            ->first();
+            
+        if (!$job) {
+            return;
+        }
+        
+        $updates = [
+            'progress' => (int) ($status['progress'] ?? 0),
+            'progress_message' => $status['message'] ?? $status['step'] ?? 'Training...',
+        ];
+        
+        // Map voice-engine status to JobQueue status
+        $veStatus = $status['status'] ?? '';
+        if ($veStatus === 'completed') {
+            $updates['status'] = JobQueue::STATUS_COMPLETED;
+            $updates['completed_at'] = now();
+            
+            // Update VoiceModel status
+            if ($job->voiceModel) {
+                $job->voiceModel->update(['status' => 'ready']);
+            }
+        } elseif ($veStatus === 'failed') {
+            $updates['status'] = JobQueue::STATUS_FAILED;
+            $updates['completed_at'] = now();
+            $updates['error_message'] = $status['error'] ?? 'Training failed';
+            
+            // Update VoiceModel status
+            if ($job->voiceModel) {
+                $job->voiceModel->update(['status' => 'failed']);
+            }
+        } elseif ($veStatus === 'cancelled') {
+            $updates['status'] = JobQueue::STATUS_CANCELLED;
+            $updates['completed_at'] = now();
+            
+            // Revert VoiceModel status
+            if ($job->voiceModel) {
+                $job->voiceModel->update(['status' => 'pending']);
+            }
+        }
+        
+        // Store current epoch info in parameters
+        if (isset($status['current_epoch']) || isset($status['total_epochs'])) {
+            $params = $job->parameters ?? [];
+            $params['current_epoch'] = $status['current_epoch'] ?? 0;
+            $params['total_epochs'] = $status['total_epochs'] ?? $params['total_epochs'] ?? 0;
+            $updates['parameters'] = $params;
+        }
+        
+        $job->update($updates);
     }
 
     /**
@@ -390,6 +499,23 @@ class TrainerController extends Controller
     public function cancelTraining(string $jobId): JsonResponse
     {
         $success = $this->trainer->cancelTraining($jobId);
+        
+        // Update JobQueue status
+        $job = JobQueue::where('type', JobQueue::TYPE_TRAINING)
+            ->whereJsonContains('parameters->voice_engine_job_id', $jobId)
+            ->first();
+        
+        if ($job && $success) {
+            $job->update([
+                'status' => JobQueue::STATUS_CANCELLED,
+                'completed_at' => now(),
+            ]);
+            
+            // Revert VoiceModel status
+            if ($job->voiceModel) {
+                $job->voiceModel->update(['status' => 'pending']);
+            }
+        }
 
         return response()->json([
             'success' => $success,
