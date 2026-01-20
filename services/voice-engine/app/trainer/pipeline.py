@@ -455,9 +455,11 @@ class RVCTrainingPipeline:
                 logger.warning(f"No exp_name found for job {job_id}")
                 return False
         
-        # Write the request file
-        model_dir = self.base_dir / exp_name
-        request_file = model_dir / ".checkpoint_request.json"
+        # Write the request file to the logs directory where train.py reads from
+        # train.py uses hps.model_dir which is ./logs/{exp_name}
+        voice_engine_root = Path(__file__).parent.parent.parent
+        logs_dir = voice_engine_root / "logs" / exp_name
+        request_file = logs_dir / ".checkpoint_request.json"
         
         try:
             request = {
@@ -489,8 +491,10 @@ class RVCTrainingPipeline:
             if not exp_name:
                 return None
         
-        model_dir = self.base_dir / exp_name
-        response_file = model_dir / ".checkpoint_response.json"
+        # Read from logs directory where train.py writes to
+        voice_engine_root = Path(__file__).parent.parent.parent
+        logs_dir = voice_engine_root / "logs" / exp_name
+        response_file = logs_dir / ".checkpoint_response.json"
         
         if response_file.exists():
             try:

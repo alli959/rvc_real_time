@@ -3,11 +3,116 @@ import sys
 import logging
 import json
 from pathlib import Path
+from collections import deque
 
 logger = logging.getLogger(__name__)
 
 now_dir = os.getcwd()
 sys.path.append(os.path.join(now_dir))
+
+
+# =============================================================================
+# Training Collapse Watchdog (inline - fail-fast)
+# =============================================================================
+
+class TrainingCollapseWatchdog:
+    """
+    Lightweight watchdog to detect training collapse EARLY.
+    
+    Collapse signatures:
+    1. loss_mel stuck at exactly the same value for N steps
+    2. loss_kl stuck at exactly the same value for N steps
+    3. Both mel and kl stuck = DEFINITE collapse
+    
+    This watchdog runs inline with training and can abort immediately.
+    """
+    
+    def __init__(
+        self,
+        stuck_window: int = 50,      # Steps to track
+        stuck_threshold: float = 0.001,  # Values within this delta = "same"
+        abort_on_stuck: bool = True,
+        logger: logging.Logger = None,
+    ):
+        self.stuck_window = stuck_window
+        self.stuck_threshold = stuck_threshold
+        self.abort_on_stuck = abort_on_stuck
+        self.logger = logger or logging.getLogger(__name__)
+        
+        # Tracking buffers
+        self.mel_history = deque(maxlen=stuck_window)
+        self.kl_history = deque(maxlen=stuck_window)
+        self.step_count = 0
+        
+        # State
+        self.mel_stuck = False
+        self.kl_stuck = False
+        self.abort_requested = False
+        self.abort_reason = ""
+    
+    def update(self, loss_mel: float, loss_kl: float, step: int, epoch: int) -> bool:
+        """
+        Update watchdog with new loss values.
+        
+        Returns True if training should ABORT.
+        """
+        self.step_count = step
+        
+        # Track raw values (NOT clamped!)
+        self.mel_history.append(loss_mel)
+        self.kl_history.append(loss_kl)
+        
+        # Need enough history to detect stuck
+        if len(self.mel_history) < self.stuck_window:
+            return False
+        
+        # Check for stuck mel
+        mel_values = list(self.mel_history)
+        mel_min, mel_max = min(mel_values), max(mel_values)
+        self.mel_stuck = (mel_max - mel_min) < self.stuck_threshold
+        
+        # Check for stuck kl
+        kl_values = list(self.kl_history)
+        kl_min, kl_max = min(kl_values), max(kl_values)
+        self.kl_stuck = (kl_max - kl_min) < self.stuck_threshold
+        
+        # CRITICAL: Both stuck = definite collapse
+        if self.mel_stuck and self.kl_stuck:
+            self.abort_reason = (
+                f"TRAINING COLLAPSE DETECTED at step {step} (epoch {epoch}): "
+                f"loss_mel stuck at {mel_values[-1]:.3f} and loss_kl stuck at {kl_values[-1]:.3f} "
+                f"for {self.stuck_window} consecutive steps. "
+                f"Model is NOT learning - aborting to save GPU time."
+            )
+            self.logger.error("=" * 60)
+            self.logger.error(self.abort_reason)
+            self.logger.error("=" * 60)
+            self.abort_requested = True
+            return self.abort_on_stuck
+        
+        # WARNING: One stuck (might recover)
+        if self.mel_stuck:
+            self.logger.warning(
+                f"[WATCHDOG] loss_mel stuck at {mel_values[-1]:.3f} for {self.stuck_window} steps (step {step})"
+            )
+        if self.kl_stuck:
+            self.logger.warning(
+                f"[WATCHDOG] loss_kl stuck at {kl_values[-1]:.3f} for {self.stuck_window} steps (step {step})"
+            )
+        
+        return False
+    
+    def should_abort(self) -> bool:
+        return self.abort_requested
+    
+    def get_status(self) -> dict:
+        return {
+            'step_count': self.step_count,
+            'mel_stuck': self.mel_stuck,
+            'kl_stuck': self.kl_stuck,
+            'abort_requested': self.abort_requested,
+            'abort_reason': self.abort_reason,
+        }
 
 import datetime
 
@@ -180,6 +285,17 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
         # utils.check_git_hash(hps.model_dir)
         writer = SummaryWriter(log_dir=hps.model_dir)
         writer_eval = SummaryWriter(log_dir=os.path.join(hps.model_dir, "eval"))
+        
+        # Initialize training collapse watchdog
+        watchdog = TrainingCollapseWatchdog(
+            stuck_window=50,      # Detect stuck within 50 steps
+            stuck_threshold=0.001,
+            abort_on_stuck=True,
+            logger=logger,
+        )
+        logger.info("[WATCHDOG] Training collapse detection ENABLED (window=50 steps)")
+    else:
+        watchdog = None
 
     # Only use distributed training for multi-GPU
     use_ddp = n_gpus > 1
@@ -353,6 +469,7 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
                 logger,
                 [writer, writer_eval],
                 cache,
+                watchdog,
             )
         else:
             train_and_evaluate(
@@ -367,13 +484,14 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
                 None,
                 None,
                 cache,
+                None,  # watchdog only on rank 0
             )
         scheduler_g.step()
         scheduler_d.step()
 
 
 def train_and_evaluate(
-    rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers, cache
+    rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers, cache, watchdog=None
 ):
     net_g, net_d = nets
     optim_g, optim_d = optims
@@ -576,6 +694,39 @@ def train_and_evaluate(
         scaler.update()
 
         if rank == 0:
+            # WATCHDOG: Check for training collapse with RAW loss values
+            if watchdog is not None:
+                # Get actual loss values (as float, not tensor)
+                raw_loss_mel = float(loss_mel.item() if hasattr(loss_mel, 'item') else loss_mel)
+                raw_loss_kl = float(loss_kl.item() if hasattr(loss_kl, 'item') else loss_kl)
+                
+                should_abort = watchdog.update(
+                    loss_mel=raw_loss_mel,
+                    loss_kl=raw_loss_kl,
+                    step=global_step,
+                    epoch=epoch,
+                )
+                
+                if should_abort:
+                    logger.error("=" * 60)
+                    logger.error("WATCHDOG ABORT: Training collapse detected!")
+                    logger.error(f"Reason: {watchdog.abort_reason}")
+                    logger.error("Stopping training to prevent wasted GPU time.")
+                    logger.error("=" * 60)
+                    
+                    # Write abort marker file
+                    abort_file = Path(hps.model_dir) / ".training_aborted.json"
+                    with open(abort_file, 'w') as f:
+                        json.dump({
+                            'reason': watchdog.abort_reason,
+                            'step': global_step,
+                            'epoch': epoch,
+                            'status': watchdog.get_status(),
+                        }, f, indent=2)
+                    
+                    sleep(1)
+                    os._exit(99)  # Exit code 99 = watchdog abort
+            
             if global_step % hps.train.log_interval == 0:
                 lr = optim_g.param_groups[0]["lr"]
                 logger.info(
@@ -583,15 +734,19 @@ def train_and_evaluate(
                         epoch, 100.0 * batch_idx / len(train_loader)
                     )
                 )
-                # Amor For Tensorboard display
-                if loss_mel > 75:
-                    loss_mel = 75
-                if loss_kl > 9:
-                    loss_kl = 9
+                
+                # Log RAW values first (for watchdog/debugging)
+                raw_mel = float(loss_mel.item() if hasattr(loss_mel, 'item') else loss_mel)
+                raw_kl = float(loss_kl.item() if hasattr(loss_kl, 'item') else loss_kl)
+                
+                # Clamp for Tensorboard display ONLY (not for logging!)
+                display_mel = min(raw_mel, 75)
+                display_kl = min(raw_kl, 9)
 
                 logger.info([global_step, lr])
+                # Log RAW values so we can detect stuck training
                 logger.info(
-                    f"loss_disc={loss_disc:.3f}, loss_gen={loss_gen:.3f}, loss_fm={loss_fm:.3f},loss_mel={loss_mel:.3f}, loss_kl={loss_kl:.3f}"
+                    f"loss_disc={loss_disc:.3f}, loss_gen={loss_gen:.3f}, loss_fm={loss_fm:.3f},loss_mel={raw_mel:.3f}, loss_kl={raw_kl:.3f}"
                 )
                 scalar_dict = {
                     "loss/g/total": loss_gen_all,
@@ -600,11 +755,12 @@ def train_and_evaluate(
                     "grad_norm_d": grad_norm_d,
                     "grad_norm_g": grad_norm_g,
                 }
+                # Use clamped values for tensorboard display only
                 scalar_dict.update(
                     {
                         "loss/g/fm": loss_fm,
-                        "loss/g/mel": loss_mel,
-                        "loss/g/kl": loss_kl,
+                        "loss/g/mel": display_mel,
+                        "loss/g/kl": display_kl,
                     }
                 )
 
