@@ -1339,11 +1339,11 @@ class RVCTrainingPipeline:
         env["PYTHONPATH"] = str(voice_engine_root)
         env["PYTHONUNBUFFERED"] = "1"  # Disable output buffering so we can parse epochs in real-time
         
-        # Ensure assets/weights directory exists BEFORE training
-        # (savee() in process_ckpt.py saves to assets/weights/{name}.pth)
-        weights_dir = voice_engine_root / "assets" / "weights"
-        weights_dir.mkdir(parents=True, exist_ok=True)
-        logger.info(f"Ensured assets/weights directory exists: {weights_dir}")
+        # Ensure assets/models/<model_name> directory exists BEFORE training
+        # (savee() in process_ckpt.py saves to assets/models/<model_name>/{name}.pth)
+        models_dir = voice_engine_root / "assets" / "models" / exp_name
+        models_dir.mkdir(parents=True, exist_ok=True)
+        logger.info(f"Ensured assets/models/{exp_name} directory exists: {models_dir}")
         
         # Run training as a subprocess
         process = await asyncio.create_subprocess_exec(
@@ -1454,13 +1454,13 @@ class RVCTrainingPipeline:
             raise RuntimeError(f"Training subprocess failed with code {return_code}")
         
         # Find the final model file
-        # RVC saves models to assets/weights/{name}.pth
-        weights_dir = voice_engine_root / "assets" / "weights"
-        weights_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
+        # RVC saves models to assets/models/<model_name>/{name}.pth
+        models_dir = voice_engine_root / "assets" / "models" / exp_name
+        models_dir.mkdir(parents=True, exist_ok=True)  # Ensure directory exists
         final_model = None
         
         # Look for model with our experiment name
-        for pth_file in weights_dir.glob(f"{exp_name}*.pth"):
+        for pth_file in models_dir.glob(f"{exp_name}*.pth"):
             final_model = pth_file
             break
         
