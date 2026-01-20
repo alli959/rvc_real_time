@@ -452,9 +452,15 @@ async def cancel_training(job_id: str):
     return {"job_id": job_id, "status": "cancellation_requested"}
 
 
+class CheckpointRequest(BaseModel):
+    """Request body for checkpoint endpoint"""
+    stop_after: bool = False
+
+
 @router.post("/checkpoint/{job_id}")
 async def request_checkpoint(
     job_id: str,
+    body: Optional[CheckpointRequest] = None,
     stop_after: bool = False
 ):
     """
@@ -464,10 +470,15 @@ async def request_checkpoint(
         job_id: Training job ID
         stop_after: If True, stop training after saving checkpoint ("Save checkpoint & cancel")
                    If False, continue training after saving checkpoint
+        body: Optional JSON body with stop_after field
     
     Returns:
         Status of the checkpoint request
     """
+    # Accept stop_after from either body or query param
+    should_stop = stop_after
+    if body is not None and body.stop_after:
+        should_stop = body.stop_after
     pipeline = get_pipeline()
     
     # Check job exists and is training
@@ -482,7 +493,7 @@ async def request_checkpoint(
         )
     
     # Request checkpoint
-    if stop_after:
+    if should_stop:
         success = pipeline.request_checkpoint_and_stop(job_id)
     else:
         success = pipeline.request_checkpoint(job_id)
@@ -493,7 +504,7 @@ async def request_checkpoint(
     return {
         "job_id": job_id,
         "checkpoint_requested": True,
-        "stop_after": stop_after,
+        "stop_after": should_stop,
         "status": "checkpoint_requested",
         "message": "Checkpoint will be saved at the end of the current epoch"
     }
@@ -835,9 +846,46 @@ async def get_model_info(exp_name: str):
     g_files = sorted(model_dir.glob("G_*.pth"), key=lambda x: int(x.stem.split('_')[1]) if x.stem.split('_')[1].isdigit() else 0)
     latest_checkpoint = str(g_files[-1]) if g_files else None
     
+    # Extract actual epochs trained from train.log (checkpoint filenames use step numbers, not epochs)
+    epochs_trained = metadata.training_epochs
+    target_epochs_from_log = None
+    train_log = model_dir / "train.log"
+    if train_log.exists():
+        try:
+            # Parse train.log to find last completed epoch: "====> Epoch: X"
+            # And also extract total_epoch from the config dump
+            import re
+            with open(train_log, 'r') as f:
+                content = f.read()
+            # Find all completed epochs
+            epoch_matches = re.findall(r'====> Epoch: (\d+)', content)
+            if epoch_matches:
+                epochs_trained = max(int(e) for e in epoch_matches)
+            # Find the most recent total_epoch from config dumps in the log
+            # Format: 'total_epoch': 78 or "total_epoch": 78
+            total_epoch_matches = re.findall(r"['\"]total_epoch['\"]:\s*(\d+)", content)
+            if total_epoch_matches:
+                # Use the last one (most recent training config)
+                target_epochs_from_log = int(total_epoch_matches[-1])
+        except Exception as e:
+            logger.warning(f"Could not parse train.log for epochs: {e}")
+    
     # Check for preprocessed data
     gt_wavs = model_dir / "0_gt_wavs"
     preprocessed_count = len(list(gt_wavs.glob("*.wav"))) if gt_wavs.exists() else 0
+    
+    # Get target epochs: prefer train.log value, then metadata, then config default
+    target_epochs = 100  # default
+    if target_epochs_from_log:
+        target_epochs = target_epochs_from_log
+    elif metadata.training_config:
+        if "total_epoch" in metadata.training_config:
+            target_epochs = metadata.training_config["total_epoch"]
+        elif "train" in metadata.training_config and "epochs" in metadata.training_config["train"]:
+            # Only use train.epochs if it's a reasonable value (not the default 20000)
+            config_epochs = metadata.training_config["train"]["epochs"]
+            if config_epochs < 1000:  # Reasonable training target
+                target_epochs = config_epochs
     
     return {
         "name": exp_name,
@@ -854,7 +902,8 @@ async def get_model_info(exp_name: str):
         "training": {
             "has_model": metadata.has_model or len(final_model_files) > 0,
             "has_index": metadata.has_index or len(index_files) > 0,
-            "epochs_trained": metadata.training_epochs,
+            "epochs_trained": epochs_trained,
+            "target_epochs": target_epochs,
             "last_trained": metadata.last_trained_at,
             "latest_checkpoint": latest_checkpoint,
             "checkpoint_count": len(g_files)
