@@ -141,18 +141,43 @@ class PlanThresholds:
     fx_min_spectral_flatness: float = 0.35       # FX/reverb increases flatness
     noisy_spectral_flatness: float = 0.50        # Definitely noisy/contaminated
     
-    # === Epoch Limits ===
-    max_epochs_new_model: int = 100          # Cap for new models
-    max_epochs_tiny_data: int = 50           # Cap when data < 10 min
-    max_epochs_singing: int = 60             # Cap for singing (artifact risk)
-    max_epochs_fx_noisy: int = 50            # Cap for FX/noisy data
-    max_epochs_fine_tune: int = 40           # Cap for fine-tuning
+    # === STEP-BASED TRAINING TARGETS ===
+    # Key insight: optimizer steps matter, not epochs!
+    # Small dataset + large batch = few steps/epoch = collapsed models
+    # Formula: total_steps = (num_segments / batch_size) * epochs
+    
+    # Target step counts for different training scenarios
+    target_steps_speech: int = 1800          # Speech models: 1500-2500 steps
+    target_steps_singing: int = 3000         # Singing: 2500-5000 steps (wider pitch range)
+    target_steps_fine_tune: int = 800        # Fine-tuning: 500-1000 steps
+    
+    min_total_steps: int = 1200              # Absolute minimum for convergence
+    max_total_steps: int = 6000              # Diminishing returns beyond this
+    
+    min_steps_per_epoch: int = 10            # Below this, reduce batch size
+    
+    # === Epoch Limits (secondary to step targets) ===
+    max_epochs_new_model: int = 300          # Raised - epochs calculated from steps
+    max_epochs_tiny_data: int = 500          # Very small datasets need more epochs
+    max_epochs_singing: int = 400            # Cap for singing (artifact risk)
+    max_epochs_fx_noisy: int = 200           # Cap for FX/noisy data
+    max_epochs_fine_tune: int = 100          # Cap for fine-tuning
     
     fine_tune_epoch_mult: float = 0.4        # Fine-tune uses 40% of new epochs
     fine_tune_lr_mult: float = 0.5           # Fine-tune uses 50% learning rate
     
-    # === Batch Size Limits ===
-    max_batch_size_48k: int = 12             # Lower batch for 48k (more VRAM)
+    # === Batch Size Rules (based on dataset size) ===
+    # Small datasets need smaller batch sizes to get more steps per epoch
+    batch_size_rules: Dict[str, Any] = field(default_factory=lambda: {
+        # num_segments -> recommended batch_size
+        "tiny": {"max_segments": 100, "batch_size": 4},      # <100 segments
+        "small": {"max_segments": 300, "batch_size": 6},     # 100-300 segments
+        "medium": {"max_segments": 800, "batch_size": 8},    # 300-800 segments
+        "large": {"max_segments": 2000, "batch_size": 12},   # 800-2000 segments
+        "huge": {"max_segments": float('inf'), "batch_size": 16},  # 2000+ segments
+    })
+    
+    max_batch_size_48k: int = 10             # Lower batch for 48k (more VRAM)
     min_batch_size: int = 4                  # Absolute minimum
     
     # === Watchdog Thresholds ===
@@ -257,13 +282,27 @@ class DatasetAnalysis:
 class SuggestedConfig:
     """
     Suggested training configuration with justifications.
+    
+    STEP-BASED TRAINING (NEW):
+    - target_steps is the PRIMARY training target
+    - epochs is DERIVED from: epochs = ceil(target_steps / steps_per_epoch)
+    - steps_per_epoch = floor(num_segments / batch_size)
+    
+    This ensures small datasets get enough optimizer updates by:
+    1. Reducing batch_size for small datasets
+    2. Calculating epochs to reach target_steps
     """
     # Core params
     sample_rate: int
     f0_method: str
-    epochs: int
-    batch_size: int
+    epochs: int                       # DERIVED from target_steps
+    batch_size: int                   # Auto-calculated based on dataset size
     save_every_epoch: int
+    
+    # STEP-BASED TRAINING (PRIMARY)
+    target_steps: int                 # Target total optimizer steps
+    steps_per_epoch: int              # Calculated: num_segments / batch_size
+    estimated_total_steps: int        # steps_per_epoch * epochs
     
     # Learning rates
     learning_rate_g: float
@@ -277,6 +316,10 @@ class SuggestedConfig:
     # Pretrained paths (resolved)
     pretrain_G: str
     pretrain_D: str
+    
+    # Smoke test configuration
+    smoke_test_after_steps: int = 500  # Run smoke test after this many steps
+    smoke_test_abort_on_fail: bool = True
     
     # Justifications for each choice
     justifications: Dict[str, str] = field(default_factory=dict)
@@ -890,6 +933,9 @@ def calculate_suggested_config(
     lr_g = 1e-4
     lr_d = 1e-4
     fp16_run = False
+    target_steps = 1800
+    steps_per_epoch = 0
+    estimated_total_steps = 0
     
     # Handle locked params (RESUME/FINE_TUNE)
     if locked_params:
@@ -924,15 +970,7 @@ def calculate_suggested_config(
         sample_rate, sr_justification = _select_sample_rate(analysis, thresholds)
         justifications['sample_rate'] = sr_justification
     
-    # Apply epochs policy
-    epochs, epochs_justification = _select_epochs(
-        mode=mode,
-        analysis=analysis,
-        thresholds=thresholds,
-    )
-    justifications['epochs'] = epochs_justification
-    
-    # Apply batch size policy
+    # STEP 1: Apply batch size policy FIRST (needed for epoch calculation)
     batch_size, bs_justification = _select_batch_size(
         sample_rate=sample_rate,
         gpu_memory_gb=gpu_memory_gb,
@@ -940,6 +978,19 @@ def calculate_suggested_config(
         thresholds=thresholds,
     )
     justifications['batch_size'] = bs_justification
+    
+    # STEP 2: Apply STEP-BASED epochs policy (uses batch_size)
+    epochs, target_steps, steps_per_epoch, estimated_total_steps, epochs_justification = _select_epochs(
+        mode=mode,
+        analysis=analysis,
+        thresholds=thresholds,
+        batch_size=batch_size,
+    )
+    justifications['epochs'] = epochs_justification
+    justifications['training_steps'] = (
+        f"target={target_steps} steps, actual={estimated_total_steps} steps "
+        f"({steps_per_epoch} steps/epoch × {epochs} epochs)"
+    )
     
     # Apply learning rate policy
     if mode == TrainingPlanMode.FINE_TUNE:
@@ -990,13 +1041,28 @@ def calculate_suggested_config(
         for key, value in user_overrides.items():
             if key == 'epochs' and isinstance(value, int):
                 epochs = value
-                justifications['epochs'] = f"User override: {epochs} epochs"
+                # Recalculate estimated_total_steps with override
+                estimated_total_steps = steps_per_epoch * epochs
+                justifications['epochs'] = f"User override: {epochs} epochs ({estimated_total_steps} total steps)"
             elif key == 'batch_size' and isinstance(value, int):
                 batch_size = value
-                justifications['batch_size'] = f"User override: batch_size={batch_size}"
+                # Recalculate step metrics with new batch size
+                steps_per_epoch = max(1, analysis.num_segments // batch_size)
+                estimated_total_steps = steps_per_epoch * epochs
+                justifications['batch_size'] = f"User override: batch_size={batch_size} ({steps_per_epoch} steps/epoch)"
+            elif key == 'target_steps' and isinstance(value, int):
+                target_steps = value
+                # Recalculate epochs from target_steps
+                epochs = max(1, (target_steps + steps_per_epoch - 1) // steps_per_epoch)
+                epochs = min(epochs, thresholds.max_epochs_new_model)
+                estimated_total_steps = steps_per_epoch * epochs
+                justifications['epochs'] = f"User override target_steps={target_steps}: {epochs} epochs needed"
             elif key == 'f0_method' and isinstance(value, str):
                 f0_method = value
                 justifications['f0_method'] = f"User override: {f0_method}"
+    
+    # Determine smoke test timing
+    smoke_test_after_steps = min(500, estimated_total_steps // 3)
     
     config = SuggestedConfig(
         sample_rate=sample_rate,
@@ -1004,6 +1070,9 @@ def calculate_suggested_config(
         epochs=epochs,
         batch_size=batch_size,
         save_every_epoch=save_every,
+        target_steps=target_steps,
+        steps_per_epoch=steps_per_epoch,
+        estimated_total_steps=estimated_total_steps,
         learning_rate_g=lr_g,
         learning_rate_d=lr_d,
         version=version,
@@ -1011,6 +1080,8 @@ def calculate_suggested_config(
         fp16_run=fp16_run,
         pretrain_G=pretrain_g or "",
         pretrain_D=pretrain_d or "",
+        smoke_test_after_steps=smoke_test_after_steps,
+        smoke_test_abort_on_fail=True,
         justifications=justifications,
     )
     
@@ -1083,40 +1154,64 @@ def _select_epochs(
     mode: TrainingPlanMode,
     analysis: DatasetAnalysis,
     thresholds: PlanThresholds,
-) -> Tuple[int, str]:
-    """Select epochs based on mode and data analysis"""
-    duration = analysis.total_duration_seconds
-    quality = analysis.quality_tier
+    batch_size: int,
+) -> Tuple[int, int, int, int, str]:
+    """
+    Select epochs based on TARGET STEPS, not arbitrary epoch counts.
+    
+    STEP-BASED TRAINING (NEW):
+    - Primary target: total optimizer steps
+    - epochs = ceil(target_steps / steps_per_epoch)
+    - steps_per_epoch = floor(num_segments / batch_size)
+    
+    This ensures small datasets get enough training by calculating
+    how many epochs are needed to reach the target step count.
+    
+    Returns:
+        (epochs, target_steps, steps_per_epoch, estimated_total_steps, justification)
+    """
+    segments = analysis.num_segments
     data_type = analysis.data_type
+    quality = analysis.quality_tier
     has_fx = analysis.has_fx_contamination
     
-    # Base epochs from duration
-    if duration < 60:
-        base_epochs = 20
-    elif duration < 120:
-        base_epochs = 30
-    elif duration < 300:
-        base_epochs = 40
-    elif duration < 600:
-        base_epochs = 50
-    elif duration < 900:
-        base_epochs = 60
-    else:
-        base_epochs = 70
+    # Calculate steps_per_epoch
+    steps_per_epoch = max(1, segments // batch_size)
     
-    # Quality multiplier
+    # Select target steps based on data type
+    if mode == TrainingPlanMode.FINE_TUNE:
+        target_steps = thresholds.target_steps_fine_tune
+        base_reason = f"fine-tune: {target_steps} steps"
+    elif data_type == DataType.SINGING:
+        target_steps = thresholds.target_steps_singing
+        base_reason = f"singing: {target_steps} steps"
+    else:
+        target_steps = thresholds.target_steps_speech
+        base_reason = f"speech: {target_steps} steps"
+    
+    # Quality adjustment
     quality_mult = {
-        DataQuality.EXCELLENT: 1.3,
-        DataQuality.GOOD: 1.1,
+        DataQuality.EXCELLENT: 1.2,
+        DataQuality.GOOD: 1.0,
         DataQuality.FAIR: 0.9,
-        DataQuality.POOR: 0.7,
-        DataQuality.UNUSABLE: 0.5,
+        DataQuality.POOR: 0.8,
+        DataQuality.UNUSABLE: 0.6,
     }.get(quality, 1.0)
     
-    epochs = int(base_epochs * quality_mult)
-    reasons = [f"base {base_epochs} for {duration/60:.1f}min, ×{quality_mult} for {quality.value}"]
+    target_steps = int(target_steps * quality_mult)
     
-    # Apply caps
+    # Apply FX penalty
+    if has_fx:
+        target_steps = int(target_steps * 0.8)
+        base_reason += ", FX detected (-20%)"
+    
+    # Ensure within bounds
+    target_steps = max(thresholds.min_total_steps, min(target_steps, thresholds.max_total_steps))
+    
+    # Calculate epochs needed to reach target steps
+    epochs = max(1, (target_steps + steps_per_epoch - 1) // steps_per_epoch)  # ceiling division
+    
+    # Apply epoch caps
     caps_applied = []
     
     if mode == TrainingPlanMode.FINE_TUNE:
@@ -1124,12 +1219,6 @@ def _select_epochs(
         if epochs > cap:
             epochs = cap
             caps_applied.append(f"fine-tune cap {cap}")
-    
-    if duration < 600:  # <10 min
-        cap = thresholds.max_epochs_tiny_data
-        if epochs > cap:
-            epochs = cap
-            caps_applied.append(f"tiny data cap {cap}")
     
     if data_type == DataType.SINGING:
         cap = thresholds.max_epochs_singing
@@ -1141,19 +1230,27 @@ def _select_epochs(
         cap = thresholds.max_epochs_fx_noisy
         if epochs > cap:
             epochs = cap
-            caps_applied.append(f"FX/noisy cap {cap}")
+            caps_applied.append(f"FX cap {cap}")
     
     # Absolute max
     epochs = min(epochs, thresholds.max_epochs_new_model)
     
-    # Ensure minimum
-    epochs = max(20, epochs)
+    # Recalculate actual total steps after epoch cap
+    estimated_total_steps = steps_per_epoch * epochs
     
-    justification = f"{epochs} epochs: {'; '.join(reasons)}"
+    # Build justification
+    justification = (
+        f"{epochs} epochs: target {target_steps} steps, "
+        f"{steps_per_epoch} steps/epoch × {epochs} epochs = {estimated_total_steps} total steps "
+        f"({base_reason}, {quality.value} quality ×{quality_mult})"
+    )
     if caps_applied:
-        justification += f" (capped: {', '.join(caps_applied)})"
+        justification += f" [capped: {', '.join(caps_applied)}]"
     
-    return epochs, justification
+    if estimated_total_steps < thresholds.min_total_steps:
+        justification += f" ⚠️ WARNING: only {estimated_total_steps} steps (min {thresholds.min_total_steps})"
+    
+    return epochs, target_steps, steps_per_epoch, estimated_total_steps, justification
 
 
 def _select_batch_size(
@@ -1162,40 +1259,77 @@ def _select_batch_size(
     analysis: DatasetAnalysis,
     thresholds: PlanThresholds,
 ) -> Tuple[int, str]:
-    """Select batch size based on GPU memory and constraints"""
+    """
+    Select batch size based on dataset size and GPU memory.
     
-    # GPU-based baseline
-    if gpu_memory_gb >= 16:
-        base_batch = 16
-    elif gpu_memory_gb >= 12:
-        base_batch = 14
-    elif gpu_memory_gb >= 8:
-        base_batch = 12
-    elif gpu_memory_gb >= 6:
-        base_batch = 8
+    STEP-BASED LOGIC (NEW):
+    - Small datasets MUST use smaller batch sizes to get enough steps per epoch
+    - Formula: steps_per_epoch = num_segments / batch_size
+    - Goal: steps_per_epoch >= min_steps_per_epoch (default 10)
+    
+    Batch size rules by segment count:
+    - <100 segments: batch=4 (tiny datasets need every gradient update)
+    - 100-300 segments: batch=6 (small datasets)
+    - 300-800 segments: batch=8 (medium datasets)
+    - 800-2000 segments: batch=12 (large datasets)
+    - 2000+ segments: batch=16 (huge datasets)
+    """
+    segments = analysis.num_segments
+    reasons = []
+    
+    # STEP 1: Get batch size from dataset size rules (PRIMARY)
+    batch_rules = thresholds.batch_size_rules
+    if segments < batch_rules["tiny"]["max_segments"]:
+        dataset_batch = batch_rules["tiny"]["batch_size"]
+        dataset_tier = "tiny"
+    elif segments < batch_rules["small"]["max_segments"]:
+        dataset_batch = batch_rules["small"]["batch_size"]
+        dataset_tier = "small"
+    elif segments < batch_rules["medium"]["max_segments"]:
+        dataset_batch = batch_rules["medium"]["batch_size"]
+        dataset_tier = "medium"
+    elif segments < batch_rules["large"]["max_segments"]:
+        dataset_batch = batch_rules["large"]["batch_size"]
+        dataset_tier = "large"
     else:
-        base_batch = 4
+        dataset_batch = batch_rules["huge"]["batch_size"]
+        dataset_tier = "huge"
     
-    batch_size = base_batch
-    reasons = [f"base {base_batch} for {gpu_memory_gb:.0f}GB VRAM"]
+    reasons.append(f"batch={dataset_batch} for {dataset_tier} dataset ({segments} segments)")
     
-    # Reduce for 48k
+    # STEP 2: Apply GPU memory cap (SECONDARY)
+    if gpu_memory_gb >= 16:
+        gpu_batch = 16
+    elif gpu_memory_gb >= 12:
+        gpu_batch = 14
+    elif gpu_memory_gb >= 8:
+        gpu_batch = 12
+    elif gpu_memory_gb >= 6:
+        gpu_batch = 8
+    else:
+        gpu_batch = 4
+    
+    batch_size = min(dataset_batch, gpu_batch)
+    if batch_size < dataset_batch:
+        reasons.append(f"limited to {batch_size} by {gpu_memory_gb:.0f}GB VRAM")
+    
+    # STEP 3: Apply 48k constraint
     if sample_rate == 48000:
-        batch_size = min(batch_size, thresholds.max_batch_size_48k)
-        if batch_size < base_batch:
+        if batch_size > thresholds.max_batch_size_48k:
+            batch_size = thresholds.max_batch_size_48k
             reasons.append(f"reduced to {batch_size} for 48kHz")
     
-    # Ensure minimum batches per epoch
-    segments = analysis.num_segments
+    # STEP 4: Ensure minimum steps per epoch
     if segments > 0:
-        batches_per_epoch = segments / batch_size
-        
-        if batches_per_epoch < thresholds.min_batches_per_epoch:
-            # Reduce batch size to get more batches
-            new_batch = max(thresholds.min_batch_size, segments // thresholds.min_batches_per_epoch)
+        steps_per_epoch = segments // batch_size
+        if steps_per_epoch < thresholds.min_steps_per_epoch:
+            # Further reduce batch size to get more steps
+            new_batch = max(thresholds.min_batch_size, segments // thresholds.min_steps_per_epoch)
             if new_batch < batch_size:
+                old_steps = steps_per_epoch
                 batch_size = new_batch
-                reasons.append(f"reduced to {batch_size} for {thresholds.min_batches_per_epoch}+ batches/epoch")
+                steps_per_epoch = segments // batch_size
+                reasons.append(f"reduced to {batch_size} for {steps_per_epoch} steps/epoch (was {old_steps})")
     
     # Ensure minimum
     batch_size = max(thresholds.min_batch_size, batch_size)
@@ -1614,3 +1748,123 @@ if __name__ == "__main__":
     else:
         print("\n✅ TRAINING PLAN READY")
         sys.exit(0)
+
+
+# =============================================================================
+# HELPER FUNCTIONS FOR STEP-BASED CONFIGURATION
+# =============================================================================
+
+def calculate_step_based_config(
+    num_segments: int,
+    data_type: str = "speech",
+    gpu_memory_gb: float = 12.0,
+    thresholds: Optional[PlanThresholds] = None,
+) -> Dict[str, Any]:
+    """
+    Quick helper to calculate step-based training config from segment count.
+    
+    This is the key insight from debugging collapsed models:
+    - Optimizer STEPS matter, not epochs
+    - Small datasets need smaller batch sizes to get more steps/epoch
+    - Formula: total_steps = (num_segments / batch_size) * epochs
+    
+    Args:
+        num_segments: Number of preprocessed audio segments (~6s each)
+        data_type: "speech" or "singing" (affects target steps)
+        gpu_memory_gb: Available GPU VRAM (caps batch size)
+        thresholds: Custom thresholds (optional)
+        
+    Returns:
+        Dict with recommended batch_size, epochs, target_steps, steps_per_epoch, etc.
+    
+    Example:
+        >>> config = calculate_step_based_config(84)  # Lexi's segment count
+        >>> print(config)
+        {
+            'batch_size': 4,          # Reduced from 16 for small dataset
+            'steps_per_epoch': 21,    # 84 / 4 = 21
+            'target_steps': 1800,     # Speech target
+            'epochs': 86,             # 1800 / 21 = 86 (rounded up)
+            'estimated_total_steps': 1806,
+            'justification': '...'
+        }
+        
+        # Compare to original collapsed config:
+        # batch_size=16, epochs=55 → only 84/16 * 55 = 290 steps (COLLAPSED!)
+    """
+    if thresholds is None:
+        thresholds = DEFAULT_THRESHOLDS
+    
+    # Select batch size based on dataset size
+    batch_rules = thresholds.batch_size_rules
+    if num_segments < batch_rules["tiny"]["max_segments"]:
+        batch_size = batch_rules["tiny"]["batch_size"]
+        tier = "tiny"
+    elif num_segments < batch_rules["small"]["max_segments"]:
+        batch_size = batch_rules["small"]["batch_size"]
+        tier = "small"
+    elif num_segments < batch_rules["medium"]["max_segments"]:
+        batch_size = batch_rules["medium"]["batch_size"]
+        tier = "medium"
+    elif num_segments < batch_rules["large"]["max_segments"]:
+        batch_size = batch_rules["large"]["batch_size"]
+        tier = "large"
+    else:
+        batch_size = batch_rules["huge"]["batch_size"]
+        tier = "huge"
+    
+    # Apply GPU memory cap
+    if gpu_memory_gb >= 16:
+        max_batch = 16
+    elif gpu_memory_gb >= 12:
+        max_batch = 14
+    elif gpu_memory_gb >= 8:
+        max_batch = 12
+    elif gpu_memory_gb >= 6:
+        max_batch = 8
+    else:
+        max_batch = 4
+    
+    batch_size = min(batch_size, max_batch)
+    
+    # Calculate steps per epoch
+    steps_per_epoch = max(1, num_segments // batch_size)
+    
+    # Select target steps based on data type
+    if data_type == "singing":
+        target_steps = thresholds.target_steps_singing
+    else:
+        target_steps = thresholds.target_steps_speech
+    
+    # Calculate epochs needed
+    epochs = max(1, (target_steps + steps_per_epoch - 1) // steps_per_epoch)
+    epochs = min(epochs, thresholds.max_epochs_new_model)
+    
+    # Actual total steps
+    estimated_total_steps = steps_per_epoch * epochs
+    
+    # Build justification
+    justification = (
+        f"{tier} dataset ({num_segments} segments) → batch_size={batch_size}, "
+        f"{steps_per_epoch} steps/epoch × {epochs} epochs = {estimated_total_steps} total steps "
+        f"(target: {target_steps} for {data_type})"
+    )
+    
+    # Warning if below minimum
+    warning = None
+    if estimated_total_steps < thresholds.min_total_steps:
+        warning = (
+            f"⚠️ Only {estimated_total_steps} total steps - below minimum {thresholds.min_total_steps}! "
+            f"Consider adding more training data."
+        )
+    
+    return {
+        "batch_size": batch_size,
+        "steps_per_epoch": steps_per_epoch,
+        "target_steps": target_steps,
+        "epochs": epochs,
+        "estimated_total_steps": estimated_total_steps,
+        "dataset_tier": tier,
+        "justification": justification,
+        "warning": warning,
+    }

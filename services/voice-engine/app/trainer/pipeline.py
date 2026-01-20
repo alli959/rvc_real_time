@@ -76,7 +76,17 @@ class RVCVersion(str, Enum):
 
 @dataclass
 class TrainingConfig:
-    """Training configuration"""
+    """
+    Training configuration
+    
+    STEP-BASED TRAINING (NEW):
+    - epochs is calculated from target_steps, NOT chosen arbitrarily
+    - batch_size is auto-calculated based on dataset size
+    - Formula: epochs = ceil(target_steps / steps_per_epoch)
+    - steps_per_epoch = floor(num_segments / batch_size)
+    
+    For small datasets (<100 segments), use batch_size=4 to get more steps.
+    """
     # Experiment
     exp_name: str
     
@@ -86,11 +96,17 @@ class TrainingConfig:
     # F0 extraction
     f0_method: F0Method = F0Method.RMVPE
     
-    # Training parameters
-    epochs: int = 50  # With pretrained models, 50 is usually enough
-    batch_size: int = 16  # Increased for faster training on RTX 4070 Ti
+    # Training parameters (epochs derived from target_steps)
+    epochs: int = 50  # DERIVED from target_steps if using training plan
+    batch_size: int = 16  # AUTO-CALCULATED based on dataset size
     save_every_epoch: int = 10  # Save frequently to test early
     total_epoch: int = 50
+    
+    # STEP-BASED TRAINING TARGETS (NEW)
+    target_steps: int = 1800          # Target optimizer steps (primary metric)
+    steps_per_epoch: int = 0          # Calculated: num_segments / batch_size
+    estimated_total_steps: int = 0    # steps_per_epoch * epochs
+    smoke_test_after_steps: int = 500 # Run smoke test after N steps
     
     # GPU settings
     gpus: str = "0"
@@ -116,6 +132,10 @@ class TrainingConfig:
             "epochs": self.epochs,
             "batch_size": self.batch_size,
             "save_every_epoch": self.save_every_epoch,
+            "target_steps": self.target_steps,
+            "steps_per_epoch": self.steps_per_epoch,
+            "estimated_total_steps": self.estimated_total_steps,
+            "smoke_test_after_steps": self.smoke_test_after_steps,
             "gpus": self.gpus,
             "version": self.version.value,
             "use_pitch_guidance": self.use_pitch_guidance,
@@ -680,7 +700,10 @@ class RVCTrainingPipeline:
                 gpus=config.gpus,
                 version=config.version.value,
                 use_pitch_guidance=config.use_pitch_guidance,
-                job_id=job_id
+                job_id=job_id,
+                target_steps=config.target_steps,
+                steps_per_epoch=config.steps_per_epoch,
+                smoke_test_after_steps=config.smoke_test_after_steps
             )
             
             if self._check_cancelled(job_id):
@@ -1133,10 +1156,18 @@ class RVCTrainingPipeline:
         gpus: str,
         version: str,
         use_pitch_guidance: bool,
-        job_id: str
+        job_id: str,
+        target_steps: int = 1800,
+        steps_per_epoch: int = 0,
+        smoke_test_after_steps: int = 500
     ):
         """
         Run the REAL RVC training loop.
+        
+        STEP-BASED TRAINING:
+        - target_steps: The target number of optimizer steps
+        - steps_per_epoch: Pre-calculated steps per epoch (num_segments / batch_size)
+        - smoke_test_after_steps: When to save an early checkpoint for smoke test
         
         This creates the actual RVC model (.pth files) by calling the train.py script.
         """
@@ -1180,14 +1211,26 @@ class RVCTrainingPipeline:
             logs_exp_link.symlink_to(exp_path.resolve())
             logger.info(f"Created symlink: {logs_exp_link} -> {exp_path.resolve()}")
         
-        logger.info(f"Starting REAL RVC training for {epochs} epochs")
+        # Calculate step metrics for logging
+        estimated_total_steps = steps_per_epoch * epochs if steps_per_epoch > 0 else 0
+        
+        logger.info(f"=" * 60)
+        logger.info(f"[STEP-BASED TRAINING] Starting RVC training")
         logger.info(f"  Experiment: {exp_name}")
         logger.info(f"  Sample rate: {sample_rate}")
         logger.info(f"  Batch size: {batch_size}")
+        logger.info(f"  Epochs: {epochs}")
+        logger.info(f"  ── STEP METRICS ──")
+        logger.info(f"  Target steps: {target_steps}")
+        logger.info(f"  Steps/epoch: {steps_per_epoch}")
+        logger.info(f"  Estimated total steps: {estimated_total_steps}")
+        logger.info(f"  Smoke test at step: {smoke_test_after_steps}")
+        logger.info(f"  ── MODEL CONFIG ──")
         logger.info(f"  Pretrain G: {pretrain_G}")
         logger.info(f"  Pretrain D: {pretrain_D}")
         logger.info(f"  Version: {version}")
         logger.info(f"  F0 (pitch guidance): {use_pitch_guidance}")
+        logger.info(f"=" * 60)
         
         # Build the training command
         # The train.py script expects these arguments (see infer/lib/train/utils.py get_hparams())

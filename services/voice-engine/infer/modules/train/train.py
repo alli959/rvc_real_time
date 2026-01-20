@@ -332,7 +332,38 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
     else:
         num_workers = 8  # Large dataset: full parallel prefetching
     
+    # === STEP-BASED TRAINING METRICS (CRITICAL FOR CONVERGENCE) ===
+    # This is logged at training start to help diagnose collapsed models.
+    # Key insight: optimizer STEPS matter, not epochs!
+    # Formula: total_steps = (num_segments / batch_size) * epochs
+    batch_size = hps.train.batch_size
+    total_epochs = hps.train.epochs
+    steps_per_epoch = max(1, dataset_size // batch_size)
+    estimated_total_steps = steps_per_epoch * total_epochs
+    
     if rank == 0:
+        logger.info("=" * 60)
+        logger.info("[STEP-BASED TRAINING METRICS]")
+        logger.info(f"  Dataset size:       {dataset_size} segments")
+        logger.info(f"  Batch size:         {batch_size}")
+        logger.info(f"  Steps per epoch:    {steps_per_epoch}")
+        logger.info(f"  Total epochs:       {total_epochs}")
+        logger.info(f"  ESTIMATED TOTAL STEPS: {estimated_total_steps}")
+        logger.info("")
+        
+        # Warn if steps are too low (likely to collapse)
+        MIN_RECOMMENDED_STEPS = 1500
+        if estimated_total_steps < MIN_RECOMMENDED_STEPS:
+            logger.warning("⚠️  WARNING: Only %d total steps planned!", estimated_total_steps)
+            logger.warning("⚠️  Minimum recommended: %d steps", MIN_RECOMMENDED_STEPS)
+            logger.warning("⚠️  Consider: reducing batch_size or increasing epochs")
+            logger.warning("⚠️  Formula: batch_size=%d, dataset=%d → try batch_size=4", batch_size, dataset_size)
+            suggested_epochs = max(1, (MIN_RECOMMENDED_STEPS + steps_per_epoch - 1) // steps_per_epoch)
+            logger.warning("⚠️  Or increase epochs to at least %d", suggested_epochs)
+        else:
+            logger.info("✓ Step count looks healthy for convergence")
+        
+        logger.info("=" * 60)
         logger.info(f"Dataset size: {dataset_size} samples, using num_workers={num_workers}")
     
     if hps.if_f0 == 1:
@@ -791,6 +822,41 @@ def train_and_evaluate(
                     scalars=scalar_dict,
                 )
         global_step += 1
+        
+        # === STEP-BASED EARLY SMOKE TEST ===
+        # Save an early checkpoint and run smoke test at specific step milestones
+        # This catches collapsed training BEFORE spending hours on a bad job
+        SMOKE_TEST_STEP = getattr(hps, 'smoke_test_after_steps', 500)
+        
+        if rank == 0 and global_step == SMOKE_TEST_STEP:
+            logger.info("=" * 60)
+            logger.info(f"[SMOKE TEST] Reached step {global_step} - saving early checkpoint for quality check")
+            
+            # Save early checkpoint for smoke test
+            early_ckpt_path = os.path.join(hps.model_dir, f"G_{global_step}.pth")
+            utils.save_checkpoint(
+                net_g, optim_g, hps.train.learning_rate, epoch, early_ckpt_path
+            )
+            utils.save_checkpoint(
+                net_d, optim_d, hps.train.learning_rate, epoch,
+                os.path.join(hps.model_dir, f"D_{global_step}.pth")
+            )
+            
+            logger.info(f"[SMOKE TEST] Early checkpoint saved: {early_ckpt_path}")
+            logger.info(f"[SMOKE TEST] To run smoke test manually:")
+            logger.info(f"[SMOKE TEST]   python -m app.trainer.training_watchdogs smoke_test {hps.model_dir}")
+            logger.info("=" * 60)
+            
+            # Write marker file for external smoke test runner
+            smoke_marker = Path(hps.model_dir) / ".smoke_test_ready.json"
+            with open(smoke_marker, 'w') as f:
+                json.dump({
+                    'step': global_step,
+                    'epoch': epoch,
+                    'checkpoint': early_ckpt_path,
+                    'timestamp': datetime.now().isoformat(),
+                }, f, indent=2)
+                
     # /Run steps
 
     if epoch % hps.save_every_epoch == 0 and rank == 0:
