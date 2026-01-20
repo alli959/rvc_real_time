@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import { useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/dashboard-layout';
 import { jobsApi, trainerApi } from '@/lib/api';
 import {
@@ -55,6 +56,7 @@ const isTrainingJob = (type: string | undefined): boolean => {
 };
 
 export default function JobsPage() {
+  const router = useRouter();
   const [filter, setFilter] = useState<JobFilter>('all');
   const [page, setPage] = useState(1);
   const [checkpointPending, setCheckpointPending] = useState<Record<string, boolean>>({});
@@ -219,10 +221,19 @@ export default function JobsPage() {
           </div>
         ) : (
           <div className="space-y-3">
-            {jobs.map((job: any) => (
+            {jobs.map((job: any) => {
+              const canNavigateToTraining = isTrainingJob(job.type) && job.status === 'processing' && job.voice_model?.slug;
+              
+              return (
               <div
                 key={job.id}
-                className="bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors"
+                className={`bg-gray-900 border border-gray-800 rounded-lg p-4 hover:border-gray-700 transition-colors ${canNavigateToTraining ? 'cursor-pointer' : ''}`}
+                onClick={() => {
+                  if (canNavigateToTraining) {
+                    // Navigate to train page with the model pre-selected
+                    router.push(`/dashboard/train?model=${job.voice_model.slug}&resume=true`);
+                  }
+                }}
               >
                 <div className="flex items-start justify-between gap-4">
                   <div className="flex items-start gap-4 flex-1 min-w-0">
@@ -233,6 +244,12 @@ export default function JobsPage() {
                           {job.voice_model?.name || 'Unknown Model'}
                         </h3>
                         {getStatusBadge(job.status)}
+                        {canNavigateToTraining && (
+                          <span className="text-xs text-primary-400 flex items-center gap-1">
+                            <ChevronRight className="h-3 w-3" />
+                            View Progress
+                          </span>
+                        )}
                       </div>
                       
                       <p className="text-sm text-gray-500 mb-2">
@@ -335,7 +352,10 @@ export default function JobsPage() {
                   <div className="flex items-center gap-2">
                     {job.status === 'completed' && (
                       <button
-                        onClick={() => handleDownload(job.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDownload(job.id);
+                        }}
                         className="p-2 text-gray-400 hover:text-green-400 hover:bg-gray-800 rounded-lg transition-colors"
                         title="Download"
                       >
@@ -345,7 +365,10 @@ export default function JobsPage() {
                     {/* Checkpoint & Stop button for training jobs */}
                     {job.status === 'processing' && isTrainingJob(job.type) && (
                       <button
-                        onClick={() => handleCheckpointAndStop(job.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCheckpointAndStop(job.id);
+                        }}
                         disabled={checkpointPending[job.id]}
                         className="flex items-center gap-1 px-3 py-1.5 text-xs text-amber-400 hover:text-amber-300 bg-amber-500/10 hover:bg-amber-500/20 rounded-lg transition-colors disabled:opacity-50"
                         title="Save checkpoint and stop training"
@@ -365,7 +388,10 @@ export default function JobsPage() {
                     )}
                     {(job.status === 'pending' || job.status === 'queued' || job.status === 'processing') && (
                       <button
-                        onClick={() => handleCancelJob(job.id)}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleCancelJob(job.id);
+                        }}
                         className="p-2 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg transition-colors"
                         title="Cancel"
                       >
@@ -375,7 +401,8 @@ export default function JobsPage() {
                   </div>
                 </div>
               </div>
-            ))}
+            );
+            })}
           </div>
         )}
 
