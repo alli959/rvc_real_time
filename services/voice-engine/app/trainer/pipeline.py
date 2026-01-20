@@ -26,7 +26,7 @@ from dataclasses import dataclass, field, asdict
 from datetime import datetime
 from enum import Enum
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional, Union
+from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import threading
 from concurrent.futures import ThreadPoolExecutor
 
@@ -857,9 +857,6 @@ class RVCTrainingPipeline:
                 # Load audio
                 audio, sr = librosa.load(str(audio_file), sr=None, mono=True)
                 
-                # Slice audio using simple silence detection
-                from app.analyzer.phoneme_analyzer import AudioQualityAnalyzer
-                
                 # Resample to target SR
                 if sr != sample_rate:
                     audio_target = librosa.resample(audio, orig_sr=sr, target_sr=sample_rate)
@@ -869,14 +866,24 @@ class RVCTrainingPipeline:
                 # Resample to 16k for feature extraction
                 audio_16k = librosa.resample(audio, orig_sr=sr, target_sr=16000)
                 
-                # Simple slicing by silence (basic implementation)
-                # In production, use the Slicer class from RVC
-                chunks = self._simple_slice(audio_target, sample_rate)
-                chunks_16k = self._simple_slice(audio_16k, 16000)
+                # CRITICAL FIX: Slice ONCE on target-SR audio and get TIME BOUNDARIES
+                # Then apply the SAME boundaries to both versions to ensure alignment
+                # This prevents HuBERT features from being misaligned with GT waveforms
+                chunk_boundaries = self._get_slice_boundaries(audio_target, sample_rate)
                 
-                # Save chunks
+                # Save chunks using consistent boundaries
                 base_name = audio_file.stem
-                for i, (chunk, chunk_16k) in enumerate(zip(chunks, chunks_16k)):
+                saved_count = 0
+                for i, (start_sec, end_sec) in enumerate(chunk_boundaries):
+                    # Apply same time boundaries to both sample rates
+                    start_target = int(start_sec * sample_rate)
+                    end_target = int(end_sec * sample_rate)
+                    start_16k = int(start_sec * 16000)
+                    end_16k = int(end_sec * 16000)
+                    
+                    chunk = audio_target[start_target:end_target]
+                    chunk_16k = audio_16k[start_16k:end_16k]
+                    
                     if len(chunk) < sample_rate * 0.5:  # Skip < 0.5s
                         continue
                     
@@ -887,8 +894,9 @@ class RVCTrainingPipeline:
                     # Save 16k version
                     wav16k_path = wav16k_dir / f"{base_name}_{i}.wav"
                     sf.write(str(wav16k_path), chunk_16k, 16000)
+                    saved_count += 1
                 
-                return len(chunks)
+                return saved_count
                 
             except Exception as e:
                 logger.warning(f"Error processing {audio_file}: {e}")
@@ -901,6 +909,75 @@ class RVCTrainingPipeline:
         total_chunks = sum(results)
         logger.info(f"Created {total_chunks} audio chunks")
     
+    def _get_slice_boundaries(
+        self,
+        audio: np.ndarray,
+        sr: int,
+        min_length: float = 1.5,  # seconds
+        silence_threshold: float = 0.01
+    ) -> List[Tuple[float, float]]:
+        """
+        Get time boundaries for audio slicing by silence detection.
+        
+        Returns list of (start_seconds, end_seconds) tuples.
+        These boundaries can be applied to audio at ANY sample rate
+        to ensure perfect alignment between different versions.
+        
+        CRITICAL: This ensures 0_gt_wavs and 1_16k_wavs chunks represent
+        the EXACT same time regions, preventing HuBERT feature misalignment.
+        """
+        # Frame-based silence detection
+        frame_length = int(sr * 0.025)  # 25ms frames
+        hop_length = int(sr * 0.010)    # 10ms hops
+        
+        boundaries = []
+        chunk_start_sample = 0
+        in_chunk = False
+        silence_count = 0
+        silence_threshold_frames = int(0.3 * sr / hop_length)  # 300ms silence
+        
+        for i in range(0, len(audio) - frame_length, hop_length):
+            frame = audio[i:i + frame_length]
+            rms = np.sqrt(np.mean(frame ** 2))
+            
+            if rms >= silence_threshold:
+                # Sound detected
+                if not in_chunk:
+                    chunk_start_sample = i
+                    in_chunk = True
+                silence_count = 0
+            else:
+                # Silence detected
+                silence_count += 1
+                if in_chunk and silence_count > silence_threshold_frames:
+                    # End of chunk - calculate duration
+                    chunk_end_sample = i
+                    duration_samples = chunk_end_sample - chunk_start_sample
+                    
+                    if duration_samples >= sr * min_length:
+                        start_sec = chunk_start_sample / sr
+                        end_sec = chunk_end_sample / sr
+                        boundaries.append((start_sec, end_sec))
+                    
+                    in_chunk = False
+                    silence_count = 0
+        
+        # Handle remaining audio
+        if in_chunk:
+            chunk_end_sample = len(audio)
+            duration_samples = chunk_end_sample - chunk_start_sample
+            
+            if duration_samples >= sr * min_length:
+                start_sec = chunk_start_sample / sr
+                end_sec = chunk_end_sample / sr
+                boundaries.append((start_sec, end_sec))
+        
+        # If no chunks found, return whole audio as one chunk
+        if not boundaries and len(audio) >= sr * min_length:
+            boundaries = [(0.0, len(audio) / sr)]
+        
+        return boundaries
+    
     def _simple_slice(
         self, 
         audio: np.ndarray, 
@@ -908,7 +985,7 @@ class RVCTrainingPipeline:
         min_length: float = 1.5,  # seconds
         silence_threshold: float = 0.01
     ) -> List[np.ndarray]:
-        """Simple audio slicing by silence"""
+        """Simple audio slicing by silence (DEPRECATED - use _get_slice_boundaries)"""
         # Frame-based silence detection
         frame_length = int(sr * 0.025)
         hop_length = int(sr * 0.010)
