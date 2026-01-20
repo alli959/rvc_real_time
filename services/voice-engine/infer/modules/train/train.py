@@ -854,7 +854,7 @@ def train_and_evaluate(
                     'step': global_step,
                     'epoch': epoch,
                     'checkpoint': early_ckpt_path,
-                    'timestamp': datetime.now().isoformat(),
+                    'timestamp': datetime.datetime.now().isoformat(),
                 }, f, indent=2)
                 
     # /Run steps
