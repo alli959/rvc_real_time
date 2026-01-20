@@ -91,7 +91,7 @@ export interface VoiceModel {
   // Metadata
   engine: string;
   visibility: "public" | "private" | "unlisted";
-  status: "pending" | "processing" | "ready" | "failed";
+  status: "pending" | "processing" | "ready" | "failed" | "training";
   tags: string[] | null;
   metadata: Record<string, any> | null;
 
@@ -147,6 +147,101 @@ export interface PaginatedResponse<T> {
   per_page: number;
   current_page: number;
   last_page: number;
+}
+
+// =============================================================================
+// Training Runs Types (Git-like training workflow)
+// =============================================================================
+
+export type TrainingRunMode = 'new' | 'resume' | 'continue' | 'branch';
+export type TrainingRunStatus = 'pending' | 'preparing' | 'training' | 'paused' | 'completed' | 'failed' | 'cancelled';
+export type DatasetVersionStatus = 'pending' | 'processing' | 'ready' | 'failed';
+
+export interface TrainingRun {
+  id: number;
+  uuid: string;
+  run_number: string;
+  mode: TrainingRunMode;
+  mode_display: string;
+  status: TrainingRunStatus;
+  target_epochs: number;
+  completed_epochs: number;
+  start_epoch: number;
+  epochs_trained: number;
+  best_loss: number | null;
+  duration: string;
+  duration_seconds?: number;
+  can_resume: boolean;
+  is_active: boolean;
+  config_snapshot?: TrainingConfig;
+  error_message?: string;
+  metadata?: Record<string, any>;
+  parent_run?: { id: number; run_number: string };
+  parent_checkpoint?: TrainingCheckpoint;
+  dataset_version?: DatasetVersion;
+  started_at: string | null;
+  completed_at: string | null;
+  created_at: string;
+}
+
+export interface TrainingCheckpoint {
+  id: number;
+  uuid: string;
+  epoch: number;
+  global_step: number;
+  checkpoint_name: string;
+  short_name: string;
+  loss_g: number | null;
+  loss_d?: number | null;
+  loss_mel?: number | null;
+  loss_kl?: number | null;
+  loss_fm?: number | null;
+  primary_loss: number | null;
+  total_loss?: number | null;
+  flags: string[];
+  is_milestone: boolean;
+  is_best: boolean;
+  is_final: boolean;
+  is_archived: boolean;
+  file_size: string;
+  notes: string | null;
+  generator_path?: string;
+  discriminator_path?: string;
+  checkpoint_directory?: string;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface DatasetVersion {
+  id: number;
+  uuid: string;
+  version_number: number;
+  audio_count: number;
+  duration: string;
+  total_duration_seconds?: number;
+  segment_count: number;
+  sample_rate: number;
+  status: DatasetVersionStatus;
+  is_latest: boolean;
+  manifest_hash?: string;
+  preprocessing_config?: Record<string, any>;
+  metadata?: Record<string, any>;
+  created_at: string;
+}
+
+export interface TrainingConfig {
+  epochs?: number;
+  sample_rate?: 32000 | 40000 | 48000;
+  f0_method?: 'rmvpe' | 'pm' | 'harvest';
+  batch_size?: number;
+  save_every_epoch?: number;
+  [key: string]: any;
+}
+
+export interface TrainingTreeNode {
+  run: TrainingRun;
+  checkpoints: TrainingCheckpoint[];
+  children: TrainingTreeNode[];
 }
 
 // =============================================================================
@@ -1177,6 +1272,7 @@ export const trainerApi = {
       has_model: boolean;
       has_index: boolean;
       epochs_trained: number;
+      target_epochs: number;
       last_trained: string | null;
       latest_checkpoint: string | null;
     };
@@ -1239,6 +1335,214 @@ export const trainerApi = {
     message?: string;
   }> => {
     const response = await api.get(`/trainer/checkpoint/${jobId}/status`);
+    return response.data;
+  },
+};
+
+// =============================================================================
+// Training Runs API (Git-like training workflow)
+// =============================================================================
+
+export const trainingRunsApi = {
+  /**
+   * List all training runs for a voice model
+   */
+  listRuns: async (modelSlug: string): Promise<{
+    runs: TrainingRun[];
+    active_run: TrainingRun | null;
+  }> => {
+    const response = await api.get(`/training-runs/model/${modelSlug}`);
+    return response.data;
+  },
+
+  /**
+   * Get the training history tree for a model
+   */
+  getTree: async (modelSlug: string): Promise<{
+    tree: TrainingTreeNode[];
+    total_runs: number;
+    total_epochs: number;
+    total_time: string;
+  }> => {
+    const response = await api.get(`/training-runs/model/${modelSlug}/tree`);
+    return response.data;
+  },
+
+  /**
+   * Get runs that can be resumed
+   */
+  getResumable: async (modelSlug: string): Promise<{
+    resumable_runs: Array<{
+      run: TrainingRun;
+      latest_checkpoint: TrainingCheckpoint | null;
+    }>;
+  }> => {
+    const response = await api.get(`/training-runs/model/${modelSlug}/resumable`);
+    return response.data;
+  },
+
+  /**
+   * Get dataset versions for a model
+   */
+  getDatasetVersions: async (modelSlug: string): Promise<{
+    versions: DatasetVersion[];
+    current_version: DatasetVersion | null;
+  }> => {
+    const response = await api.get(`/training-runs/model/${modelSlug}/dataset-versions`);
+    return response.data;
+  },
+
+  /**
+   * Get details of a specific training run
+   */
+  getRun: async (runId: number): Promise<{
+    run: TrainingRun;
+    checkpoints: TrainingCheckpoint[];
+    ancestry: TrainingRun[];
+  }> => {
+    const response = await api.get(`/training-runs/${runId}`);
+    return response.data;
+  },
+
+  /**
+   * Get current status of a training run
+   */
+  getRunStatus: async (runId: number): Promise<{
+    run: TrainingRun;
+    engine_status?: Record<string, any>;
+  }> => {
+    const response = await api.get(`/training-runs/${runId}/status`);
+    return response.data;
+  },
+
+  /**
+   * Start a new training run
+   */
+  startNewRun: async (modelSlug: string, config?: TrainingConfig): Promise<{
+    success: boolean;
+    run: TrainingRun;
+  }> => {
+    const response = await api.post(`/training-runs/model/${modelSlug}/start`, { config });
+    return response.data;
+  },
+
+  /**
+   * Resume training from the latest checkpoint
+   */
+  resumeRun: async (runId: number, additionalEpochs?: number): Promise<{
+    success: boolean;
+    run: TrainingRun;
+    resumed_from: TrainingRun;
+  }> => {
+    const response = await api.post(`/training-runs/${runId}/resume`, {
+      additional_epochs: additionalEpochs,
+    });
+    return response.data;
+  },
+
+  /**
+   * Continue training from a specific checkpoint
+   */
+  continueFromCheckpoint: async (checkpointId: number, config: TrainingConfig): Promise<{
+    success: boolean;
+    run: TrainingRun;
+    continued_from_checkpoint: TrainingCheckpoint;
+  }> => {
+    const response = await api.post(`/training-runs/checkpoints/${checkpointId}/continue`, { config });
+    return response.data;
+  },
+
+  /**
+   * Branch from a checkpoint with a new dataset
+   */
+  branchFromCheckpoint: async (
+    checkpointId: number, 
+    datasetVersionId: number, 
+    config: TrainingConfig
+  ): Promise<{
+    success: boolean;
+    run: TrainingRun;
+    branched_from_checkpoint: TrainingCheckpoint;
+    new_dataset: DatasetVersion;
+  }> => {
+    const response = await api.post(`/training-runs/checkpoints/${checkpointId}/branch`, {
+      dataset_version_id: datasetVersionId,
+      config,
+    });
+    return response.data;
+  },
+
+  /**
+   * Cancel an active training run
+   */
+  cancelRun: async (runId: number): Promise<{
+    success: boolean;
+    run: TrainingRun;
+  }> => {
+    const response = await api.post(`/training-runs/${runId}/cancel`);
+    return response.data;
+  },
+
+  /**
+   * Get checkpoints for a training run
+   */
+  getCheckpoints: async (runId: number, options?: {
+    activeOnly?: boolean;
+    milestonesOnly?: boolean;
+  }): Promise<{
+    checkpoints: TrainingCheckpoint[];
+    best_checkpoint: TrainingCheckpoint | null;
+  }> => {
+    const response = await api.get(`/training-runs/${runId}/checkpoints`, {
+      params: {
+        active_only: options?.activeOnly,
+        milestones_only: options?.milestonesOnly,
+      },
+    });
+    return response.data;
+  },
+
+  /**
+   * Get a specific checkpoint
+   */
+  getCheckpoint: async (checkpointId: number): Promise<{
+    checkpoint: TrainingCheckpoint;
+    run: TrainingRun;
+  }> => {
+    const response = await api.get(`/training-runs/checkpoints/${checkpointId}`);
+    return response.data;
+  },
+
+  /**
+   * Archive a checkpoint
+   */
+  archiveCheckpoint: async (checkpointId: number): Promise<{
+    success: boolean;
+    checkpoint: TrainingCheckpoint;
+  }> => {
+    const response = await api.post(`/training-runs/checkpoints/${checkpointId}/archive`);
+    return response.data;
+  },
+
+  /**
+   * Add a note to a checkpoint
+   */
+  addCheckpointNote: async (checkpointId: number, notes: string): Promise<{
+    success: boolean;
+    checkpoint: TrainingCheckpoint;
+  }> => {
+    const response = await api.post(`/training-runs/checkpoints/${checkpointId}/note`, { notes });
+    return response.data;
+  },
+
+  /**
+   * Get a specific dataset version
+   */
+  getDatasetVersion: async (versionId: number): Promise<{
+    version: DatasetVersion;
+    runs_using_this: number;
+  }> => {
+    const response = await api.get(`/training-runs/dataset-versions/${versionId}`);
     return response.data;
   },
 };
