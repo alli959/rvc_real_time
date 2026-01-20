@@ -892,8 +892,9 @@ class AssetManager:
             from app.trainer_api import get_pipeline
             pipeline = get_pipeline()
             if pipeline:
-                jobs = pipeline.get_active_jobs() if hasattr(pipeline, 'get_active_jobs') else []
-                if jobs:
+                # Use get_active_training() - the correct method name
+                active = pipeline.get_active_training() if hasattr(pipeline, 'get_active_training') else None
+                if active and active.status in ['training', 'preprocessing', 'starting']:
                     self._loaded_models["training_pipeline"] = True
                     return AssetStatus.RUNNING
             return AssetStatus.STOPPED
