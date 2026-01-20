@@ -6,7 +6,7 @@ from collections import OrderedDict
 import torch
 
 
-def savee(ckpt, sr, if_f0, name, epoch, version, hps):
+def savee(ckpt, sr, if_f0, name, epoch, version, hps, output_dir=None):
     try:
         opt = OrderedDict()
         opt["weight"] = {}
@@ -38,8 +38,16 @@ def savee(ckpt, sr, if_f0, name, epoch, version, hps):
         opt["sr"] = sr
         opt["f0"] = if_f0
         opt["version"] = version
-        torch.save(opt, "assets/weights/%s.pth" % name)
-        return "Success."
+        
+        # Save to output_dir if specified, otherwise use assets/models/<model_name>/
+        if output_dir is None:
+            # Extract base model name (remove _e##_s### suffix if present)
+            base_name = name.split("_e")[0] if "_e" in name else name
+            output_dir = os.path.join("assets", "models", base_name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "%s.pth" % name)
+        torch.save(opt, output_path)
+        return output_path
     except:
         return traceback.format_exc()
 
@@ -181,8 +189,13 @@ def extract_small_model(path, name, sr, if_f0, info, version):
         opt["version"] = version
         opt["sr"] = sr
         opt["f0"] = int(if_f0)
-        torch.save(opt, "assets/weights/%s.pth" % name)
-        return "Success."
+        
+        # Save to assets/models/<model_name>/
+        output_dir = os.path.join("assets", "models", name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "%s.pth" % name)
+        torch.save(opt, output_path)
+        return output_path
     except:
         return traceback.format_exc()
 
@@ -193,8 +206,13 @@ def change_info(path, info, name):
         ckpt["info"] = info
         if name == "":
             name = os.path.basename(path)
-        torch.save(ckpt, "assets/weights/%s" % name)
-        return "Success."
+        # Save to assets/models/<model_name>/
+        base_name = name.replace(".pth", "").split("_e")[0] if "_e" in name else name.replace(".pth", "")
+        output_dir = os.path.join("assets", "models", base_name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, name if name.endswith(".pth") else "%s.pth" % name)
+        torch.save(ckpt, output_path)
+        return output_path
     except:
         return traceback.format_exc()
 
@@ -251,7 +269,12 @@ def merge(path1, path2, alpha1, sr, f0, info, name, version):
         opt["f0"] = 1 if f0 in (1, "1", True, "是", "yes", "Yes") else 0
         opt["version"] = version
         opt["info"] = info
-        torch.save(opt, "assets/weights/%s.pth" % name)
-        return "Success."
+        
+        # Save to assets/models/<model_name>/
+        output_dir = os.path.join("assets", "models", name)
+        os.makedirs(output_dir, exist_ok=True)
+        output_path = os.path.join(output_dir, "%s.pth" % name)
+        torch.save(opt, output_path)
+        return output_path
     except:
         return traceback.format_exc()
