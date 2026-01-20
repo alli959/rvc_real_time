@@ -30,7 +30,7 @@
   </div>
 
   <!-- Service Tabs -->
-  <div class="bg-gray-900 border border-gray-800 rounded-lg">
+  <div class="bg-gray-900 border border-gray-800 rounded-lg relative z-30">
     <div class="border-b border-gray-800">
       <nav class="flex overflow-x-auto" aria-label="Tabs">
         <template x-for="service in services" :key="service.name">
@@ -39,7 +39,8 @@
             :class="selectedService === service.name 
               ? 'border-primary-500 text-primary-400 bg-gray-800' 
               : 'border-transparent text-gray-400 hover:text-gray-300 hover:border-gray-700'"
-            class="flex-shrink-0 px-6 py-4 border-b-2 font-medium text-sm transition-colors flex items-center gap-2"
+            class="flex-shrink-0 px-6 py-4 border-b-2 font-medium text-sm transition-colors flex items-center gap-2 cursor-pointer select-none"
+            type="button"
           >
             <span class="w-2 h-2 rounded-full" :class="service.status === 'running' ? 'bg-green-500' : 'bg-gray-500'"></span>
             <span x-text="service.name"></span>
@@ -53,21 +54,20 @@
       <!-- Log Source Selector -->
       <div class="flex flex-wrap gap-2" x-show="currentSources.length > 0">
         <template x-for="source in currentSources" :key="source.id">
-          <button 
-            @click="selectSource(source.id)"
+          <div 
+            @click="!source.disabled && selectSource(source.id)"
             :class="[
               selectedSource === source.id 
                 ? 'bg-primary-600 text-white border-primary-500' 
                 : source.disabled 
                   ? 'bg-gray-900 text-gray-500 border-gray-800 cursor-not-allowed opacity-60'
-                  : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700'
+                  : 'bg-gray-800 text-gray-300 border-gray-700 hover:bg-gray-700 cursor-pointer'
             ]"
-            class="px-3 py-1.5 text-sm rounded-lg border transition-colors flex items-center gap-2"
-            :disabled="source.disabled"
+            class="px-3 py-1.5 text-sm rounded-lg border transition-colors flex items-center gap-2 select-none"
           >
             <span class="w-1.5 h-1.5 rounded-full" :class="source.disabled ? 'bg-gray-500' : (source.type === 'stdout' ? 'bg-blue-400' : 'bg-green-400')"></span>
             <span x-text="source.name"></span>
-          </button>
+          </div>
         </template>
       </div>
 
