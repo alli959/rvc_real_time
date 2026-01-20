@@ -378,40 +378,66 @@ def calculate_optimal_config(
     epochs = max(20, min(epochs, 100))
     
     # ==========================================================================
-    # BATCH SIZE CALCULATION
+    # STEP-BASED BATCH SIZE CALCULATION
     # ==========================================================================
+    # The key insight: training quality depends on TOTAL OPTIMIZER STEPS, not epochs.
+    # Minimum ~1500 steps needed to avoid model collapse (output = noise).
+    # 
+    # With small datasets, large batch sizes = too few steps per epoch = collapse.
+    # Example: 84 segments / batch=16 = 5 steps/epoch × 55 epochs = 275 steps (BAD!)
+    #          84 segments / batch=4  = 21 steps/epoch × 143 epochs = 3003 steps (GOOD!)
     
-    # Batch size based on GPU memory and data volume
-    if gpu_memory_gb >= 12:
-        base_batch = 16
-    elif gpu_memory_gb >= 8:
-        base_batch = 12
-    elif gpu_memory_gb >= 6:
-        base_batch = 8
-    else:
-        base_batch = 4
+    # Target steps based on training type
+    TARGET_STEPS_SPEECH = 1800    # Minimum steps for speech voice model
+    TARGET_STEPS_SINGING = 3000   # More steps for singing (broader range)
+    MIN_TOTAL_STEPS = 1200        # Absolute minimum to avoid collapse
     
-    # Adjust batch size based on data volume
-    # Smaller datasets benefit from smaller batches for more updates
-    if chunks < 50:
-        batch_size = max(4, base_batch // 2)
-    elif chunks < 100:
-        batch_size = max(6, int(base_batch * 0.75))
+    # Batch size rules based on dataset size (segments)
+    # Smaller datasets need smaller batches for more optimizer updates
+    if chunks < 100:
+        batch_size = 4      # Tiny dataset: maximize steps
+    elif chunks < 300:
+        batch_size = 6      # Small dataset
+    elif chunks < 800:
+        batch_size = 8      # Medium dataset
+    elif chunks < 2000:
+        batch_size = 12     # Large dataset
     else:
-        batch_size = base_batch
+        batch_size = 16     # Huge dataset: can use larger batches
+    
+    # Calculate steps per epoch with chosen batch size
+    steps_per_epoch = max(1, chunks // batch_size)
+    
+    # Now recalculate epochs to achieve target steps
+    target_steps = TARGET_STEPS_SPEECH  # Use speech target (can be parameterized later)
+    required_epochs = max(20, math.ceil(target_steps / steps_per_epoch))
+    
+    # Apply the quality/mode multipliers to required epochs
+    final_epochs = int(required_epochs * quality_mult * source_mult * mode_mult)
+    
+    # Ensure we have enough total steps
+    estimated_total_steps = final_epochs * steps_per_epoch
+    if estimated_total_steps < MIN_TOTAL_STEPS:
+        # Need more epochs to meet minimum steps
+        final_epochs = max(final_epochs, math.ceil(MIN_TOTAL_STEPS / steps_per_epoch))
+    
+    # Cap at reasonable maximum
+    epochs = max(20, min(final_epochs, 300))
+    
+    # Recalculate for logging
+    estimated_total_steps = epochs * steps_per_epoch
+    
+    # Log step-based calculation
+    logger.info(f"Step-based config: {chunks} segments / batch={batch_size} = {steps_per_epoch} steps/epoch × {epochs} epochs = {estimated_total_steps} total steps")
     
     # ==========================================================================
     # SAVE FREQUENCY
     # ==========================================================================
     
-    # Save checkpoints frequently for resume capability
-    # Every 10-20 epochs gives good granularity without too many files
-    if epochs <= 30:
-        save_every = 10
-    elif epochs <= 50:
-        save_every = 15
-    else:
-        save_every = 20
+    # Save checkpoints at step-based intervals
+    # Target ~6-8 checkpoints during training
+    target_checkpoints = 6
+    save_every = max(10, epochs // target_checkpoints)
     
     # ==========================================================================
     # LEARNING RATE
@@ -453,7 +479,7 @@ def calculate_optimal_config(
     # ==========================================================================
     
     summary_parts = [
-        f"Training {epochs} epochs",
+        f"Training {epochs} epochs ({estimated_total_steps} steps)",
         f"with batch size {batch_size}",
         f"for {duration/60:.1f} minutes of {quality.value} quality audio"
     ]
@@ -462,6 +488,9 @@ def calculate_optimal_config(
         summary_parts.insert(0, "Fine-tuning mode:")
     
     config_summary = " ".join(summary_parts)
+    
+    # Add step-based training info
+    recommendations.insert(0, f"Step-based training: {estimated_total_steps} optimizer steps (target: {target_steps})")
     
     # Add duration-specific recommendations
     if duration >= 600:  # 10+ minutes
