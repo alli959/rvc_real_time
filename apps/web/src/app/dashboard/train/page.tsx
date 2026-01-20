@@ -7,12 +7,13 @@ import {
   Mic2, Upload, FileAudio, Check, X, ChevronLeft, ChevronRight,
   Loader2, AlertCircle, RotateCcw, Square, FolderUp, Wand2,
   Volume2, Waves, Target, Sparkles, Play, Plus, Music, Zap,
-  Activity, ChevronDown, ChevronUp
+  Activity, ChevronDown, ChevronUp, GitBranch, History
 } from 'lucide-react';
 import { trainerApi, voiceModelsApi, VoiceModel } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { DashboardLayout } from '@/components/dashboard-layout';
 import { CreateEmptyModelForm } from '@/components/create-empty-model-form';
+import { TrainingRunsHistory } from '@/components/training-runs-history';
 
 type Step = 'select-model' | 'select-language' | 'training-areas' | 'recording' | 'start-training' | 'training-progress';
 
@@ -367,20 +368,32 @@ function TrainPageContent() {
     return [];
   }, [expandedArea, promptsData, categoryStatus, selectedModel, selectedLanguage]);
   
-  // Auto-select model from URL
+  // Get resume flag from URL
+  const resumeTraining = searchParams.get('resume') === 'true';
+  
+  // Auto-select model from URL and optionally resume training view
   useEffect(() => {
     if (modelIdFromUrl && myModels.length > 0) {
       const modelId = parseInt(modelIdFromUrl);
-      // Only auto-select if not already selected or if selected model ID differs
-      if (!selectedModel || selectedModel.id !== modelId) {
-        const model = myModels.find((m: VoiceModel) => m.id === modelId);
-        if (model) {
-          setSelectedModel(model);
+      // Try to find by ID first, then by slug
+      let model = myModels.find((m: VoiceModel) => m.id === modelId);
+      if (!model) {
+        model = myModels.find((m: VoiceModel) => m.slug === modelIdFromUrl);
+      }
+      
+      // Only auto-select if not already selected
+      if (model && (!selectedModel || selectedModel.id !== model.id)) {
+        setSelectedModel(model);
+        
+        // If resuming training and model is training, go directly to progress view
+        if (resumeTraining && model.status === 'training') {
+          setStep('training-progress');
+        } else {
           setStep('select-language');
         }
       }
     }
-  }, [modelIdFromUrl, myModels]);
+  }, [modelIdFromUrl, myModels, resumeTraining]);
   
   // Handle model creation success
   const handleModelCreated = (model: VoiceModel) => {
@@ -1412,7 +1425,7 @@ function TrainPageContent() {
                   </div>
                   <p className="text-sm text-gray-400 mb-3">
                     {modelTrainingInfo.training.epochs_trained > 0 
-                      ? `Training was stopped at ~${modelTrainingInfo.training.epochs_trained} epochs. You can continue from this checkpoint.`
+                      ? `Training was stopped at epoch ${modelTrainingInfo.training.epochs_trained}. You can continue from this checkpoint.`
                       : 'A checkpoint exists from a previous training session. You can continue from where you left off.'}
                   </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -1421,7 +1434,7 @@ function TrainPageContent() {
                       <div className="text-xs text-gray-500">Epochs Completed</div>
                     </div>
                     <div className="p-2 bg-gray-800/50 rounded">
-                      <div className="text-lg font-bold text-orange-400">{100 - (modelTrainingInfo.training.epochs_trained || 0)}</div>
+                      <div className="text-lg font-bold text-orange-400">{(modelTrainingInfo.training.target_epochs || 100) - (modelTrainingInfo.training.epochs_trained || 0)}</div>
                       <div className="text-xs text-gray-500">Epochs Remaining</div>
                     </div>
                   </div>
@@ -1518,6 +1531,21 @@ function TrainPageContent() {
                   Need at least 10 recordings or 2 minutes of audio to start training. Currently have {modelRecordings.total_recordings} recordings ({Math.round(modelRecordings.total_duration_seconds)} sec).
                 </p>
               )}
+
+              {/* Training History Section */}
+              {selectedModel?.slug && (
+                <div className="max-w-4xl mx-auto mt-8 pt-6 border-t border-gray-700">
+                  <TrainingRunsHistory 
+                    modelSlug={selectedModel.slug}
+                    legacyTrainingInfo={modelTrainingInfo}
+                    onStartTraining={(mode, options) => {
+                      // When resuming/continuing from history, go to progress view
+                      setStep('training-progress');
+                      startTraining();
+                    }}
+                  />
+                </div>
+              )}
             </div>
           )}
 
@@ -1575,7 +1603,7 @@ function TrainPageContent() {
                     <span className="font-medium text-blue-300">Checkpoint Saved</span>
                   </div>
                   <p className="text-sm text-gray-400 mb-3">
-                    Training progress was saved at ~{modelTrainingInfo.training.epochs_trained || 0} epochs. 
+                    Training progress was saved at epoch {modelTrainingInfo.training.epochs_trained || 0}. 
                     You can continue from this checkpoint to complete training.
                   </p>
                   <div className="grid grid-cols-2 gap-3 text-sm">
@@ -1584,7 +1612,7 @@ function TrainPageContent() {
                       <div className="text-xs text-gray-500">Epochs Completed</div>
                     </div>
                     <div className="p-2 bg-gray-800/50 rounded">
-                      <div className="text-lg font-bold text-orange-400">{100 - (modelTrainingInfo.training.epochs_trained || 0)}</div>
+                      <div className="text-lg font-bold text-orange-400">{(modelTrainingInfo.training.target_epochs || 100) - (modelTrainingInfo.training.epochs_trained || 0)}</div>
                       <div className="text-xs text-gray-500">Epochs Remaining</div>
                     </div>
                   </div>

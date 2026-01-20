@@ -650,9 +650,12 @@ function MyModelCard({
   getVisibilityIcon: (v: string) => React.ReactNode;
   getVisibilityStyle: (v: string) => string;
 }) {
+  const isTraining = model.status === 'training';
+  const router = useRouter();
+  
   return (
     <div
-      className={`bg-gray-900 border rounded-xl overflow-hidden transition-all group ${isSelected ? 'ring-2 ring-primary-500 border-primary-500/50 bg-primary-500/10' : 'border-gray-800 hover:border-gray-700'}`}
+      className={`bg-gray-900 border rounded-xl overflow-hidden transition-all group ${isSelected ? 'ring-2 ring-primary-500 border-primary-500/50 bg-primary-500/10' : 'border-gray-800 hover:border-gray-700'} ${isTraining ? 'ring-2 ring-amber-500/50 border-amber-500/30' : ''}`}
     >
       <div 
         onClick={onSelect}
@@ -672,9 +675,17 @@ function MyModelCard({
           {getVisibilityIcon(model.visibility)}
           <span>{model.visibility.charAt(0).toUpperCase() + model.visibility.slice(1)}</span>
         </div>
-        {model.status === 'ready' && (
+        {/* Status indicator */}
+        {isTraining ? (
+          <div className="absolute bottom-3 left-3 text-xs px-2 py-1 bg-amber-500/20 text-amber-400 rounded flex items-center gap-1">
+            <Loader2 className="h-3 w-3 animate-spin" />
+            Training...
+          </div>
+        ) : model.status === 'ready' ? (
           <div className="absolute bottom-3 left-3 text-xs px-2 py-1 bg-green-500/20 text-green-400 rounded">Ready</div>
-        )}
+        ) : model.status === 'failed' ? (
+          <div className="absolute bottom-3 left-3 text-xs px-2 py-1 bg-red-500/20 text-red-400 rounded">Failed</div>
+        ) : null}
       </div>
       <div className="p-4">
         <div className="flex items-start justify-between gap-2 mb-2">
@@ -686,17 +697,18 @@ function MyModelCard({
           </h3>
           <div className="flex items-center gap-1 flex-shrink-0">
             <button 
-              onClick={(e) => { e.stopPropagation(); onEdit(); }} 
-              className="p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg" 
-              title="Edit"
+              onClick={(e) => { e.stopPropagation(); if (!isTraining) onEdit(); }} 
+              disabled={isTraining}
+              className={`p-1.5 text-gray-400 hover:text-white hover:bg-gray-800 rounded-lg ${isTraining ? 'opacity-50 cursor-not-allowed' : ''}`}
+              title={isTraining ? 'Cannot edit while training' : 'Edit'}
             >
               <Pencil className="h-4 w-4" />
             </button>
             <button
-              onClick={(e) => { e.stopPropagation(); onDelete(); }}
-              disabled={deletingId === model.id}
-              className="p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg disabled:opacity-50"
-              title="Delete"
+              onClick={(e) => { e.stopPropagation(); if (!isTraining) onDelete(); }}
+              disabled={deletingId === model.id || isTraining}
+              className={`p-1.5 text-gray-400 hover:text-red-400 hover:bg-gray-800 rounded-lg disabled:opacity-50 ${isTraining ? 'cursor-not-allowed' : ''}`}
+              title={isTraining ? 'Cannot delete while training' : 'Delete'}
             >
               {deletingId === model.id ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
@@ -729,16 +741,29 @@ function MyModelCard({
               }}
             />
           </div>
-          {/* Add Recordings Link */}
+          {/* Training Progress or Add Recordings Link */}
           <div className="pt-2">
-            <Link
-              href={`/dashboard/train?model=${model.id}`}
-              onClick={(e) => e.stopPropagation()}
-              className="flex items-center justify-center gap-2 w-full py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
-            >
-              <Mic2 className="h-4 w-4" />
-              Add Recordings
-            </Link>
+            {isTraining ? (
+              <button
+                onClick={(e) => {
+                  e.stopPropagation();
+                  router.push(`/dashboard/train?model=${model.slug || model.id}&resume=true`);
+                }}
+                className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-sm text-amber-400 hover:text-amber-300 transition-colors"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" />
+                View Training Progress
+              </button>
+            ) : (
+              <Link
+                href={`/dashboard/train?model=${model.id}`}
+                onClick={(e) => e.stopPropagation()}
+                className="flex items-center justify-center gap-2 w-full py-2 bg-gray-800 hover:bg-gray-700 rounded-lg text-sm text-gray-300 hover:text-white transition-colors"
+              >
+                <Mic2 className="h-4 w-4" />
+                Add Recordings
+              </Link>
+            )}
           </div>
         </div>
       </div>
