@@ -337,7 +337,8 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
     # Key insight: optimizer STEPS matter, not epochs!
     # Formula: total_steps = (num_segments / batch_size) * epochs
     batch_size = hps.train.batch_size
-    total_epochs = hps.train.epochs
+    # Use total_epoch from command line (-te), not config.json
+    total_epochs = hps.total_epoch
     steps_per_epoch = max(1, dataset_size // batch_size)
     estimated_total_steps = steps_per_epoch * total_epochs
     

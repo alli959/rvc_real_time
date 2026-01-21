@@ -253,10 +253,12 @@ class WatchdogHooks:
         elif final_pth.exists():
             test_model = str(final_pth)
         else:
-            # Use checkpoint - need to extract first or test directly
-            # For now, skip if no extracted model
-            logger.warning(f"No inference model found at epoch {epoch}, skipping smoke test")
-            return None
+            # Extract model from checkpoint on-the-fly for smoke test
+            logger.info(f"No inference model found, extracting from checkpoint: {checkpoint_path}")
+            test_model = self._extract_model_for_smoke_test(checkpoint_path, exp_name)
+            if test_model is None:
+                logger.warning(f"Failed to extract model at epoch {epoch}, skipping smoke test")
+                return None
         
         logger.info(f"Running smoke test on {test_model}")
         result = self.manager.run_smoke_test(checkpoint_path=test_model)
@@ -269,6 +271,86 @@ class WatchdogHooks:
                 logger.error("Requesting training abort")
         
         return result
+    
+    def _extract_model_for_smoke_test(self, checkpoint_path: Path, exp_name: str) -> Optional[str]:
+        """
+        Extract a lightweight inference model from a checkpoint for smoke testing.
+        
+        This allows smoke testing even when no extracted model exists yet.
+        """
+        import torch
+        from collections import OrderedDict
+        
+        try:
+            exp_dir = checkpoint_path.parent
+            
+            # Load config to determine sr/version
+            config_path = exp_dir / "config.json"
+            sr = "48k"
+            version = "v2"
+            
+            if config_path.exists():
+                with open(config_path, 'r') as f:
+                    cfg = json.load(f)
+                    sr_val = cfg.get('sample_rate', 48000)
+                    sr = f"{sr_val // 1000}k" if sr_val >= 1000 else "48k"
+                    version = cfg.get('version', 'v2')
+            
+            # Load checkpoint
+            ckpt = torch.load(str(checkpoint_path), map_location="cpu", weights_only=False)
+            if "model" in ckpt:
+                ckpt = ckpt["model"]
+            
+            # Extract weights (remove enc_q)
+            opt = OrderedDict()
+            opt["weight"] = {}
+            for key in ckpt.keys():
+                if "enc_q" in key:
+                    continue
+                opt["weight"][key] = ckpt[key].half()
+            
+            # Set config based on sr/version
+            if sr == "48k" and version == "v2":
+                opt["config"] = [
+                    1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
+                    [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                    [12, 10, 2, 2], 512, [24, 20, 4, 4], 109, 256, 48000
+                ]
+            elif sr == "48k" and version == "v1":
+                opt["config"] = [
+                    1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
+                    [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                    [10, 6, 2, 2, 2], 512, [16, 16, 4, 4, 4], 109, 256, 48000
+                ]
+            elif sr == "40k":
+                opt["config"] = [
+                    1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
+                    [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                    [10, 10, 2, 2], 512, [16, 16, 4, 4], 109, 256, 40000
+                ]
+            else:  # 32k
+                opt["config"] = [
+                    513, 32, 192, 192, 768, 2, 6, 3, 0, "1",
+                    [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                    [10, 4, 2, 2, 2], 512, [16, 16, 4, 4, 4], 109, 256, 32000
+                ]
+            
+            sr_map = {"32k": 32000, "40k": 40000, "48k": 48000}
+            opt["sr"] = sr_map.get(sr, 48000)
+            opt["f0"] = 1
+            opt["version"] = version
+            opt["info"] = f"Smoke test extraction from {checkpoint_path.name}"
+            
+            # Save to temporary inference model
+            smoke_test_path = exp_dir / f"{exp_name}_smoke_test.pth"
+            torch.save(opt, str(smoke_test_path))
+            
+            logger.info(f"Extracted smoke test model: {smoke_test_path}")
+            return str(smoke_test_path)
+            
+        except Exception as e:
+            logger.error(f"Failed to extract model for smoke test: {e}")
+            return None
     
     def should_abort(self) -> bool:
         """Check if training should be aborted"""

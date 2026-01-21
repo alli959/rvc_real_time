@@ -182,7 +182,7 @@ class PlanThresholds:
     
     # === Watchdog Thresholds ===
     # Early training stuck detection
-    stuck_loss_check_steps: int = 30         # Check after this many steps
+    stuck_loss_check_steps: int = 10         # Check after this many steps (lowered from 30)
     stuck_loss_tolerance: float = 0.01       # Loss variance below this = stuck
     max_stuck_iterations: int = 5            # Max iterations with stuck loss
     

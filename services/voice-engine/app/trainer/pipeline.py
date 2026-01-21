@@ -354,7 +354,14 @@ class RVCTrainingPipeline:
             device: Training device (cuda:0, cpu)
         """
         self.base_dir = Path(base_dir)
-        self.assets_dir = Path(assets_dir) if assets_dir else self.base_dir.parent / "assets"
+        # If base_dir is assets/models, assets_dir should be assets/ (parent of models)
+        # Otherwise use the default parent/assets logic
+        if assets_dir:
+            self.assets_dir = Path(assets_dir)
+        elif self.base_dir.name == "models" and self.base_dir.parent.name == "assets":
+            self.assets_dir = self.base_dir.parent  # assets/models -> assets
+        else:
+            self.assets_dir = self.base_dir.parent / "assets"
         self.device = device
         
         # Create directories
