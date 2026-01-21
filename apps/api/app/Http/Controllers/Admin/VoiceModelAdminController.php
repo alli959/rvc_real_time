@@ -75,11 +75,20 @@ class VoiceModelAdminController extends Controller
         $trainer = app(TrainerService::class);
         
         // Determine model directory from model_path or slug
+        // Extract just the model name (not full path) for the voice-engine API
         $modelDir = null;
         if ($voiceModel->model_path) {
-            $modelDir = dirname($voiceModel->model_path);
-            if ($modelDir === '.' || empty($modelDir)) {
+            // Handle both full paths (/app/assets/models/lexi/lexi.pth -> lexi)
+            // and relative paths (lexi2/lexi2.pth -> lexi2)
+            $dirPath = dirname($voiceModel->model_path);
+            if ($dirPath === '.' || empty($dirPath)) {
                 $modelDir = $voiceModel->slug;
+            } elseif (str_contains($dirPath, '/')) {
+                // Full path - extract just the last directory component
+                $modelDir = basename($dirPath);
+            } else {
+                // Relative path - use as is
+                $modelDir = $dirPath;
             }
         } else {
             $modelDir = $voiceModel->slug;
