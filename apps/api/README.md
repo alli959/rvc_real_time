@@ -169,15 +169,21 @@ POST   /api/youtube/download          # Download audio
 GET    /api/youtube/info/{videoId}    # Get video info
 ```
 
-### User Models
+### Voice Models
 
 ```http
-GET    /api/models                    # List public models
-GET    /api/models/{uuid}             # Get model details
-GET    /api/models/my                 # My models (auth)
-POST   /api/models                    # Create model (auth)
-PUT    /api/models/{uuid}             # Update model (auth)
-DELETE /api/models/{uuid}             # Delete model (auth)
+GET    /api/voice-models              # List public models
+GET    /api/voice-models/{slug}       # Get model details
+GET    /api/voice-models/my           # My models (auth)
+GET    /api/voice-models/stats        # Model statistics
+POST   /api/voice-models              # Create model (auth)
+PUT    /api/voice-models/{id}         # Update model (auth)
+DELETE /api/voice-models/{id}         # Delete model (auth)
+POST   /api/voice-models/upload       # Direct file upload (auth)
+POST   /api/voice-models/{id}/image   # Upload model image (auth)
+POST   /api/voice-models/{id}/upload-urls    # Get pre-signed URLs (auth)
+POST   /api/voice-models/{id}/confirm-upload # Confirm upload (auth)
+GET    /api/voice-models/{id}/download-urls  # Get download URLs (auth)
 ```
 
 ### Jobs

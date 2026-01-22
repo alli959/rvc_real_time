@@ -99,11 +99,11 @@ paths:
                 $ref: '#/components/schemas/User'
 
   # ==========================================================================
-  # Models
+  # Voice Models
   # ==========================================================================
-  /models:
+  /voice-models:
     get:
-      tags: [Models]
+      tags: [Voice Models]
       summary: List public voice models
       parameters:
         - name: page
@@ -129,7 +129,7 @@ paths:
                 $ref: '#/components/schemas/ModelsListResponse'
     
     post:
-      tags: [Models]
+      tags: [Voice Models]
       summary: Create a new voice model
       security:
         - bearerAuth: []
@@ -147,9 +147,23 @@ paths:
               schema:
                 $ref: '#/components/schemas/ModelResponse'
 
-  /models/{id}:
+  /voice-models/my:
     get:
-      tags: [Models]
+      tags: [Voice Models]
+      summary: List user's own voice models
+      security:
+        - bearerAuth: []
+      responses:
+        '200':
+          description: User's models
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ModelsListResponse'
+
+  /voice-models/{id}:
+    get:
+      tags: [Voice Models]
       summary: Get a specific model
       parameters:
         - $ref: '#/components/parameters/ModelId'
@@ -164,7 +178,7 @@ paths:
           $ref: '#/components/responses/NotFound'
     
     put:
-      tags: [Models]
+      tags: [Voice Models]
       summary: Update a model
       security:
         - bearerAuth: []
@@ -185,7 +199,7 @@ paths:
                 $ref: '#/components/schemas/ModelResponse'
     
     delete:
-      tags: [Models]
+      tags: [Voice Models]
       summary: Delete a model
       security:
         - bearerAuth: []
@@ -195,9 +209,9 @@ paths:
         '204':
           description: Model deleted
 
-  /models/{id}/upload-urls:
+  /voice-models/{id}/upload-urls:
     post:
-      tags: [Models]
+      tags: [Voice Models]
       summary: Get pre-signed URLs for uploading model files
       security:
         - bearerAuth: []
@@ -211,9 +225,9 @@ paths:
               schema:
                 $ref: '#/components/schemas/UploadUrlsResponse'
 
-  /models/{id}/confirm-upload:
+  /voice-models/{id}/confirm-upload:
     post:
-      tags: [Models]
+      tags: [Voice Models]
       summary: Confirm model files have been uploaded
       security:
         - bearerAuth: []

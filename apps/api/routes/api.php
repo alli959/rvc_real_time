@@ -56,10 +56,6 @@ Route::prefix('voice-models')->group(function () {
     Route::get('/{slug}', [VoiceModelController::class, 'show'])->where('slug', '^(?!my$)[a-zA-Z0-9_.-]+$');
 });
 
-// Alias: /models routes point to the same controller
-Route::get('/models', [VoiceModelController::class, 'index']);
-Route::get('/models/{voiceModel}', [VoiceModelController::class, 'show'])->where('voiceModel', '^(?!my$)[a-zA-Z0-9_.-]+$');
-
 // TTS voices list (public - no auth required)
 Route::get('/tts/voices', [TTSController::class, 'getVoices']);
 
@@ -106,21 +102,6 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/{voiceModel}/replace', [ModelUploadController::class, 'replaceModel']);
         
         // Pre-signed URLs for direct S3 uploads/downloads
-        Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
-        Route::post('/{voiceModel}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
-        Route::get('/{voiceModel}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
-    });
-
-    // Alias: /models routes
-    Route::prefix('models')->group(function () {
-        Route::get('/my', [VoiceModelController::class, 'myModels']);
-        Route::post('/', [VoiceModelController::class, 'store']);
-        Route::post('/upload', [ModelUploadController::class, 'upload']);
-        Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
-        Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
-        Route::post('/{voiceModel}/image', [VoiceModelController::class, 'uploadImage']);
-        Route::post('/{voiceModel}/files', [ModelUploadController::class, 'uploadFiles']);
-        Route::post('/{voiceModel}/replace', [ModelUploadController::class, 'replaceModel']);
         Route::post('/{voiceModel}/upload-urls', [VoiceModelController::class, 'getUploadUrls']);
         Route::post('/{voiceModel}/confirm-upload', [VoiceModelController::class, 'confirmUpload']);
         Route::get('/{voiceModel}/download-urls', [VoiceModelController::class, 'getDownloadUrls']);
