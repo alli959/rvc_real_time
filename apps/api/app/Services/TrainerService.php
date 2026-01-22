@@ -208,22 +208,32 @@ class TrainerService
     // =========================================================================
 
     /**
-     * Upload training audio files
+     * Upload training audio files to the preprocessor service
+     * 
+     * NOTE: Training audio is uploaded to the PREPROCESSOR service, which manages
+     * the shared training_data volume. The preprocessor stores files at:
+     * /data/uploads/{exp_name}/ which is then processed during preprocessing.
+     * 
+     * The trainer service reads from the same /data volume after preprocessing
+     * is complete (from /data/{exp_name}/ directories).
      */
     public function uploadTrainingAudio(string $expName, array $files): ?array
     {
         try {
+            // Use preprocessor service for uploads (it manages the shared /data volume)
+            $preprocessorUrl = config('services.preprocessor.url', 'http://preprocess:8003');
+            
             $request = Http::timeout($this->timeout)
                 ->asMultipart();
 
-            // Add exp_name as a form field (required by voice-engine)
+            // Add exp_name as a form field
             $request->attach('exp_name', $expName);
             
             foreach ($files as $file) {
                 $request->attach('files', $file['content'], $file['name']);
             }
 
-            $response = $request->post("{$this->baseUrl}/upload");
+            $response = $request->post("{$preprocessorUrl}/api/v1/preprocess/upload");
 
             if ($response->successful()) {
                 Log::info('Training audio uploaded successfully', [
@@ -335,13 +345,18 @@ class TrainerService
             return;
         }
         
-        // Build the model path
-        $modelPath = "/app/assets/models/{$expName}/{$expName}.pth";
+        // Build the model path - models are stored at /models/{exp_name}/{exp_name}.pth
+        // which maps to voice-engine/assets/models/{exp_name}/{exp_name}.pth
+        // The API scans models from VOICE_MODELS_PATH which is mounted to the same directory
+        $modelPath = "{$expName}/{$expName}.pth";
         $indexPath = null;
         
         // Try to find the index file name from result
         if (isset($status['result']['index_path'])) {
-            $indexPath = $status['result']['index_path'];
+            // Convert absolute path to relative path for storage
+            $resultIndex = $status['result']['index_path'];
+            // Extract just the relative path part: {exp_name}/{exp_name}.index
+            $indexPath = "{$expName}/" . basename($resultIndex);
         }
         
         // Update the model
