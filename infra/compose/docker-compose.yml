@@ -160,8 +160,12 @@ services:
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
-      # Mount local models directory for scanning
+      # Mount local models directory for scanning (voice-engine outputs here)
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Mount Docker socket for admin panel container logs (dev parity with prod)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount container log directories for direct access (optional in dev)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     ports:
       - "8080:80"
     networks:
@@ -303,12 +307,19 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      # Paths
+      # Paths - UNIFIED with trainer service
+      # DATA_ROOT: Where preprocessing outputs go (shared with trainer)
       DATA_ROOT: /data
+      # UPLOADS_DIR: Where uploaded audio files are stored  
+      UPLOADS_DIR: /data/uploads
+      # ASSETS_ROOT: Read-only shared assets (hubert, rmvpe, etc)
       ASSETS_ROOT: /app/assets
+      # Legacy env vars for compatibility
+      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /app/assets/rmvpe
       
       # Server settings
-      PREPROCESS_PORT: 8003
+      HTTP_PORT: 8003
       
       # Device settings
       DEVICE: ${VOICE_ENGINE_DEVICE:-cpu}
@@ -317,10 +328,13 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ../../services/preprocessor:/app
-      # Shared data directory for preprocessing outputs
+      # Shared data directory for preprocessing outputs (WRITABLE)
       - training_data:/data
-      # Shared assets (HuBERT, RMVPE models)
-      - ../../services/voice-engine/assets:/app/assets:ro
+      # Shared assets - hubert, rmvpe (READ-ONLY)
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      # RVC code for RMVPE import (READ-ONLY)
+      - ../../services/voice-engine/rvc:/app/rvc:ro
     ports:
       - "8003:8003"   # HTTP API
     deploy:
@@ -354,10 +368,14 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      # Paths
+      # Paths - UNIFIED with preprocessor service
+      # DATA_ROOT: Where preprocessing outputs are (shared with preprocessor)
       DATA_ROOT: /data
+      # MODELS_ROOT: Where final trained models go (shared with voice-engine)
       MODELS_ROOT: /models
+      # RVC_ROOT: RVC training code
       RVC_ROOT: /app/rvc
+      # ASSETS_ROOT: Read-only shared assets (pretrained models, etc)
       ASSETS_ROOT: /app/assets
       
       # Service URLs
@@ -373,15 +391,17 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ../../services/trainer:/app
-      # Shared data directory (preprocessing outputs)
+      # Shared data directory - preprocessing outputs (SAME volume as preprocessor)
       - training_data:/data
-      # Output models directory (shared with voice-engine)
+      # Output models directory (shared with voice-engine for inference)
       - ../../services/voice-engine/assets/models:/models
       # RVC training code (mounted read-only from voice-engine)
       - ../../services/voice-engine/infer:/app/rvc/infer:ro
       - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
-      # Shared assets (pretrained models)
-      - ../../services/voice-engine/assets:/app/assets:ro
+      # Shared assets - pretrained models (READ-ONLY)
+      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2:ro
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
     ports:
       - "8002:8002"   # HTTP API
     deploy:

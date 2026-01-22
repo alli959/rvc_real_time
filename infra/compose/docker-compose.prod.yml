@@ -386,15 +386,24 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
+      # Paths - UNIFIED with trainer service
       DATA_ROOT: /data
+      UPLOADS_DIR: /data/uploads
       ASSETS_ROOT: /app/assets
-      PREPROCESS_PORT: 8003
+      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /app/assets/rmvpe
+      HTTP_PORT: 8003
       DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
       LOG_LEVEL: INFO
     volumes:
       - ../../services/preprocessor:/app
+      # Shared data directory for preprocessing outputs (WRITABLE)
       - training_data:/data
-      - ../../services/voice-engine/assets:/app/assets:ro
+      # Shared assets - hubert, rmvpe (READ-ONLY)
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      # RVC code for RMVPE import (READ-ONLY)
+      - ../../services/voice-engine/rvc:/app/rvc:ro
     deploy:
       resources:
         limits:
@@ -430,6 +439,7 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
+      # Paths - UNIFIED with preprocessor service
       DATA_ROOT: /data
       MODELS_ROOT: /models
       RVC_ROOT: /app/rvc
@@ -440,11 +450,17 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ../../services/trainer:/app
+      # Shared data directory - preprocessing outputs (SAME volume as preprocessor)
       - training_data:/data
+      # Output models directory (shared with voice-engine for inference)
       - ../../services/voice-engine/assets/models:/models
+      # RVC training code (mounted read-only from voice-engine)
       - ../../services/voice-engine/infer:/app/rvc/infer:ro
       - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
-      - ../../services/voice-engine/assets:/app/assets:ro
+      # Shared assets - pretrained models (READ-ONLY)
+      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2:ro
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
     deploy:
       resources:
         limits:
