@@ -115,6 +115,22 @@ class VoiceModel extends Model
     }
 
     /**
+     * Resolve the route binding for the model.
+     * Allows finding by both slug (default) and numeric ID.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        // If the value is numeric, try to find by ID first
+        if (is_numeric($value)) {
+            return $this->where('id', $value)->first() 
+                ?? $this->where('slug', $value)->first();
+        }
+        
+        // Otherwise, find by slug (or the specified field)
+        return $this->where($field ?? $this->getRouteKeyName(), $value)->first();
+    }
+
+    /**
      * Get the model filename from model_path
      */
     public function getModelFileAttribute(): ?string
