@@ -7,13 +7,16 @@ use Illuminate\Support\Facades\Log;
 use App\Models\VoiceModel;
 
 /**
- * Service for interacting with the Voice Engine Trainer API.
+ * Service for interacting with the Trainer Service API.
  * 
  * Handles:
  * - Model scanning for language readiness
  * - Gap analysis for missing phonemes
  * - Training job management
  * - Recording wizard sessions
+ * 
+ * NOTE: Training is now handled by a separate trainer service (http://trainer:8002).
+ * Preprocessing is handled by the preprocessor service (http://preprocess:8003).
  */
 class TrainerService
 {
@@ -22,11 +25,9 @@ class TrainerService
 
     public function __construct()
     {
-        // Voice engine trainer API URL (same host as voice engine, different port or path)
-        $this->baseUrl = config('services.voice_engine.trainer_url', 
-            config('services.voice_engine.url', 'http://voice-engine:8001') . '/api/v1/trainer'
-        );
-        $this->timeout = config('services.voice_engine.timeout', 120);
+        // Use the new separate trainer service URL
+        $this->baseUrl = config('services.trainer.url', 'http://trainer:8002') . '/api/v1/trainer';
+        $this->timeout = config('services.trainer.timeout', 600);
     }
 
     /**
@@ -35,7 +36,9 @@ class TrainerService
     public function isAvailable(): bool
     {
         try {
-            $response = Http::timeout(5)->get("{$this->baseUrl}/health");
+            // Health check is at the root, not under /api/v1/trainer
+            $healthUrl = config('services.trainer.url', 'http://trainer:8002') . '/health';
+            $response = Http::timeout(5)->get($healthUrl);
             return $response->successful() && ($response->json('status') === 'healthy');
         } catch (\Exception $e) {
             Log::warning('Trainer API health check failed', ['error' => $e->getMessage()]);

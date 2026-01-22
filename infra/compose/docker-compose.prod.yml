@@ -207,6 +207,10 @@ services:
       VOICE_ENGINE_URL: http://voice-engine:8001
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
       
+      # Training and preprocessing services
+      TRAINER_URL: http://trainer:8002
+      PREPROCESSOR_URL: http://preprocess:8003
+      
       # Voice models configuration - use S3 for cloud storage
       VOICE_MODELS_STORAGE: ${VOICE_MODELS_STORAGE:-local}
       VOICE_MODELS_PATH: /var/www/html/storage/models
@@ -298,7 +302,7 @@ services:
       - morphvox
 
   # ===========================================================================
-  # Python Voice Engine Service
+  # Python Voice Engine Service (Inference Only)
   # ===========================================================================
   
   voice-engine:
@@ -332,37 +336,130 @@ services:
       - ../../services/voice-engine/app:/app/app
       # Mount RVC core code for development
       - ../../services/voice-engine/rvc:/app/rvc
-      # Mount infer module for training (includes train.py and utilities)
+      # Mount infer module for inference
       - ../../services/voice-engine/infer:/app/infer
       # Mount local models directory directly (bind mount)
-      # Training outputs AND checkpoints (G_*.pth, D_*.pth) go here
       - ../../services/voice-engine/assets/models:/app/assets/models
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
-      # Mount pretrained RVC models (required for training)
+      # Mount pretrained RVC models
       - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2
       # Mount UVR5 weights for vocal separation
       - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
-      # Mount Bark TTS models (~13GB, downloaded via setup.sh or scripts/download_bark_assets.sh)
+      # Mount Bark TTS models
       - ../../services/voice-engine/assets/bark:/app/assets/bark
-      # Mount uploads directory for training audio persistence
+      # Mount uploads directory
       - ../../services/voice-engine/uploads:/app/uploads
       # Share API storage models with voice-engine for scanning
       - api_storage:/shared/api_storage:ro
     deploy:
       resources:
         limits:
-          memory: 14G  # Increased for long audio processing (UVR5 can spike to 10GB+)
-          cpus: '8'    # Allow up to 8 CPUs for parallel data loading
+          memory: 14G
+          cpus: '8'
         reservations:
-          memory: 3G   # Guaranteed memory
-          cpus: '2'    # Minimum 2 CPUs
+          memory: 3G
+          cpus: '2'
           devices:
             - driver: nvidia
               count: all
               capabilities: [gpu]
-    # Allow container to use swap when approaching memory limit
-    memswap_limit: 20G  # memory + swap = 14G + 6G swap
+    memswap_limit: 20G
+    networks:
+      - morphvox
+
+  # ===========================================================================
+  # Preprocessor Service (Audio Preprocessing + Feature Extraction)
+  # ===========================================================================
+  
+  preprocess:
+    build:
+      context: ../../services/preprocessor
+      dockerfile: Dockerfile
+    container_name: morphvox-preprocess
+    restart: unless-stopped
+    shm_size: '8gb'
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      S3_SECRET_KEY: ${MINIO_SECRET_KEY}
+      S3_BUCKET: ${AWS_BUCKET:-morphvox}
+      
+      DATA_ROOT: /data
+      ASSETS_ROOT: /app/assets
+      PREPROCESS_PORT: 8003
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
+      LOG_LEVEL: INFO
+    volumes:
+      - ../../services/preprocessor:/app
+      - training_data:/data
+      - ../../services/voice-engine/assets:/app/assets:ro
+    deploy:
+      resources:
+        limits:
+          memory: 8G
+          cpus: '4'
+        reservations:
+          memory: 2G
+          cpus: '2'
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - morphvox
+
+  # ===========================================================================
+  # Trainer Service (RVC Model Training)
+  # ===========================================================================
+  
+  trainer:
+    build:
+      context: ../../services/trainer
+      dockerfile: Dockerfile
+    container_name: morphvox-trainer
+    restart: unless-stopped
+    shm_size: '8gb'
+    depends_on:
+      - preprocess
+      - minio
+    environment:
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY}
+      S3_SECRET_KEY: ${MINIO_SECRET_KEY}
+      S3_BUCKET: ${AWS_BUCKET:-morphvox}
+      
+      DATA_ROOT: /data
+      MODELS_ROOT: /models
+      RVC_ROOT: /app/rvc
+      ASSETS_ROOT: /app/assets
+      PREPROCESSOR_URL: http://preprocess:8003
+      TRAINER_PORT: 8002
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cuda}
+      LOG_LEVEL: INFO
+    volumes:
+      - ../../services/trainer:/app
+      - training_data:/data
+      - ../../services/voice-engine/assets/models:/models
+      - ../../services/voice-engine/infer:/app/rvc/infer:ro
+      - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
+      - ../../services/voice-engine/assets:/app/assets:ro
+    deploy:
+      resources:
+        limits:
+          memory: 14G
+          cpus: '8'
+        reservations:
+          memory: 4G
+          cpus: '2'
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    memswap_limit: 20G
     networks:
       - morphvox
 
@@ -385,3 +482,4 @@ volumes:
   api_storage:
   certbot_www:
   certbot_conf:
+  training_data:
