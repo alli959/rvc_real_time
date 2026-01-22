@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # =============================================================================
-# MorphVox - Start Individual Services
+# MorphVox - Start Individual Services (Local Development without Docker)
 # =============================================================================
 # This script allows starting individual Python services for development
 # without Docker, useful for debugging and faster iteration.
@@ -17,6 +17,20 @@
 #   - CUDA-capable GPU (optional, for GPU acceleration)
 #   - Redis and MinIO running (via Docker or locally)
 #
+# NOTE: Path Configuration
+# ========================
+# - DATA_ROOT: Writable directory for preprocessing outputs + training data
+#   Default: $PROJECT_ROOT/data
+#   
+# - MODELS_ROOT: Where final trained models are saved
+#   Default: $PROJECT_ROOT/services/voice-engine/assets/models
+#
+# - ASSETS_ROOT: Shared assets (hubert, rmvpe, pretrained models)
+#   Default: $PROJECT_ROOT/services/voice-engine/assets
+#
+# The preprocessor writes to DATA_ROOT/{exp_name}/, and the trainer reads
+# from the same location after preprocessing is complete.
+#
 # =============================================================================
 
 set -e
@@ -24,6 +38,8 @@ set -e
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(dirname "$SCRIPT_DIR")"
 SERVICES_DIR="$PROJECT_ROOT/services"
+ASSETS_DIR="$SERVICES_DIR/voice-engine/assets"
+DATA_DIR="$PROJECT_ROOT/data"
 
 # Colors for output
 RED='\033[0;31m'
@@ -56,8 +72,31 @@ export S3_BUCKET=${S3_BUCKET:-morphvox}
 export LOG_LEVEL=${LOG_LEVEL:-INFO}
 export DEVICE=${DEVICE:-cuda}
 
+# Create data directory if needed
+mkdir -p "$DATA_DIR/uploads"
+
+check_assets() {
+    log_info "Checking required assets..."
+    
+    if [ ! -f "$ASSETS_DIR/hubert/hubert_base.pt" ]; then
+        log_error "HuBERT model not found at $ASSETS_DIR/hubert/hubert_base.pt"
+        log_error "Run: ./scripts/dev-up.sh --no-docker to download assets"
+        return 1
+    fi
+    
+    if [ ! -f "$ASSETS_DIR/rmvpe/rmvpe.pt" ]; then
+        log_error "RMVPE model not found at $ASSETS_DIR/rmvpe/rmvpe.pt"
+        log_error "Run: ./scripts/dev-up.sh --no-docker to download assets"
+        return 1
+    fi
+    
+    log_success "Required assets found"
+}
+
 start_voice_engine() {
     log_info "Starting Voice Engine service..."
+    check_assets || exit 1
+    
     cd "$SERVICES_DIR/voice-engine"
     
     # Check for virtual environment
@@ -71,15 +110,17 @@ start_voice_engine() {
     
     export HTTP_PORT=8001
     export WS_PORT=8765
-    export MODEL_PATH="$SERVICES_DIR/voice-engine/assets/models"
-    export HUBERT_PATH="$SERVICES_DIR/voice-engine/assets/hubert/hubert_base.pt"
-    export RMVPE_PATH="$SERVICES_DIR/voice-engine/assets/rmvpe"
+    export MODEL_PATH="$ASSETS_DIR/models"
+    export HUBERT_PATH="$ASSETS_DIR/hubert/hubert_base.pt"
+    export RMVPE_PATH="$ASSETS_DIR/rmvpe"
     
     python main.py
 }
 
 start_trainer() {
     log_info "Starting Trainer service..."
+    check_assets || exit 1
+    
     cd "$SERVICES_DIR/trainer"
     
     # Check for virtual environment
@@ -91,14 +132,15 @@ start_trainer() {
         log_warn "No virtual environment found. Using system Python."
     fi
     
+    # UNIFIED PATHS - matching Docker compose configuration
     export TRAINER_PORT=8002
-    export DATA_ROOT="$PROJECT_ROOT/data"
-    export MODELS_ROOT="$SERVICES_DIR/voice-engine/assets/models"
+    export DATA_ROOT="$DATA_DIR"
+    export MODELS_ROOT="$ASSETS_DIR/models"
     export RVC_ROOT="$SERVICES_DIR/voice-engine"
-    export ASSETS_ROOT="$SERVICES_DIR/voice-engine/assets"
+    export ASSETS_ROOT="$ASSETS_DIR"
     export PREPROCESSOR_URL="http://localhost:8003"
     
-    # Create data directory if it doesn't exist
+    # Ensure data directory exists
     mkdir -p "$DATA_ROOT"
     
     python -m uvicorn main:app --host 0.0.0.0 --port 8002 --reload
@@ -106,6 +148,8 @@ start_trainer() {
 
 start_preprocess() {
     log_info "Starting Preprocessor service..."
+    check_assets || exit 1
+    
     cd "$SERVICES_DIR/preprocessor"
     
     # Check for virtual environment
@@ -117,12 +161,19 @@ start_preprocess() {
         log_warn "No virtual environment found. Using system Python."
     fi
     
-    export PREPROCESS_PORT=8003
-    export DATA_ROOT="$PROJECT_ROOT/data"
-    export ASSETS_ROOT="$SERVICES_DIR/voice-engine/assets"
+    # UNIFIED PATHS - matching Docker compose configuration
+    export HTTP_PORT=8003
+    export DATA_ROOT="$DATA_DIR"
+    export UPLOADS_DIR="$DATA_DIR/uploads"
+    export ASSETS_ROOT="$ASSETS_DIR"
+    export HUBERT_PATH="$ASSETS_DIR/hubert/hubert_base.pt"
+    export RMVPE_PATH="$ASSETS_DIR/rmvpe"
     
-    # Create data directory if it doesn't exist
-    mkdir -p "$DATA_ROOT"
+    # Add RVC module to Python path (needed for RMVPE import)
+    export PYTHONPATH="$SERVICES_DIR/voice-engine:$PYTHONPATH"
+    
+    # Ensure directories exist
+    mkdir -p "$DATA_ROOT" "$UPLOADS_DIR"
     
     python -m uvicorn main:app --host 0.0.0.0 --port 8003 --reload
 }
