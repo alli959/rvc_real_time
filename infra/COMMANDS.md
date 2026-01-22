@@ -45,6 +45,8 @@ docker-compose -f docker-compose.prod.yml logs -f nginx
 docker-compose -f docker-compose.prod.yml logs -f api
 docker-compose -f docker-compose.prod.yml logs -f web
 docker-compose -f docker-compose.prod.yml logs -f voice-engine
+docker-compose -f docker-compose.prod.yml logs -f preprocess
+docker-compose -f docker-compose.prod.yml logs -f trainer
 docker-compose -f docker-compose.prod.yml logs -f db
 ```
 
@@ -70,6 +72,14 @@ docker-compose -f docker-compose.prod.yml up -d web
 # Voice engine changes
 docker-compose -f docker-compose.prod.yml build voice-engine --no-cache
 docker-compose -f docker-compose.prod.yml up -d voice-engine
+
+# Preprocessor changes
+docker-compose -f docker-compose.prod.yml build preprocess --no-cache
+docker-compose -f docker-compose.prod.yml up -d preprocess
+
+# Trainer changes
+docker-compose -f docker-compose.prod.yml build trainer --no-cache
+docker-compose -f docker-compose.prod.yml up -d trainer
 ```
 
 ### Rebuild ALL services
@@ -84,6 +94,8 @@ docker-compose -f docker-compose.prod.yml restart api
 docker-compose -f docker-compose.prod.yml restart web
 docker-compose -f docker-compose.prod.yml restart nginx
 docker-compose -f docker-compose.prod.yml restart voice-engine
+docker-compose -f docker-compose.prod.yml restart preprocess
+docker-compose -f docker-compose.prod.yml restart trainer
 ```
 
 ---
@@ -195,6 +207,8 @@ docker exec -it morphvox-api sh
 docker exec -it morphvox-web sh
 docker exec -it morphvox-nginx sh
 docker exec -it morphvox-voice-engine bash
+docker exec -it morphvox-preprocess bash
+docker exec -it morphvox-trainer bash
 ```
 
 ### Check container resource usage

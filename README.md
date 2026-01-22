@@ -29,7 +29,9 @@ morphvox/
 │   └── web/                    # Next.js 14 Frontend
 │
 ├── services/
-│   └── voice-engine/           # RVC Inference (original code)
+│   ├── voice-engine/           # RVC Inference (HTTP: 8001, WS: 8765)
+│   ├── preprocessor/           # Audio Preprocessing (HTTP: 8003)
+│   └── trainer/                # Model Training (HTTP: 8002)
 │
 ├── infra/
 │   └── compose/                # Docker Compose stack
@@ -168,9 +170,11 @@ python main.py --mode api
 |---------|------|-------------|
 | WebUI | 3000 | Next.js frontend |
 | API | 8080 | Laravel backend |
-| Voice Engine HTTP | 8000 | File-based API |
+| Voice Engine HTTP | 8001 | Inference API |
 | Voice Engine WS | 8765 | Real-time streaming |
-| PostgreSQL | 5432 | Database |
+| Trainer | 8002 | Training service |
+| Preprocessor | 8003 | Audio preprocessing |
+| MariaDB | 3306 | Database |
 | Redis | 6379 | Cache/Queue |
 | MinIO API | 9000 | S3 storage |
 | MinIO Console | 9001 | Storage admin |
@@ -190,7 +194,8 @@ python main.py --mode api
 - [x] S3 storage with presigned URLs
 - [x] Combined models page with tabs (Community/My Models)
 - [x] Dedicated Song Remix page
-- [ ] Model training pipeline
+- [x] Dedicated preprocessor service (audio slicing, F0, HuBERT)
+- [x] Dedicated trainer service (RVC training, index building)
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription billing
 - [ ] Model marketplace

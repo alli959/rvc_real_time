@@ -2,13 +2,15 @@
 
 Real-time voice conversion service using **RVC (Retrieval-based Voice Conversion)** models. Part of the MorphVox platform.
 
+> **Note:** This service handles inference only. For model training, see the dedicated [trainer](../trainer/) and [preprocessor](../preprocessor/) services.
+
 ## Features
 
 - 🎤 **RVC Voice Conversion** - High-quality voice cloning with WebUI-trained models
 - 🗣️ **Text-to-Speech** - Multiple backends (Bark, Edge TTS) with emotion support
 - 🎵 **Vocal Separation** - UVR5 for isolating vocals from instrumentals  
 - 🔍 **Voice Detection** - Detect number of simultaneous voices in audio
-- 🌐 **HTTP/WebSocket API** - RESTful endpoints and real-time streaming
+- 🌐 **HTTP/WebSocket API** - RESTful endpoints (8001) and real-time streaming (8765)
 - ⚡ **GPU Acceleration** - CUDA support for fast inference
 
 ---

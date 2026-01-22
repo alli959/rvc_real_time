@@ -1,11 +1,11 @@
 # Trainer Service - RVC Voice Model Training
-FROM nvidia/cuda:11.8-cudnn8-runtime-ubuntu22.04
+FROM nvidia/cuda:11.8.0-cudnn8-runtime-ubuntu22.04
 
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
 
-# Install system dependencies
+# Install system dependencies (build-essential needed for fairseq compilation)
 RUN apt-get update && apt-get install -y \
     python3.10 \
     python3.10-venv \
@@ -13,6 +13,7 @@ RUN apt-get update && apt-get install -y \
     ffmpeg \
     git \
     curl \
+    build-essential \
     && rm -rf /var/lib/apt/lists/*
 
 # Set python3.10 as default

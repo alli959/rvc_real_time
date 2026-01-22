@@ -1,5 +1,8 @@
 # RVC Voice Model Trainer - Technical Design Document
 
+> **Implementation Status:** ✅ Training functionality has been implemented and moved to dedicated services.
+> See [services/trainer/](../../../services/trainer/) and [services/preprocessor/](../../../services/preprocessor/) for the actual implementation.
+
 ## Overview
 
 The RVC Voice Model Trainer is a comprehensive feature set that enables users to create, analyze, and improve voice models with a focus on **English (en)** and **Icelandic (is)** language readiness. This document outlines the architecture, data flows, and implementation details.

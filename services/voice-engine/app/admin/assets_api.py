@@ -887,20 +887,15 @@ class AssetManager:
             return AssetStatus.UNKNOWN
     
     async def _check_training_running(self) -> AssetStatus:
-        """Check if any training job is currently running"""
-        try:
-            from app.trainer_api import get_pipeline
-            pipeline = get_pipeline()
-            if pipeline:
-                # Use get_active_training() - the correct method name
-                active = pipeline.get_active_training() if hasattr(pipeline, 'get_active_training') else None
-                if active and active.status in ['training', 'preprocessing', 'starting']:
-                    self._loaded_models["training_pipeline"] = True
-                    return AssetStatus.RUNNING
-            return AssetStatus.STOPPED
-        except Exception as e:
-            logger.debug(f"Error checking training: {e}")
-            return AssetStatus.UNKNOWN
+        """Check if any training job is currently running
+        
+        Note: Training functionality has been moved to the dedicated trainer service.
+        This method is kept for backwards compatibility but will always return STOPPED
+        since the voice-engine no longer handles training.
+        """
+        # Training has been moved to the dedicated trainer service (port 8002)
+        # This voice-engine service now handles inference only
+        return AssetStatus.STOPPED
     
     async def _check_service_running(self, asset: Asset) -> AssetStatus:
         """Check if a service container is running"""
