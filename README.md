@@ -2,11 +2,11 @@
 
 > **Note:** This project has been restructured into a full-stack platform. The original RVC real-time voice conversion code is now in `services/voice-engine/`.
 
-## � Live Demo
+## 🎯 Live Demo
 
 [https://morphvox.net](https://morphvox.net)
 
-## �🎯 Overview
+## 🎯 Overview
 
 MorphVox is a comprehensive AI voice conversion platform featuring:
 
@@ -17,6 +17,7 @@ MorphVox is a comprehensive AI voice conversion platform featuring:
 - **🗣️ Text-to-Speech** - Bark TTS (neural) + Edge TTS (50+ voices) with emotion support
 - **🎵 Audio Processing** - Voice conversion, vocal separation (UVR5), and voice swap
 - **🎶 Song Remix** - Split vocals from instrumentals and swap voices in songs
+- **🔊 Voice Training** - Train custom RVC voice models from audio samples
 - **👤 Admin Panel** - Full administration dashboard at admin.morphvox.net
 - **🔐 OAuth Login** - Google and GitHub OAuth authentication support
 
@@ -36,13 +37,31 @@ morphvox/
 ├── infra/
 │   └── compose/                # Docker Compose stack
 │
+├── scripts/
+│   ├── dev-up.sh               # Complete dev setup & start
+│   └── service-up.sh           # Start individual services
+│
 └── docs/
-    └── ARCHITECTURE.md         # Full architecture documentation
+    ├── ARCHITECTURE.md         # Full architecture documentation
+    └── DEVELOPMENT.md          # Development guide
 ```
 
 ## 🚀 Quick Start
 
-### Using Docker Compose (Recommended)
+### Using the Setup Script (Recommended)
+
+```bash
+# Complete setup: downloads assets + starts Docker services
+./scripts/dev-up.sh
+
+# Production mode
+./scripts/dev-up.sh --prod
+
+# Setup assets only (no Docker)
+./scripts/dev-up.sh --no-docker
+```
+
+### Using Docker Compose (Manual)
 
 ```bash
 # 1. Copy environment file
@@ -58,8 +77,17 @@ docker compose exec api php artisan key:generate
 
 # 4. Access the platform
 open http://localhost:3000      # WebUI
-open http://localhost:8000/api  # API
+open http://localhost:8080      # API
 open http://localhost:9001      # MinIO Console
+```
+
+### Start Individual Services
+
+```bash
+# Start specific service with its dependencies
+./scripts/service-up.sh trainer       # Trainer + preprocess + minio
+./scripts/service-up.sh voice-engine  # Voice engine + minio
+./scripts/service-up.sh infra -d      # Infrastructure only (background)
 ```
 
 ### Voice Engine Only (Original Functionality)

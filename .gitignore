@@ -147,6 +147,13 @@ apps/web/node_modules/
 apps/web/out/
 
 # ============================================
+# Training Data Directory (shared volume)
+# ============================================
+# This is where preprocessing outputs and uploads go
+# It's a shared volume between preprocessor and trainer
+data/
+
+# ============================================
 # General
 # ============================================
 
