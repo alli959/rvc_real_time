@@ -2,6 +2,23 @@
 Preprocessor Service - Configuration
 
 Environment-based configuration for the preprocessor service.
+
+IMPORTANT: Path Configuration
+=============================
+- DATA_ROOT: Writable directory for experiment outputs (preprocessing artifacts)
+  Default: /data - shared volume with trainer service
+  Contains: <exp_name>/0_gt_wavs, 1_16k_wavs, 2a_f0, 2b_f0nsf, 3_feature768
+  
+- UPLOADS_DIR: Where uploaded audio files are stored
+  Default: /data/uploads
+
+- ASSETS_ROOT: Read-only shared assets directory  
+  Default: /app/assets
+  Contains: hubert/, rmvpe/, pretrained_v2/ (from voice-engine)
+
+The preprocessor writes to DATA_ROOT, which is mounted as a shared volume
+between preprocessor and trainer services. The trainer validates and reads
+from the same DATA_ROOT.
 """
 
 import os
@@ -14,16 +31,34 @@ class Settings:
     """Application settings."""
     
     # Server settings
-    http_port: int = int(os.getenv("HTTP_PORT", "8003"))
+    http_port: int = int(os.getenv("HTTP_PORT", os.getenv("PREPROCESS_PORT", "8003")))
     log_level: str = os.getenv("LOG_LEVEL", "INFO")
     
-    # Directory paths
-    models_dir: str = os.getenv("MODELS_DIR", "/app/assets/models")
-    uploads_dir: str = os.getenv("UPLOADS_DIR", "/app/uploads")
+    # Directory paths - UNIFIED with trainer service
+    # DATA_ROOT is where preprocessing outputs go (shared with trainer)
+    data_root: str = os.getenv("DATA_ROOT", "/data")
     
-    # Asset paths
-    hubert_path: str = os.getenv("HUBERT_PATH", "/app/assets/hubert/hubert_base.pt")
-    rmvpe_path: str = os.getenv("RMVPE_PATH", "/app/assets/rmvpe")
+    # UPLOADS_DIR is where uploaded training audio is stored
+    uploads_dir: str = os.getenv("UPLOADS_DIR", os.getenv("DATA_ROOT", "/data") + "/uploads")
+    
+    # ASSETS_ROOT is for read-only shared assets (hubert, rmvpe, etc)
+    assets_root: str = os.getenv("ASSETS_ROOT", "/app/assets")
+    
+    # Legacy compatibility: models_dir now points to data_root for experiment outputs
+    # Final trained models go to models_root (handled by trainer)
+    @property
+    def models_dir(self) -> str:
+        """Experiment output directory (for preprocessing artifacts)."""
+        return self.data_root
+    
+    # Asset paths (read-only)
+    @property
+    def hubert_path(self) -> str:
+        return os.getenv("HUBERT_PATH", f"{self.assets_root}/hubert/hubert_base.pt")
+    
+    @property
+    def rmvpe_path(self) -> str:
+        return os.getenv("RMVPE_PATH", f"{self.assets_root}/rmvpe")
     
     # Processing settings
     device: str = os.getenv("DEVICE", "cuda:0")
@@ -63,9 +98,12 @@ class Settings:
     feature_dim_v2: int = 768
     
     def __post_init__(self):
-        """Ensure directories exist."""
-        Path(self.models_dir).mkdir(parents=True, exist_ok=True)
+        """Ensure writable directories exist."""
+        # Only create directories in DATA_ROOT (writable volume)
+        Path(self.data_root).mkdir(parents=True, exist_ok=True)
         Path(self.uploads_dir).mkdir(parents=True, exist_ok=True)
+        
+        # Don't try to create directories in assets_root (read-only)
 
 
 # Global settings instance

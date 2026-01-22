@@ -80,7 +80,9 @@ async def startup_event():
     """Initialize service on startup."""
     logger.info("Starting MorphVox Preprocessor Service")
     logger.info(f"HTTP Port: {settings.http_port}")
-    logger.info(f"Models Dir: {settings.models_dir}")
+    logger.info(f"Data Root: {settings.data_root}")
+    logger.info(f"Uploads Dir: {settings.uploads_dir}")
+    logger.info(f"Assets Root: {settings.assets_root}")
     logger.info(f"Device: {settings.device}")
     
     # Verify required assets exist

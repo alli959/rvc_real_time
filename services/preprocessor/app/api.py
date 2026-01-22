@@ -6,15 +6,16 @@ HTTP API endpoints for audio preprocessing.
 
 import asyncio
 import logging
+import shutil
 import traceback
 import uuid
 from pathlib import Path
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 from datetime import datetime
 from enum import Enum
 from dataclasses import dataclass, field, asdict
 
-from fastapi import APIRouter, HTTPException, BackgroundTasks
+from fastapi import APIRouter, HTTPException, BackgroundTasks, File, UploadFile, Form
 from pydantic import BaseModel, Field
 
 from .config import settings
@@ -385,3 +386,84 @@ async def cancel_job(job_id: str):
         return {"status": "cancelled", "job_id": job_id}
     
     return {"status": "already_finished", "job_id": job_id}
+
+
+# =============================================================================
+# Upload Endpoint (for training audio files)
+# =============================================================================
+
+
+class UploadResponse(BaseModel):
+    """Response from upload endpoint."""
+    success: bool
+    exp_name: str
+    files_uploaded: int
+    upload_dir: str
+    message: str
+
+
+@router.post("/upload", response_model=UploadResponse)
+async def upload_training_audio(
+    exp_name: str = Form(..., description="Experiment/model name"),
+    files: List[UploadFile] = File(..., description="Audio files for training")
+):
+    """
+    Upload training audio files.
+    
+    Files are stored at: {uploads_dir}/{exp_name}/
+    This is the input directory for preprocessing.
+    
+    Supported formats: WAV, MP3, FLAC, OGG
+    """
+    if not exp_name:
+        raise HTTPException(400, "exp_name is required")
+    
+    if not files:
+        raise HTTPException(400, "At least one file is required")
+    
+    # Create upload directory
+    upload_dir = Path(settings.uploads_dir) / exp_name
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    
+    uploaded_count = 0
+    errors = []
+    
+    # Allowed extensions
+    allowed_extensions = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
+    
+    for file in files:
+        try:
+            # Validate extension
+            ext = Path(file.filename).suffix.lower()
+            if ext not in allowed_extensions:
+                errors.append(f"Skipped {file.filename}: unsupported format {ext}")
+                continue
+            
+            # Save file
+            file_path = upload_dir / file.filename
+            with open(file_path, "wb") as f:
+                shutil.copyfileobj(file.file, f)
+            
+            uploaded_count += 1
+            logger.info(f"Uploaded: {file.filename} -> {file_path}")
+            
+        except Exception as e:
+            errors.append(f"Failed to upload {file.filename}: {str(e)}")
+            logger.error(f"Upload error for {file.filename}: {e}")
+        finally:
+            await file.close()
+    
+    if uploaded_count == 0:
+        raise HTTPException(400, f"No files uploaded. Errors: {'; '.join(errors)}")
+    
+    message = f"Uploaded {uploaded_count} files"
+    if errors:
+        message += f". Warnings: {'; '.join(errors)}"
+    
+    return UploadResponse(
+        success=True,
+        exp_name=exp_name,
+        files_uploaded=uploaded_count,
+        upload_dir=str(upload_dir),
+        message=message
+    )
