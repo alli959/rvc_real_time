@@ -91,15 +91,38 @@ check_assets() {
         voice-engine|trainer|preprocess)
             local assets_dir="$PROJECT_ROOT/services/voice-engine/assets"
             
+            # Check HuBERT model
             if [ ! -f "$assets_dir/hubert/hubert_base.pt" ]; then
                 log_error "HuBERT model not found. Run: ./scripts/dev-up.sh --no-docker"
                 return 1
             fi
             
+            # Check RMVPE model
             if [ ! -f "$assets_dir/rmvpe/rmvpe.pt" ]; then
                 log_error "RMVPE model not found. Run: ./scripts/dev-up.sh --no-docker"
                 return 1
             fi
+            ;;
+    esac
+    
+    # Trainer also needs pretrained weights
+    case "$service" in
+        trainer)
+            local assets_dir="$PROJECT_ROOT/services/voice-engine/assets"
+            
+            # Check pretrained generator (required for training)
+            if [ ! -f "$assets_dir/pretrained_v2/f0G48k.pth" ]; then
+                log_error "Pretrained generator (f0G48k.pth) not found. Run: ./scripts/dev-up.sh --no-docker"
+                return 1
+            fi
+            
+            # Check pretrained discriminator (required for training)
+            if [ ! -f "$assets_dir/pretrained_v2/f0D48k.pth" ]; then
+                log_error "Pretrained discriminator (f0D48k.pth) not found. Run: ./scripts/dev-up.sh --no-docker"
+                return 1
+            fi
+            
+            log_info "All required assets found for trainer"
             ;;
     esac
     
