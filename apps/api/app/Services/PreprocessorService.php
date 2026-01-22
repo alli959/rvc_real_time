@@ -181,14 +181,26 @@ class PreprocessorService
     public function uploadAudio(string $expName, array $files): ?array
     {
         try {
-            $request = Http::timeout($this->timeout)
-                ->asMultipart();
-
-            $request->attach('exp_name', $expName);
+            // Build multipart form data
+            // NOTE: exp_name must be sent as a form field, not a file attachment
+            // Using the multipart array format for proper Form(...) handling in FastAPI
+            $multipart = [
+                [
+                    'name' => 'exp_name',
+                    'contents' => $expName,
+                ],
+            ];
             
             foreach ($files as $file) {
-                $request->attach('files', $file['content'], $file['name']);
+                $multipart[] = [
+                    'name' => 'files',
+                    'contents' => $file['content'],
+                    'filename' => $file['name'],
+                ];
             }
+            
+            $request = Http::timeout($this->timeout)
+                ->withOptions(['multipart' => $multipart]);
 
             $response = $request->post("{$this->baseUrl}/api/v1/preprocess/upload");
 

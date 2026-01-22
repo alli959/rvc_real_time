@@ -223,15 +223,26 @@ class TrainerService
             // Use preprocessor service for uploads (it manages the shared /data volume)
             $preprocessorUrl = config('services.preprocessor.url', 'http://preprocess:8003');
             
-            $request = Http::timeout($this->timeout)
-                ->asMultipart();
-
-            // Add exp_name as a form field
-            $request->attach('exp_name', $expName);
+            // Build multipart form data
+            // NOTE: exp_name must be sent as a form field, not a file attachment
+            // Using the multipart array format for proper Form(...) handling in FastAPI
+            $multipart = [
+                [
+                    'name' => 'exp_name',
+                    'contents' => $expName,
+                ],
+            ];
             
             foreach ($files as $file) {
-                $request->attach('files', $file['content'], $file['name']);
+                $multipart[] = [
+                    'name' => 'files',
+                    'contents' => $file['content'],
+                    'filename' => $file['name'],
+                ];
             }
+            
+            $request = Http::timeout($this->timeout)
+                ->withOptions(['multipart' => $multipart]);
 
             $response = $request->post("{$preprocessorUrl}/api/v1/preprocess/upload");
 
@@ -243,6 +254,13 @@ class TrainerService
                 ]);
                 return $response->json();
             }
+            
+            // Log detailed error for debugging multipart issues
+            Log::warning('Upload response not successful', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'body' => $response->body(),
+            ]);
             
             Log::error('Training upload failed', [
                 'exp_name' => $expName,
@@ -374,17 +392,19 @@ class TrainerService
     }
 
     /**
-     * Cancel a training job
+     * Cancel/stop a training job
+     * 
+     * NOTE: Trainer API exposes /stop/{job_id}, not /cancel/{job_id}
      */
     public function cancelTraining(string $jobId): bool
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/cancel/{$jobId}");
+                ->post("{$this->baseUrl}/stop/{$jobId}");
 
             return $response->successful();
         } catch (\Exception $e) {
-            Log::error('Cancel training failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+            Log::error('Stop training failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
         }
 
         return false;
