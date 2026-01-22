@@ -383,7 +383,10 @@ class TrainingExecutor:
         epoch: Optional[int] = None
     ) -> Optional[str]:
         """
-        Extract inference model from training checkpoint.
+        Extract inference model from training checkpoint using RVC's savee().
+        
+        Uses the proper RVC process_ckpt.savee() function to ensure the output
+        model has the correct format with properly extracted weights and config.
         
         If epoch is None, extracts from the latest checkpoint.
         Returns path to extracted model or None if failed.
@@ -393,9 +396,8 @@ class TrainingExecutor:
         # Find checkpoint
         if epoch:
             g_path = exp_dir / f"G_{epoch}.pth"
-            if not g_path.exists():
-                logger.error(f"Checkpoint not found: {g_path}")
-                return None
+            d_path = exp_dir / f"D_{epoch}.pth"
+            target_epoch = epoch
         else:
             # Find latest checkpoint
             checkpoints = sorted(exp_dir.glob("G_*.pth"), key=lambda p: p.stat().st_mtime)
@@ -403,17 +405,19 @@ class TrainingExecutor:
                 logger.error(f"No checkpoints found in {exp_dir}")
                 return None
             g_path = checkpoints[-1]
+            # Extract epoch number from filename (G_123.pth -> 123)
+            target_epoch = int(g_path.stem.split("_")[1])
+            d_path = exp_dir / f"D_{target_epoch}.pth"
         
-        logger.info(f"Extracting model from checkpoint: {g_path}")
+        if not g_path.exists():
+            logger.error(f"Checkpoint not found: {g_path}")
+            return None
         
-        # Use RVC's extract script
-        extract_script = self.rvc_root / "infer" / "modules" / "vc" / "modules.py"
+        logger.info(f"Extracting model from checkpoint: {g_path} (epoch {target_epoch})")
         
-        # For now, just copy the checkpoint as the model
-        # In production, use the proper extraction logic
+        # Output directory in /models (shared volume)
         output_dir = self.models_root / exp_name
         output_dir.mkdir(parents=True, exist_ok=True)
-        output_path = output_dir / f"{exp_name}.pth"
         
         try:
             import torch
@@ -421,31 +425,105 @@ class TrainingExecutor:
             # Load checkpoint
             ckpt = torch.load(g_path, map_location="cpu")
             
-            # Extract weight dict
-            # RVC models have 'weight' key containing the actual model weights
-            if "weight" in ckpt:
-                weight = ckpt["weight"]
-            else:
-                weight = ckpt
-            
-            # Create inference model
-            model_data = {
-                "weight": weight,
-                "config": [
-                    1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
-                    [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-                    [12, 10, 2, 2], 512, [24, 20, 4, 4], 109, 256
-                ],
-                "info": f"48k{version}",
-                "sr": sample_rate,
-                "f0": 1,
-                "version": version
-            }
-            
-            torch.save(model_data, output_path)
-            logger.info(f"Extracted model to: {output_path}")
-            
-            return str(output_path)
+            # Try to use RVC's savee() for proper model extraction
+            try:
+                # Add RVC to path if not already
+                rvc_lib_path = str(self.rvc_root / "lib" / "train")
+                if rvc_lib_path not in sys.path:
+                    sys.path.insert(0, rvc_lib_path)
+                
+                from process_ckpt import savee
+                
+                # Load training config to get hps (hyperparameters)
+                config_path = exp_dir / "config.json"
+                if config_path.exists():
+                    with open(config_path) as f:
+                        config_data = json.load(f)
+                    
+                    # Convert config to a simple namespace object for hps
+                    class HParams:
+                        def __init__(self, **kwargs):
+                            for k, v in kwargs.items():
+                                if isinstance(v, dict):
+                                    setattr(self, k, HParams(**v))
+                                else:
+                                    setattr(self, k, v)
+                    
+                    hps = HParams(**config_data)
+                    
+                    # Use savee with output_dir parameter to write to /models
+                    model_name = f"{exp_name}_e{target_epoch}"
+                    if_f0 = 1  # F0 pitch guidance enabled
+                    
+                    # Get the model state dict from checkpoint
+                    model_state = ckpt.get("model", ckpt)
+                    
+                    output_path = savee(
+                        ckpt=model_state,
+                        sr=sample_rate,
+                        if_f0=if_f0,
+                        name=model_name,
+                        epoch=target_epoch,
+                        version=version,
+                        hps=hps,
+                        output_dir=str(output_dir)
+                    )
+                    
+                    if output_path and not output_path.startswith("Traceback"):
+                        logger.info(f"Extracted model using savee() to: {output_path}")
+                        return output_path
+                    else:
+                        logger.warning(f"savee() returned error, falling back: {output_path}")
+                        raise ValueError("savee() failed")
+                else:
+                    logger.warning(f"Training config not found at {config_path}, using fallback extraction")
+                    raise FileNotFoundError("config.json not found")
+                    
+            except Exception as savee_error:
+                logger.warning(f"Could not use savee(), using fallback extraction: {savee_error}")
+                
+                # Fallback: manual extraction with proper weight filtering
+                from collections import OrderedDict
+                
+                opt = OrderedDict()
+                opt["weight"] = OrderedDict()
+                
+                # Get the model weights, filtering out encoder_q (not needed for inference)
+                model_state = ckpt.get("model", ckpt)
+                for key, value in model_state.items():
+                    if "enc_q" in key:
+                        continue  # Skip encoder_q weights (training only)
+                    if hasattr(value, 'half'):
+                        opt["weight"][key] = value.half()
+                    else:
+                        opt["weight"][key] = value
+                
+                # Standard config for 48k v2 model
+                if version == "v2":
+                    opt["config"] = [
+                        1025, 32, 192, 192, 768, 2, 6, 3, 0, "1",
+                        [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                        [12, 10, 2, 2], 512, [24, 20, 4, 4], 109, 256,
+                        sample_rate
+                    ]
+                else:  # v1
+                    opt["config"] = [
+                        1025, 32, 192, 192, 256, 2, 6, 3, 0, "1",
+                        [3, 7, 11], [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
+                        [10, 10, 2, 2], 512, [16, 16, 4, 4], 109, 256,
+                        sample_rate
+                    ]
+                
+                opt["info"] = f"{target_epoch}epoch"
+                opt["sr"] = sample_rate
+                opt["f0"] = 1  # F0 pitch guidance enabled
+                opt["version"] = version
+                
+                output_path = output_dir / f"{exp_name}.pth"
+                torch.save(opt, output_path)
+                logger.info(f"Extracted model (fallback) to: {output_path}")
+                
+                return str(output_path)
             
         except Exception as e:
             logger.exception(f"Failed to extract model: {e}")
