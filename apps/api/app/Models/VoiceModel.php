@@ -147,6 +147,64 @@ class VoiceModel extends Model
     }
 
     /**
+     * Get the model path for voice-engine (absolute path inside voice-engine container)
+     */
+    public function getVoiceEngineModelPath(): ?string
+    {
+        if (!$this->model_path) {
+            return null;
+        }
+
+        $path = $this->model_path;
+
+        // If already absolute path for voice-engine, return as-is
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return $path;
+        }
+
+        // If relative path, prepend voice-engine assets path
+        if (!str_starts_with($path, '/')) {
+            return '/app/assets/models/' . ltrim($path, '/');
+        }
+
+        // Translate API container path to voice-engine path
+        if (str_starts_with($path, '/var/www/html/storage/models/')) {
+            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+        }
+
+        return $path;
+    }
+
+    /**
+     * Get the index path for voice-engine (absolute path inside voice-engine container)
+     */
+    public function getVoiceEngineIndexPath(): ?string
+    {
+        if (!$this->index_path) {
+            return null;
+        }
+
+        $path = $this->index_path;
+
+        // If already absolute path for voice-engine, return as-is
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return $path;
+        }
+
+        // If relative path, prepend voice-engine assets path
+        if (!str_starts_with($path, '/')) {
+            return '/app/assets/models/' . ltrim($path, '/');
+        }
+
+        // Translate API container path to voice-engine path
+        if (str_starts_with($path, '/var/www/html/storage/models/')) {
+            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+        }
+
+        return $path;
+    }
+
+    /**
      * Get the full URL to the model image
      */
     public function getImageUrlAttribute(): ?string

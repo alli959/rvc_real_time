@@ -14,6 +14,7 @@ import traceback
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
+from functools import wraps
 
 import numpy as np
 import torch
@@ -23,6 +24,19 @@ import soundfile as sf
 from .config import settings
 
 logger = logging.getLogger(__name__)
+
+
+# Patch torch.load to use weights_only=False for fairseq compatibility
+# PyTorch 2.6+ changed the default to weights_only=True which breaks fairseq
+_original_torch_load = torch.load
+
+@wraps(_original_torch_load)
+def _patched_torch_load(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+
+torch.load = _patched_torch_load
 
 
 @dataclass

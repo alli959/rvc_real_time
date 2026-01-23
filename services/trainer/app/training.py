@@ -130,8 +130,9 @@ class TrainingExecutor:
                     continue
             
             # Create filelist line
+            # Format: gt_wav|feature|pitch_coarse(2a_f0)|pitch_fine(2b_f0nsf)|speaker_id
             if use_pitch_guidance:
-                line = f"{gt_wav}|{feature_path}|{f0nsf_path}|{f0_path}|{speaker_id}"
+                line = f"{gt_wav}|{feature_path}|{f0_path}|{f0nsf_path}|{speaker_id}"
             else:
                 line = f"{gt_wav}|{feature_path}|{speaker_id}"
             
@@ -203,7 +204,9 @@ class TrainingExecutor:
                 "upsample_kernel_sizes": [24, 20, 4, 4],
                 "spk_embed_dim": 109,
                 "gin_channels": 256,
-                "sr": sample_rate
+                "use_spectral_norm": False
+                # Note: 'sr' is NOT included here because train.py passes it explicitly
+                # via the sr=hps.sample_rate argument when creating the model
             },
             "version": version
         }

@@ -397,13 +397,17 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ../../services/preprocessor:/app
-      # Shared data directory for preprocessing outputs (WRITABLE)
-      - training_data:/data
+      # Shared data directory for preprocessing outputs (WRITABLE) - bind mount for local access
+      - ../../services/voice-engine/data:/data
+      # Uploads directory for audio files
+      - ../../services/voice-engine/uploads:/data/uploads
       # Shared assets - hubert, rmvpe (READ-ONLY)
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
       # RVC code for RMVPE import (READ-ONLY)
       - ../../services/voice-engine/rvc:/app/rvc:ro
+      # Infer module for RMVPE jit imports (READ-ONLY)
+      - ../../services/voice-engine/infer:/app/infer:ro
     deploy:
       resources:
         limits:
@@ -450,8 +454,10 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ../../services/trainer:/app
-      # Shared data directory - preprocessing outputs (SAME volume as preprocessor)
-      - training_data:/data
+      # Shared data directory - preprocessing outputs (SAME as preprocessor) - bind mount for local access
+      - ../../services/voice-engine/data:/data
+      # Uploads directory for audio files
+      - ../../services/voice-engine/uploads:/data/uploads
       # Output models directory (shared with voice-engine for inference)
       - ../../services/voice-engine/assets/models:/models
       # RVC training code (mounted read-only from voice-engine)
@@ -496,4 +502,3 @@ volumes:
   api_storage:
   certbot_www:
   certbot_conf:
-  training_data:

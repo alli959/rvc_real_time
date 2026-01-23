@@ -223,9 +223,10 @@ class TrainerService
             // Use preprocessor service for uploads (it manages the shared /data volume)
             $preprocessorUrl = config('services.preprocessor.url', 'http://preprocess:8003');
             
-            // Build multipart form data
-            // NOTE: exp_name must be sent as a form field, not a file attachment
-            // Using the multipart array format for proper Form(...) handling in FastAPI
+            // Build multipart form data using Guzzle directly
+            // Laravel's Http::attach() sends form fields with filename disposition which FastAPI doesn't parse as Form(...)
+            $client = new \GuzzleHttp\Client(['timeout' => $this->timeout]);
+            
             $multipart = [
                 [
                     'name' => 'exp_name',
@@ -241,33 +242,33 @@ class TrainerService
                 ];
             }
             
-            $request = Http::timeout($this->timeout)
-                ->withOptions(['multipart' => $multipart]);
+            $response = $client->post("{$preprocessorUrl}/api/v1/preprocess/upload", [
+                'multipart' => $multipart,
+            ]);
 
-            $response = $request->post("{$preprocessorUrl}/api/v1/preprocess/upload");
-
-            if ($response->successful()) {
+            $body = json_decode($response->getBody()->getContents(), true);
+            
+            if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
                 Log::info('Training audio uploaded successfully', [
                     'exp_name' => $expName,
                     'files_count' => count($files),
-                    'response' => $response->json()
+                    'response' => $body
                 ]);
-                return $response->json();
+                return $body;
             }
-            
-            // Log detailed error for debugging multipart issues
-            Log::warning('Upload response not successful', [
-                'exp_name' => $expName,
-                'status' => $response->status(),
-                'body' => $response->body(),
-            ]);
             
             Log::error('Training upload failed', [
                 'exp_name' => $expName,
-                'status' => $response->status(),
-                'error' => $response->body()
+                'status' => $response->getStatusCode(),
+                'error' => $body
             ]);
 
+        } catch (\GuzzleHttp\Exception\RequestException $e) {
+            $errorBody = $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : $e->getMessage();
+            Log::error('Training upload exception', [
+                'exp_name' => $expName, 
+                'error' => $errorBody
+            ]);
         } catch (\Exception $e) {
             Log::error('Training upload exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
         }

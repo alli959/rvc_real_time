@@ -16,6 +16,7 @@ import traceback
 from pathlib import Path
 from typing import List, Tuple, Optional, Callable
 from dataclasses import dataclass
+from functools import wraps
 
 import numpy as np
 import torch
@@ -24,6 +25,19 @@ from .config import settings
 from .audio import load_audio_ffmpeg
 
 logger = logging.getLogger(__name__)
+
+
+# Patch torch.load to use weights_only=False for RMVPE model compatibility
+# PyTorch 2.6+ changed the default to weights_only=True
+_original_torch_load = torch.load
+
+@wraps(_original_torch_load)
+def _patched_torch_load(*args, **kwargs):
+    if 'weights_only' not in kwargs:
+        kwargs['weights_only'] = False
+    return _original_torch_load(*args, **kwargs)
+
+torch.load = _patched_torch_load
 
 
 @dataclass
@@ -167,8 +181,9 @@ class F0Extractor:
         """
         try:
             wav_path = Path(wav_path)
-            f0_path = self.f0_dir / (wav_path.name + ".npy")
-            f0nsf_path = self.f0nsf_dir / (wav_path.name + ".npy")
+            # Use .stem to get filename without extension for consistent naming
+            f0_path = self.f0_dir / (wav_path.stem + ".npy")
+            f0nsf_path = self.f0nsf_dir / (wav_path.stem + ".npy")
             
             # Skip if already processed
             if f0_path.exists() and f0nsf_path.exists():

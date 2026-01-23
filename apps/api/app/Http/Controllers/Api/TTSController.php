@@ -498,8 +498,8 @@ class TTSController extends Controller
                 $convertPayload = [
                     'audio' => $audioBase64,
                     'sample_rate' => $sampleRate,
-                    'model_path' => $voiceModel->model_path,
-                    'index_path' => $voiceModel->index_path,
+                    'model_path' => $voiceModel->getVoiceEngineModelPath(),
+                    'index_path' => $voiceModel->getVoiceEngineIndexPath(),
                     'f0_up_key' => $validated['f0_up_key'] ?? 0,
                     'index_rate' => $validated['index_rate'] ?? 0.75,
                 ];

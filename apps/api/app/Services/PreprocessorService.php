@@ -181,9 +181,8 @@ class PreprocessorService
     public function uploadAudio(string $expName, array $files): ?array
     {
         try {
-            // Build multipart form data
-            // NOTE: exp_name must be sent as a form field, not a file attachment
-            // Using the multipart array format for proper Form(...) handling in FastAPI
+            // Build multipart form data using Guzzle directly
+            // Laravel's Http client doesn't properly send form fields with multipart
             $multipart = [
                 [
                     'name' => 'exp_name',
@@ -199,25 +198,33 @@ class PreprocessorService
                 ];
             }
             
-            $request = Http::timeout($this->timeout)
-                ->withOptions(['multipart' => $multipart]);
+            $client = new \GuzzleHttp\Client(['timeout' => $this->timeout]);
+            $response = $client->post("{$this->baseUrl}/api/v1/preprocess/upload", [
+                'multipart' => $multipart,
+            ]);
 
-            $response = $request->post("{$this->baseUrl}/api/v1/preprocess/upload");
-
-            if ($response->successful()) {
+            $body = json_decode($response->getBody()->getContents(), true);
+            
+            if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
                 Log::info('Audio uploaded for preprocessing', [
                     'exp_name' => $expName,
                     'files_count' => count($files),
                 ]);
-                return $response->json();
+                return $body;
             }
 
             Log::error('Audio upload failed', [
                 'exp_name' => $expName,
-                'status' => $response->status(),
-                'error' => $response->body(),
+                'status' => $response->getStatusCode(),
+                'error' => $body,
             ]);
 
+        } catch (\GuzzleHttp\Exception\RequestException $e) {
+            $errorBody = $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : $e->getMessage();
+            Log::error('Audio upload exception', [
+                'exp_name' => $expName,
+                'error' => $errorBody,
+            ]);
         } catch (\Exception $e) {
             Log::error('Audio upload exception', [
                 'exp_name' => $expName,

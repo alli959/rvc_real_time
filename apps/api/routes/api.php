@@ -63,6 +63,24 @@ Route::get('/tts/voices', [TTSController::class, 'getVoices']);
 Route::get('/tts/capabilities', [TTSController::class, 'getCapabilities']);
 
 // ==========================================================================
+// Public Trainer Routes (read-only, no auth required)
+// ==========================================================================
+Route::prefix('trainer')->group(function () {
+    // Health & info
+    Route::get('/health', [TrainerController::class, 'health']);
+    Route::get('/languages', [TrainerController::class, 'languages']);
+    
+    // Phonemes & prompts (reference data)
+    Route::get('/phonemes/{language}', [TrainerController::class, 'phonemes']);
+    Route::get('/prompts/{language}', [TrainerController::class, 'prompts']);
+    
+    // Model training data (read-only, for displaying in UI)
+    Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
+    Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
+    Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
+});
+
+// ==========================================================================
 // Protected Routes (Authentication Required)
 // ==========================================================================
 
@@ -173,16 +191,10 @@ Route::middleware('auth:sanctum')->group(function () {
     });
 
     // ------------------------------------------------------------------
-    // Trainer / Model Scanning
+    // Trainer / Model Scanning (Auth Required)
     // ------------------------------------------------------------------
     Route::prefix('trainer')->group(function () {
-        // Health & info
-        Route::get('/health', [TrainerController::class, 'health']);
-        Route::get('/languages', [TrainerController::class, 'languages']);
-        
-        // Phonemes & prompts
-        Route::get('/phonemes/{language}', [TrainerController::class, 'phonemes']);
-        Route::get('/prompts/{language}', [TrainerController::class, 'prompts']);
+        // Phoneme prompts generation (write operation)
         Route::post('/prompts/{language}/for-phonemes', [TrainerController::class, 'promptsForPhonemes']);
         
         // Model scanning
@@ -217,10 +229,7 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::post('/wizard/sessions/{sessionId}/complete', [TrainerController::class, 'completeWizardSession']);
         Route::delete('/wizard/sessions/{sessionId}', [TrainerController::class, 'cancelWizardSession']);
 
-        // Model training data (cumulative recordings from all sessions)
-        Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
-        Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
-        Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
+        // Model training (write operation)
         Route::post('/model/{modelSlug}/train', [TrainerController::class, 'trainModel']);
     });
 
