@@ -204,6 +204,12 @@ services:
       
       VOICE_ENGINE_URL: http://voice-engine:8001
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
+      # Trainer API is on voice-engine (not the standalone trainer service)
+      VOICE_ENGINE_TRAINER_URL: http://voice-engine:8001/api/v1/trainer
+      
+      # Standalone trainer and preprocessor services (for training jobs)
+      TRAINER_URL: http://trainer:8002
+      PREPROCESSOR_URL: http://preprocess:8003
       
       # Training and preprocessing services
       TRAINER_URL: http://trainer:8002
@@ -231,6 +237,8 @@ services:
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
       # Mount API source code for development
       - ../../apps/api/app:/var/www/html/app
+      # Mount API config for development
+      - ../../apps/api/config:/var/www/html/config
       # Mount logs directory for local access
       - ../../apps/api/storage/logs:/var/www/html/storage/logs
       # Mount Docker socket for accessing container logs (admin panel)
