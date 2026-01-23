@@ -7,6 +7,8 @@ MorphVox is a comprehensive AI voice conversion platform built as a full-stack m
 - **Web Application** - Modern Next.js frontend for model browsing and voice processing
 - **Laravel API Backend** - User auth, model registry, job processing, and admin panel
 - **Voice Engine** - Python service for RVC inference, TTS, and audio processing
+- **Preprocessor Service** - Audio preprocessing for model training (F0, HuBERT features)
+- **Trainer Service** - RVC model training orchestration
 - **Infrastructure** - Docker Compose stack with MariaDB, Redis, MinIO S3 storage
 
 ## Implemented Features
@@ -29,6 +31,15 @@ MorphVox is a comprehensive AI voice conversion platform built as a full-stack m
 - ✅ Multi-voice TTS support
 - ✅ Voice detection (count speakers in audio)
 - ✅ YouTube audio download integration
+
+### Training Features
+- ✅ Dedicated preprocessor service for audio preparation
+- ✅ F0 extraction (RMVPE method)
+- ✅ HuBERT feature extraction
+- ✅ Audio slicing with silence detection
+- ✅ Dedicated trainer service for model training
+- ✅ Checkpoint extraction and model packaging
+- ✅ FAISS index building
 
 ### API & Streaming
 - ✅ RESTful HTTP API (port 8001)
@@ -57,18 +68,32 @@ morphvox/
 │       └── src/app/
 │
 ├── services/
-│   └── voice-engine/             # Python Voice Engine
+│   ├── voice-engine/             # Python Voice Engine (Inference)
+│   │   ├── app/
+│   │   │   ├── core/             # Config, logging, exceptions
+│   │   │   ├── models/           # Pydantic request/response schemas
+│   │   │   ├── services/         # Business logic layer
+│   │   │   │   ├── voice_conversion/
+│   │   │   │   ├── audio_analysis/
+│   │   │   │   ├── tts/
+│   │   │   │   └── youtube/
+│   │   │   └── routers/          # FastAPI route handlers
+│   │   ├── rvc/                  # RVC pipeline
+│   │   ├── assets/               # Models, weights
+│   │   └── main.py
+│   │
+│   ├── preprocessor/             # Audio Preprocessing Service
+│   │   ├── app/
+│   │   │   ├── api/              # FastAPI routers
+│   │   │   ├── pipeline/         # Preprocessing stages
+│   │   │   └── core/             # Config, exceptions
+│   │   └── main.py
+│   │
+│   └── trainer/                  # Model Training Service
 │       ├── app/
-│       │   ├── core/             # Config, logging, exceptions
-│       │   ├── models/           # Pydantic request/response schemas
-│       │   ├── services/         # Business logic layer
-│       │   │   ├── voice_conversion/
-│       │   │   ├── audio_analysis/
-│       │   │   ├── tts/
-│       │   │   └── youtube/
-│       │   └── routers/          # FastAPI route handlers
-│       ├── rvc/                  # RVC pipeline
-│       ├── assets/               # Models, weights
+│       │   ├── api/              # FastAPI routers
+│       │   ├── pipeline/         # Training pipeline
+│       │   └── core/             # Config, exceptions
 │       └── main.py
 │
 ├── packages/
@@ -109,6 +134,17 @@ morphvox/
 - **UVR5** - Vocal separation
 - **yt-dlp** - YouTube audio download
 
+### Preprocessor (services/preprocessor)
+- **FastAPI** - HTTP API framework
+- **librosa** - Audio processing
+- **RMVPE** - F0 extraction
+- **HuBERT** - Feature extraction
+
+### Trainer (services/trainer)
+- **FastAPI** - HTTP API framework
+- **PyTorch** - Model training
+- **FAISS** - Index building
+
 ### Infrastructure
 - **Docker** - Containerization
 - **MariaDB/PostgreSQL** - Database
@@ -120,16 +156,16 @@ morphvox/
 
 ### System Architecture
 ```
-┌─────────────┐    ┌─────────────┐    ┌──────────────────────────┐
-│   Next.js   │───▶│   Laravel   │───▶│     Voice Engine         │
-│   WebUI     │    │    API      │    │  (FastAPI + RVC + TTS)   │
-│  (port 3000)│◀───│ (port 8080) │◀───│  HTTP: 8001, WS: 8765    │
-└─────────────┘    └──────┬──────┘    └────────────┬─────────────┘
-                         │                         │
-                  ┌──────┴──────┐                  │
-                  │  MariaDB    │                  │
-                  │  Redis      │                  │
-                  │  MinIO S3   │◀─────────────────┘
+┌─────────────┐    ┌─────────────┐    ┌─────────────────────────────────┐
+│   Next.js   │───▶│   Laravel   │───▶│       Python Services           │
+│   WebUI     │    │    API      │    │                                 │
+│  (port 3000)│◀───│ (port 8080) │◀───│  voice-engine  (8001, ws:8765) │
+└─────────────┘    └──────┬──────┘    │  preprocessor  (8003)           │
+                         │           │  trainer       (8002)           │
+                  ┌──────┴──────┐    └─────────────────────────────────┘
+                  │  MariaDB    │                    │
+                  │  Redis      │                    │
+                  │  MinIO S3   │◀───────────────────┘
                   └─────────────┘
 ```
 
@@ -205,8 +241,10 @@ Key settings include database credentials, S3 storage, OAuth keys, and service U
 |---------|------|-------------|
 | WebUI | 3000 | Next.js frontend |
 | API | 8080 | Laravel backend |
-| Voice Engine HTTP | 8001 | File-based API |
+| Voice Engine HTTP | 8001 | Inference API |
 | Voice Engine WS | 8765 | Real-time streaming |
+| Trainer | 8002 | Training service |
+| Preprocessor | 8003 | Audio preprocessing |
 | MariaDB | 3306 | Database |
 | Redis | 6379 | Cache/Queue |
 | MinIO API | 9000 | S3 storage |
@@ -224,12 +262,12 @@ Key settings include database credentials, S3 storage, OAuth keys, and service U
 
 ## Future Enhancements
 
-- [ ] Model training pipeline (in progress - see TRAINER_DESIGN.md)
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription billing
 - [ ] Model marketplace
 - [ ] Additional RVC model architectures
 - [ ] Performance monitoring dashboard
+- [ ] Distributed training across multiple GPUs
 
 ## Development Guidelines
 

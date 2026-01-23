@@ -1,5 +1,3 @@
-version: '3.8'
-
 # =============================================================================
 # MorphVox Platform - Development Stack
 # =============================================================================
@@ -9,7 +7,9 @@ version: '3.8'
 # - MinIO for S3-compatible object storage
 # - Laravel API backend
 # - Next.js WebUI frontend
-# - Python Voice Engine service
+# - Python Voice Engine service (inference)
+# - Python Preprocessor service (audio preprocessing)
+# - Python Trainer service (RVC training)
 # =============================================================================
 
 services:
@@ -151,13 +151,21 @@ services:
       VOICE_ENGINE_WS_URL: ws://voice-engine:8765
       VOICE_ENGINE_STORAGE_ENDPOINT: http://minio:9000
       
+      # New service URLs
+      TRAINER_URL: http://trainer:8002
+      PREPROCESSOR_URL: http://preprocess:8003
+      
       # Local voice models path (shared with voice-engine)
       VOICE_MODELS_PATH: /var/www/html/storage/models
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
-      # Mount local models directory for scanning
+      # Mount local models directory for scanning (voice-engine outputs here)
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Mount Docker socket for admin panel container logs (dev parity with prod)
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Mount container log directories for direct access (optional in dev)
+      - /var/lib/docker/containers:/var/lib/docker/containers:ro
     ports:
       - "8080:80"
     networks:
@@ -221,7 +229,7 @@ services:
       - morphvox
 
   # ===========================================================================
-  # Python Voice Engine Service
+  # Python Voice Engine Service (Inference Only)
   # ===========================================================================
   
   voice-engine:
@@ -278,6 +286,134 @@ services:
     networks:
       - morphvox
 
+  # ===========================================================================
+  # Preprocessor Service (Audio Preprocessing + Feature Extraction)
+  # ===========================================================================
+  
+  preprocess:
+    build:
+      context: ../../services/preprocessor
+      dockerfile: Dockerfile
+    container_name: morphvox-preprocess
+    restart: unless-stopped
+    shm_size: '4gb'
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      # Storage configuration
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${AWS_BUCKET:-morphvox}
+      
+      # Paths - UNIFIED with trainer service
+      # DATA_ROOT: Where preprocessing outputs go (shared with trainer)
+      DATA_ROOT: /data
+      # UPLOADS_DIR: Where uploaded audio files are stored  
+      UPLOADS_DIR: /data/uploads
+      # ASSETS_ROOT: Read-only shared assets (hubert, rmvpe, etc)
+      ASSETS_ROOT: /app/assets
+      # Legacy env vars for compatibility
+      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /app/assets/rmvpe
+      
+      # Server settings
+      HTTP_PORT: 8003
+      
+      # Device settings
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cpu}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ../../services/preprocessor:/app
+      # Shared data directory for preprocessing outputs (WRITABLE)
+      - training_data:/data
+      # Shared assets - hubert, rmvpe (READ-ONLY)
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      # RVC code for RMVPE import (READ-ONLY)
+      - ../../services/voice-engine/rvc:/app/rvc:ro
+    ports:
+      - "8003:8003"   # HTTP API
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - morphvox
+
+  # ===========================================================================
+  # Trainer Service (RVC Model Training)
+  # ===========================================================================
+  
+  trainer:
+    build:
+      context: ../../services/trainer
+      dockerfile: Dockerfile
+    container_name: morphvox-trainer
+    restart: unless-stopped
+    shm_size: '4gb'
+    depends_on:
+      - preprocess
+      - minio
+    environment:
+      # Storage configuration
+      S3_ENDPOINT: http://minio:9000
+      S3_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+      S3_BUCKET: ${AWS_BUCKET:-morphvox}
+      
+      # Paths - UNIFIED with preprocessor service
+      # DATA_ROOT: Where preprocessing outputs are (shared with preprocessor)
+      DATA_ROOT: /data
+      # MODELS_ROOT: Where final trained models go (shared with voice-engine)
+      MODELS_ROOT: /models
+      # RVC_ROOT: RVC training code
+      RVC_ROOT: /app/rvc
+      # ASSETS_ROOT: Read-only shared assets (pretrained models, etc)
+      ASSETS_ROOT: /app/assets
+      
+      # Service URLs
+      PREPROCESSOR_URL: http://preprocess:8003
+      
+      # Server settings
+      TRAINER_PORT: 8002
+      
+      # Device settings
+      DEVICE: ${VOICE_ENGINE_DEVICE:-cpu}
+      
+      # Logging
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      - ../../services/trainer:/app
+      # Shared data directory - preprocessing outputs (SAME volume as preprocessor)
+      - training_data:/data
+      # Output models directory (shared with voice-engine for inference)
+      - ../../services/voice-engine/assets/models:/models
+      # RVC training code (mounted read-only from voice-engine)
+      - ../../services/voice-engine/infer:/app/rvc/infer:ro
+      - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
+      # Shared assets - pretrained models (READ-ONLY)
+      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2:ro
+      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
+      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+    ports:
+      - "8002:8002"   # HTTP API
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    networks:
+      - morphvox
+
 # =============================================================================
 # Networks
 # =============================================================================
@@ -306,4 +442,6 @@ volumes:
   voice_engine_cache:
     driver: local
   voice_engine_models:
+    driver: local
+  training_data:
     driver: local

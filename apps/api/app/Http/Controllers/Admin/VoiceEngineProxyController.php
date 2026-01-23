@@ -16,11 +16,13 @@ use Illuminate\Support\Facades\Log;
 class VoiceEngineProxyController extends Controller
 {
     protected string $baseUrl;
+    protected string $trainerBaseUrl;
     protected int $timeout;
 
     public function __construct()
     {
         $this->baseUrl = config('services.voice_engine.base_url', 'http://voice-engine:8001');
+        $this->trainerBaseUrl = config('services.trainer.base_url', 'http://trainer:8002');
         $this->timeout = config('services.voice_engine.timeout', 300);
     }
 
@@ -89,7 +91,7 @@ class VoiceEngineProxyController extends Controller
     public function trainerLogs(Request $request)
     {
         $lines = $request->query('lines', 100);
-        return $this->proxyGet("/api/v1/trainer/logs?lines={$lines}");
+        return $this->proxyTrainerGet("/api/v1/trainer/logs?lines={$lines}");
     }
 
     /**
@@ -98,7 +100,7 @@ class VoiceEngineProxyController extends Controller
     public function trainerJobLogs(Request $request, string $jobId)
     {
         $lines = $request->query('lines', 100);
-        return $this->proxyGet("/api/v1/trainer/logs/{$jobId}?lines={$lines}");
+        return $this->proxyTrainerGet("/api/v1/trainer/logs/{$jobId}?lines={$lines}");
     }
 
     /**
@@ -146,6 +148,31 @@ class VoiceEngineProxyController extends Controller
             
             return response()->json([
                 'error' => 'Failed to connect to voice engine',
+                'details' => $e->getMessage(),
+            ], 503);
+        }
+    }
+
+    /**
+     * Helper to proxy GET requests to the trainer service.
+     */
+    protected function proxyTrainerGet(string $path)
+    {
+        try {
+            $response = Http::timeout($this->timeout)->get($this->trainerBaseUrl . $path);
+            
+            return response()->json(
+                $response->json(),
+                $response->status()
+            );
+        } catch (\Exception $e) {
+            Log::error('Trainer proxy error', [
+                'path' => $path,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to connect to trainer service',
                 'details' => $e->getMessage(),
             ], 503);
         }

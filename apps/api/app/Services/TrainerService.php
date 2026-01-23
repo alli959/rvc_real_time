@@ -7,13 +7,16 @@ use Illuminate\Support\Facades\Log;
 use App\Models\VoiceModel;
 
 /**
- * Service for interacting with the Voice Engine Trainer API.
+ * Service for interacting with the Trainer Service API.
  * 
  * Handles:
  * - Model scanning for language readiness
  * - Gap analysis for missing phonemes
  * - Training job management
  * - Recording wizard sessions
+ * 
+ * NOTE: Training is now handled by a separate trainer service (http://trainer:8002).
+ * Preprocessing is handled by the preprocessor service (http://preprocess:8003).
  */
 class TrainerService
 {
@@ -22,11 +25,9 @@ class TrainerService
 
     public function __construct()
     {
-        // Voice engine trainer API URL (same host as voice engine, different port or path)
-        $this->baseUrl = config('services.voice_engine.trainer_url', 
-            config('services.voice_engine.url', 'http://voice-engine:8001') . '/api/v1/trainer'
-        );
-        $this->timeout = config('services.voice_engine.timeout', 120);
+        // Use the new separate trainer service URL
+        $this->baseUrl = config('services.trainer.url', 'http://trainer:8002') . '/api/v1/trainer';
+        $this->timeout = config('services.trainer.timeout', 600);
     }
 
     /**
@@ -35,7 +36,9 @@ class TrainerService
     public function isAvailable(): bool
     {
         try {
-            $response = Http::timeout(5)->get("{$this->baseUrl}/health");
+            // Health check is at the root, not under /api/v1/trainer
+            $healthUrl = config('services.trainer.url', 'http://trainer:8002') . '/health';
+            $response = Http::timeout(5)->get($healthUrl);
             return $response->successful() && ($response->json('status') === 'healthy');
         } catch (\Exception $e) {
             Log::warning('Trainer API health check failed', ['error' => $e->getMessage()]);
@@ -205,38 +208,67 @@ class TrainerService
     // =========================================================================
 
     /**
-     * Upload training audio files
+     * Upload training audio files to the preprocessor service
+     * 
+     * NOTE: Training audio is uploaded to the PREPROCESSOR service, which manages
+     * the shared training_data volume. The preprocessor stores files at:
+     * /data/uploads/{exp_name}/ which is then processed during preprocessing.
+     * 
+     * The trainer service reads from the same /data volume after preprocessing
+     * is complete (from /data/{exp_name}/ directories).
      */
     public function uploadTrainingAudio(string $expName, array $files): ?array
     {
         try {
-            $request = Http::timeout($this->timeout)
-                ->asMultipart();
-
-            // Add exp_name as a form field (required by voice-engine)
-            $request->attach('exp_name', $expName);
+            // Use preprocessor service for uploads (it manages the shared /data volume)
+            $preprocessorUrl = config('services.preprocessor.url', 'http://preprocess:8003');
+            
+            // Build multipart form data using Guzzle directly
+            // Laravel's Http::attach() sends form fields with filename disposition which FastAPI doesn't parse as Form(...)
+            $client = new \GuzzleHttp\Client(['timeout' => $this->timeout]);
+            
+            $multipart = [
+                [
+                    'name' => 'exp_name',
+                    'contents' => $expName,
+                ],
+            ];
             
             foreach ($files as $file) {
-                $request->attach('files', $file['content'], $file['name']);
+                $multipart[] = [
+                    'name' => 'files',
+                    'contents' => $file['content'],
+                    'filename' => $file['name'],
+                ];
             }
+            
+            $response = $client->post("{$preprocessorUrl}/api/v1/preprocess/upload", [
+                'multipart' => $multipart,
+            ]);
 
-            $response = $request->post("{$this->baseUrl}/upload");
-
-            if ($response->successful()) {
+            $body = json_decode($response->getBody()->getContents(), true);
+            
+            if ($response->getStatusCode() >= 200 && $response->getStatusCode() < 300) {
                 Log::info('Training audio uploaded successfully', [
                     'exp_name' => $expName,
                     'files_count' => count($files),
-                    'response' => $response->json()
+                    'response' => $body
                 ]);
-                return $response->json();
+                return $body;
             }
             
             Log::error('Training upload failed', [
                 'exp_name' => $expName,
-                'status' => $response->status(),
-                'error' => $response->body()
+                'status' => $response->getStatusCode(),
+                'error' => $body
             ]);
 
+        } catch (\GuzzleHttp\Exception\RequestException $e) {
+            $errorBody = $e->hasResponse() ? $e->getResponse()->getBody()->getContents() : $e->getMessage();
+            Log::error('Training upload exception', [
+                'exp_name' => $expName, 
+                'error' => $errorBody
+            ]);
         } catch (\Exception $e) {
             Log::error('Training upload exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
         }
@@ -332,13 +364,18 @@ class TrainerService
             return;
         }
         
-        // Build the model path
-        $modelPath = "/app/assets/models/{$expName}/{$expName}.pth";
+        // Build the model path - models are stored at /models/{exp_name}/{exp_name}.pth
+        // which maps to voice-engine/assets/models/{exp_name}/{exp_name}.pth
+        // The API scans models from VOICE_MODELS_PATH which is mounted to the same directory
+        $modelPath = "{$expName}/{$expName}.pth";
         $indexPath = null;
         
         // Try to find the index file name from result
         if (isset($status['result']['index_path'])) {
-            $indexPath = $status['result']['index_path'];
+            // Convert absolute path to relative path for storage
+            $resultIndex = $status['result']['index_path'];
+            // Extract just the relative path part: {exp_name}/{exp_name}.index
+            $indexPath = "{$expName}/" . basename($resultIndex);
         }
         
         // Update the model
@@ -356,17 +393,19 @@ class TrainerService
     }
 
     /**
-     * Cancel a training job
+     * Cancel/stop a training job
+     * 
+     * NOTE: Trainer API exposes /stop/{job_id}, not /cancel/{job_id}
      */
     public function cancelTraining(string $jobId): bool
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/cancel/{$jobId}");
+                ->post("{$this->baseUrl}/stop/{$jobId}");
 
             return $response->successful();
         } catch (\Exception $e) {
-            Log::error('Cancel training failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
+            Log::error('Stop training failed', ['job_id' => $jobId, 'error' => $e->getMessage()]);
         }
 
         return false;

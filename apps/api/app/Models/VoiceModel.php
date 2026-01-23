@@ -115,6 +115,22 @@ class VoiceModel extends Model
     }
 
     /**
+     * Resolve the route binding for the model.
+     * Allows finding by both slug (default) and numeric ID.
+     */
+    public function resolveRouteBinding($value, $field = null)
+    {
+        // If the value is numeric, try to find by ID first
+        if (is_numeric($value)) {
+            return $this->where('id', $value)->first() 
+                ?? $this->where('slug', $value)->first();
+        }
+        
+        // Otherwise, find by slug (or the specified field)
+        return $this->where($field ?? $this->getRouteKeyName(), $value)->first();
+    }
+
+    /**
      * Get the model filename from model_path
      */
     public function getModelFileAttribute(): ?string
@@ -128,6 +144,64 @@ class VoiceModel extends Model
     public function getIndexFileAttribute(): ?string
     {
         return $this->index_path ? basename($this->index_path) : null;
+    }
+
+    /**
+     * Get the model path for voice-engine (absolute path inside voice-engine container)
+     */
+    public function getVoiceEngineModelPath(): ?string
+    {
+        if (!$this->model_path) {
+            return null;
+        }
+
+        $path = $this->model_path;
+
+        // If already absolute path for voice-engine, return as-is
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return $path;
+        }
+
+        // If relative path, prepend voice-engine assets path
+        if (!str_starts_with($path, '/')) {
+            return '/app/assets/models/' . ltrim($path, '/');
+        }
+
+        // Translate API container path to voice-engine path
+        if (str_starts_with($path, '/var/www/html/storage/models/')) {
+            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+        }
+
+        return $path;
+    }
+
+    /**
+     * Get the index path for voice-engine (absolute path inside voice-engine container)
+     */
+    public function getVoiceEngineIndexPath(): ?string
+    {
+        if (!$this->index_path) {
+            return null;
+        }
+
+        $path = $this->index_path;
+
+        // If already absolute path for voice-engine, return as-is
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return $path;
+        }
+
+        // If relative path, prepend voice-engine assets path
+        if (!str_starts_with($path, '/')) {
+            return '/app/assets/models/' . ltrim($path, '/');
+        }
+
+        // Translate API container path to voice-engine path
+        if (str_starts_with($path, '/var/www/html/storage/models/')) {
+            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+        }
+
+        return $path;
     }
 
     /**

@@ -125,14 +125,10 @@ except ImportError:
     YOUTUBE_AVAILABLE = False
     logger.warning("YouTube service not available - yt-dlp may not be installed")
 
-# Import trainer API (optional)
-try:
-    from app.trainer_api import router as trainer_router, init_trainer_api
-    TRAINER_AVAILABLE = True
-except ImportError:
-    TRAINER_AVAILABLE = False
-    trainer_router = None
-    logger.warning("Trainer API not available - missing dependencies")
+# Trainer API has been moved to the dedicated trainer service (port 8002)
+# This voice-engine service now handles inference only
+TRAINER_AVAILABLE = False
+trainer_router = None
 
 # Import admin APIs (optional)
 try:
@@ -3479,13 +3475,8 @@ def run_http_server(host: str = "0.0.0.0", port: int = 8001, mm=None, params=Non
     if mm:
         set_model_manager(mm, params)
     
-    # Initialize trainer API if available
-    if TRAINER_AVAILABLE:
-        try:
-            init_trainer_api()
-            logger.info("Trainer API initialized")
-        except Exception as e:
-            logger.warning(f"Failed to initialize trainer API: {e}")
+    # Training functionality has been moved to the dedicated trainer service (port 8002)
+    # This voice-engine service now handles inference only
     
     uvicorn.run(app, host=host, port=port, log_level="info")
 

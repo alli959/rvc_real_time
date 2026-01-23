@@ -29,7 +29,19 @@ from app.analyzer import (
     LANGUAGE_PHONEMES,
 )
 from app.prompts import get_prompt_loader, PromptLoader
-from app.trainer import ModelMetadata
+
+# ModelMetadata was moved to trainer service - define a minimal version here for compatibility
+@dataclass
+class ModelMetadata:
+    """Minimal model metadata for scanning purposes"""
+    name: str
+    version: str = "1.0"
+    created_at: str = ""
+    updated_at: str = ""
+    language_scores: Dict[str, Any] = field(default_factory=dict)
+    training_history: List[Dict[str, Any]] = field(default_factory=list)
+    prompts_used: List[str] = field(default_factory=list)
+    total_audio_duration: float = 0.0
 
 logger = logging.getLogger(__name__)
 

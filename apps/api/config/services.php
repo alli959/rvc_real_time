@@ -75,4 +75,34 @@ return [
         'storage_endpoint' => env('VOICE_ENGINE_STORAGE_ENDPOINT', 'http://minio:9000'),
     ],
 
+    /*
+    |--------------------------------------------------------------------------
+    | Trainer Service
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for the RVC training service that handles
+    | model training jobs.
+    |
+    */
+
+    'trainer' => [
+        'url' => env('TRAINER_URL', 'http://trainer:8002'),
+        'timeout' => env('TRAINER_TIMEOUT', 600),
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Preprocessor Service
+    |--------------------------------------------------------------------------
+    |
+    | Configuration for the audio preprocessing service that handles
+    | slicing, resampling, and feature extraction.
+    |
+    */
+
+    'preprocessor' => [
+        'url' => env('PREPROCESSOR_URL', 'http://preprocess:8003'),
+        'timeout' => env('PREPROCESSOR_TIMEOUT', 300),
+    ],
+
 ];

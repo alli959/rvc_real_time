@@ -87,6 +87,15 @@ services/voice-engine/assets/models/**/*.pt
 services/voice-engine/assets/models/**/*.ckpt
 services/voice-engine/assets/models/**/*.onnx
 
+# Trainer service model outputs (same patterns)
+services/trainer/rvc/assets/models/**/*.pth
+services/trainer/rvc/assets/models/**/*.index
+services/trainer/rvc/assets/models/**/*.npy
+services/trainer/rvc/assets/models/**/*.pt
+services/trainer/rvc/assets/models/**/*.ckpt
+services/trainer/rvc/assets/models/**/*.onnx
+services/trainer/rvc/assets/models/*/
+
 # Ignore symlinks to external model directories
 services/voice-engine/assets/models/*-model
 services/voice-engine/assets/models/*-*-model
@@ -145,6 +154,13 @@ apps/web/.env.local
 apps/web/.next/
 apps/web/node_modules/
 apps/web/out/
+
+# ============================================
+# Training Data Directory (shared volume)
+# ============================================
+# This is where preprocessing outputs and uploads go
+# It's a shared volume between preprocessor and trainer
+data/
 
 # ============================================
 # General

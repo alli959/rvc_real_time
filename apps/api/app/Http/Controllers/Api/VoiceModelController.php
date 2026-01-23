@@ -395,10 +395,26 @@ class VoiceModelController extends Controller
             return response()->json(['error' => 'Forbidden'], 403);
         }
 
-        // Delete files from storage
+        // Delete files from storage based on storage type
         if ($voiceModel->storage_type === 's3') {
             $prefix = $voiceModel->getStoragePrefix();
             Storage::disk('s3')->deleteDirectory($prefix);
+        } elseif ($voiceModel->storage_type === 'local') {
+            // Delete local files if paths exist
+            if ($voiceModel->model_path && file_exists($voiceModel->model_path)) {
+                @unlink($voiceModel->model_path);
+            }
+            if ($voiceModel->index_path && file_exists($voiceModel->index_path)) {
+                @unlink($voiceModel->index_path);
+            }
+            
+            // Try to remove the model directory if it's empty
+            if ($voiceModel->model_path) {
+                $modelDir = dirname($voiceModel->model_path);
+                if (is_dir($modelDir) && count(glob("$modelDir/*")) === 0) {
+                    @rmdir($modelDir);
+                }
+            }
         }
 
         $voiceModel->delete();

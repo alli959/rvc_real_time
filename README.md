@@ -2,11 +2,11 @@
 
 > **Note:** This project has been restructured into a full-stack platform. The original RVC real-time voice conversion code is now in `services/voice-engine/`.
 
-## � Live Demo
+## 🎯 Live Demo
 
 [https://morphvox.net](https://morphvox.net)
 
-## �🎯 Overview
+## 🎯 Overview
 
 MorphVox is a comprehensive AI voice conversion platform featuring:
 
@@ -17,6 +17,7 @@ MorphVox is a comprehensive AI voice conversion platform featuring:
 - **🗣️ Text-to-Speech** - Bark TTS (neural) + Edge TTS (50+ voices) with emotion support
 - **🎵 Audio Processing** - Voice conversion, vocal separation (UVR5), and voice swap
 - **🎶 Song Remix** - Split vocals from instrumentals and swap voices in songs
+- **🔊 Voice Training** - Train custom RVC voice models from audio samples
 - **👤 Admin Panel** - Full administration dashboard at admin.morphvox.net
 - **🔐 OAuth Login** - Google and GitHub OAuth authentication support
 
@@ -29,18 +30,38 @@ morphvox/
 │   └── web/                    # Next.js 14 Frontend
 │
 ├── services/
-│   └── voice-engine/           # RVC Inference (original code)
+│   ├── voice-engine/           # RVC Inference (HTTP: 8001, WS: 8765)
+│   ├── preprocessor/           # Audio Preprocessing (HTTP: 8003)
+│   └── trainer/                # Model Training (HTTP: 8002)
 │
 ├── infra/
 │   └── compose/                # Docker Compose stack
 │
+├── scripts/
+│   ├── dev-up.sh               # Complete dev setup & start
+│   └── service-up.sh           # Start individual services
+│
 └── docs/
-    └── ARCHITECTURE.md         # Full architecture documentation
+    ├── ARCHITECTURE.md         # Full architecture documentation
+    └── DEVELOPMENT.md          # Development guide
 ```
 
 ## 🚀 Quick Start
 
-### Using Docker Compose (Recommended)
+### Using the Setup Script (Recommended)
+
+```bash
+# Complete setup: downloads assets + starts Docker services
+./scripts/dev-up.sh
+
+# Production mode
+./scripts/dev-up.sh --prod
+
+# Setup assets only (no Docker)
+./scripts/dev-up.sh --no-docker
+```
+
+### Using Docker Compose (Manual)
 
 ```bash
 # 1. Copy environment file
@@ -56,8 +77,17 @@ docker compose exec api php artisan key:generate
 
 # 4. Access the platform
 open http://localhost:3000      # WebUI
-open http://localhost:8000/api  # API
+open http://localhost:8080      # API
 open http://localhost:9001      # MinIO Console
+```
+
+### Start Individual Services
+
+```bash
+# Start specific service with its dependencies
+./scripts/service-up.sh trainer       # Trainer + preprocess + minio
+./scripts/service-up.sh voice-engine  # Voice engine + minio
+./scripts/service-up.sh infra -d      # Infrastructure only (background)
 ```
 
 ### Voice Engine Only (Original Functionality)
@@ -168,9 +198,11 @@ python main.py --mode api
 |---------|------|-------------|
 | WebUI | 3000 | Next.js frontend |
 | API | 8080 | Laravel backend |
-| Voice Engine HTTP | 8000 | File-based API |
+| Voice Engine HTTP | 8001 | Inference API |
 | Voice Engine WS | 8765 | Real-time streaming |
-| PostgreSQL | 5432 | Database |
+| Trainer | 8002 | Training service |
+| Preprocessor | 8003 | Audio preprocessing |
+| MariaDB | 3306 | Database |
 | Redis | 6379 | Cache/Queue |
 | MinIO API | 9000 | S3 storage |
 | MinIO Console | 9001 | Storage admin |
@@ -190,7 +222,8 @@ python main.py --mode api
 - [x] S3 storage with presigned URLs
 - [x] Combined models page with tabs (Community/My Models)
 - [x] Dedicated Song Remix page
-- [ ] Model training pipeline
+- [x] Dedicated preprocessor service (audio slicing, F0, HuBERT)
+- [x] Dedicated trainer service (RVC training, index building)
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription billing
 - [ ] Model marketplace
