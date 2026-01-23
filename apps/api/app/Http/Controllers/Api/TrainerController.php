@@ -809,8 +809,11 @@ class TrainerController extends Controller
             return response()->json(['error' => 'Model not found'], 404);
         }
 
-        // Check authorization
+        // Check authorization - user must be authenticated
         $user = $request->user();
+        if (!$user) {
+            return response()->json(['error' => 'Unauthorized'], 401);
+        }
         if ($model->user_id !== $user->id && !$user->hasRole('admin')) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
@@ -846,7 +849,7 @@ class TrainerController extends Controller
         // For public routes, skip authorization check
         // If user is authenticated, they must own the model or be admin
         $user = $request->user();
-        if ($user && $model->user_id !== $user->id && !$user->hasRole('admin')) {
+        if ($user !== null && $model->user_id !== $user->id && !$user->hasRole('admin')) {
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
