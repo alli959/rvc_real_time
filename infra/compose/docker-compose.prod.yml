@@ -337,6 +337,7 @@ services:
       # Mount infer module for inference
       - ../../services/voice-engine/infer:/app/infer
       # Mount local models directory directly (bind mount)
+      # Training outputs AND checkpoints (G_*.pth, D_*.pth) go here
       - ../../services/voice-engine/assets/models:/app/assets/models
       - ../../services/voice-engine/assets/hubert:/app/assets/hubert
       - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
