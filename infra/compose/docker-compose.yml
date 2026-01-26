@@ -160,6 +160,7 @@ services:
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
+      - api_storage:/var/www/html/storage
       # Mount local models directory for scanning (voice-engine outputs here)
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
       # Mount Docker socket for admin panel container logs (dev parity with prod)
@@ -436,6 +437,8 @@ volumes:
   minio_data:
     driver: local
   api_vendor:
+    driver: local
+  api_storage:
     driver: local
   web_node_modules:
     driver: local
