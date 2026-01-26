@@ -317,17 +317,34 @@ class TrainerService
 
     /**
      * Get training job status and update model when completed
+     * 
+     * Note: Uses scannerUrl (voice-engine) since training jobs run there
      */
     public function getTrainingStatus(string $jobId): ?array
     {
         try {
+            // Try voice-engine first (where new training jobs run)
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->scannerUrl}/status/{$jobId}");
+
+            if ($response->successful()) {
+                $status = $response->json();
+                
+                // If training completed, update the model record
+                if (isset($status['status']) && $status['status'] === 'completed') {
+                    $this->handleTrainingCompleted($status);
+                }
+                
+                return $status;
+            }
+            
+            // Fallback to standalone trainer service (for legacy jobs)
             $response = Http::timeout($this->timeout)
                 ->get("{$this->baseUrl}/status/{$jobId}");
 
             if ($response->successful()) {
                 $status = $response->json();
                 
-                // If training completed, update the model record
                 if (isset($status['status']) && $status['status'] === 'completed') {
                     $this->handleTrainingCompleted($status);
                 }
@@ -465,10 +482,21 @@ class TrainerService
 
     /**
      * List all training jobs
+     * 
+     * Note: Uses scannerUrl (voice-engine) since training jobs run there
      */
     public function listTrainingJobs(): ?array
     {
         try {
+            // Try voice-engine first (where new training jobs run)
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->scannerUrl}/jobs");
+
+            if ($response->successful()) {
+                return $response->json('jobs', []);
+            }
+            
+            // Fallback to standalone trainer service (for legacy jobs)
             $response = Http::timeout($this->timeout)
                 ->get("{$this->baseUrl}/jobs");
 
