@@ -410,8 +410,8 @@ async def upload_training_audio(
     """
     Upload training audio files.
     
-    Files are stored at: {uploads_dir}/{exp_name}/
-    This is the input directory for preprocessing.
+    Files are stored at: /models/{exp_name}/trainset/
+    This is the input directory for training (shared with voice-engine).
     
     Supported formats: WAV, MP3, FLAC, OGG
     """
@@ -421,8 +421,9 @@ async def upload_training_audio(
     if not files:
         raise HTTPException(400, "At least one file is required")
     
-    # Create upload directory
-    upload_dir = Path(settings.uploads_dir) / exp_name
+    # Upload directly to the models trainset directory (shared with voice-engine)
+    # /models is mounted to services/voice-engine/assets/models
+    upload_dir = Path("/models") / exp_name / "trainset"
     upload_dir.mkdir(parents=True, exist_ok=True)
     
     uploaded_count = 0
