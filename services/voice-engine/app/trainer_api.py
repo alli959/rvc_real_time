@@ -234,6 +234,8 @@ class TrainingConfigInput(BaseModel):
     save_every_epoch: Optional[int] = Field(default=None, description="Save checkpoint interval. Auto-calculated if not specified")
     version: Optional[str] = Field(default=None, description="RVC version (v1, v2). Default: v2")
     use_pitch_guidance: Optional[bool] = Field(default=None, description="Use pitch guidance. Default: True")
+    force_reprocess: Optional[bool] = Field(default=False, description="Force re-preprocessing even if preprocessed data exists")
+    continue_from_checkpoint: Optional[bool] = Field(default=False, description="Continue training from existing checkpoint")
 
 
 class StartTrainingRequest(BaseModel):
@@ -388,26 +390,25 @@ async def start_training(
     else:
         config = TrainingConfig(exp_name=request.exp_name)
     
-    # Get audio paths
+    # Get audio paths - check trainset directory (canonical location for all training audio)
     audio_paths = request.audio_paths
     if not audio_paths:
-        # Check recordings directory under model folder (primary location)
-        recordings_dir = MODELS_DIR / request.exp_name / "recordings"
-        if recordings_dir.exists():
+        trainset_dir = MODELS_DIR / request.exp_name / "trainset"
+        if trainset_dir.exists():
             audio_paths = []
-            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.webm"]:
-                audio_paths.extend([str(p) for p in recordings_dir.glob(f"**/{ext}")])
+            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.webm", "*.m4a"]:
+                audio_paths.extend([str(p) for p in trainset_dir.glob(f"**/{ext}")])
         
-        # Fallback to legacy uploads directory if no recordings found
+        # Also check recordings directory (from wizard)
         if not audio_paths:
-            upload_dir = UPLOAD_DIR / request.exp_name
-            if upload_dir.exists():
+            recordings_dir = MODELS_DIR / request.exp_name / "recordings"
+            if recordings_dir.exists():
                 audio_paths = []
-                for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
-                    audio_paths.extend([str(p) for p in upload_dir.glob(f"**/{ext}")])
+                for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.webm"]:
+                    audio_paths.extend([str(p) for p in recordings_dir.glob(f"**/{ext}")])
     
     if not audio_paths:
-        raise HTTPException(status_code=400, detail="No audio files found")
+        raise HTTPException(status_code=400, detail="No audio files found in trainset or recordings directory")
     
     # Create job
     job_id = pipeline.create_job(config)
@@ -1428,11 +1429,16 @@ async def preview_training_config(exp_name: str):
     }
 
 
+class TrainModelRequest(BaseModel):
+    """Request body for training a model"""
+    config: Optional[TrainingConfigInput] = None
+
+
 @router.post("/model/{exp_name}/train")
 async def train_model(
     exp_name: str,
     background_tasks: BackgroundTasks,
-    config: Optional[TrainingConfigInput] = None
+    request: Optional[TrainModelRequest] = None
 ):
     """
     Start training a model using all collected recordings from wizard sessions.
@@ -1445,6 +1451,15 @@ async def train_model(
     
     You can override auto-config by providing explicit config values.
     """
+    # Extract config from request body
+    config = request.config if request else None
+    
+    # Debug log the received config
+    logger.info(f"[TRAIN] Received request for {exp_name}: {request}")
+    if config:
+        logger.info(f"[TRAIN] Config details - epochs={config.epochs}, batch_size={config.batch_size}, "
+                    f"force_reprocess={config.force_reprocess}, continue_from_checkpoint={config.continue_from_checkpoint}")
+    
     wizard = get_wizard()
     pipeline = get_pipeline()
     
@@ -1556,7 +1571,20 @@ async def train_model(
     async def run_training():
         try:
             logger.info(f"Starting training job {job_id} for model {exp_name}")
-            result = await pipeline.train(training_config, audio_paths, job_id)
+            
+            # Extract continuation options from config
+            force_reprocess = config.force_reprocess if config else False
+            continue_from_checkpoint = config.continue_from_checkpoint if config else False
+            
+            logger.info(f"Training options: force_reprocess={force_reprocess}, continue_from_checkpoint={continue_from_checkpoint}")
+            
+            result = await pipeline.train(
+                training_config, 
+                audio_paths, 
+                job_id,
+                force_reprocess=force_reprocess,
+                continue_from_checkpoint=continue_from_checkpoint
+            )
             
             # Copy final model files to the models directory
             if result.success:
