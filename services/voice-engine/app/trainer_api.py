@@ -26,6 +26,7 @@ from typing import Any, Dict, List, Optional, Set, Tuple
 import numpy as np
 import soundfile as sf
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile, BackgroundTasks
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from app.trainer import (
@@ -968,6 +969,55 @@ async def delete_model_recordings(exp_name: str):
         "deleted_count": deleted,
         "success": True
     }
+
+
+@router.get("/model/{exp_name}/audio/{filename:path}")
+async def serve_model_audio(exp_name: str, filename: str):
+    """
+    Serve an audio file from a model's recordings.
+    
+    Checks multiple locations:
+    1. /data/uploads/{exp_name}/ (preprocessor uploads)
+    2. /app/assets/models/{exp_name}/recordings/
+    3. /app/uploads/{exp_name}/
+    
+    This endpoint allows the frontend to play back uploaded audio files.
+    """
+    import urllib.parse
+    filename = urllib.parse.unquote(filename)  # Decode URL-encoded filename
+    
+    # Security: prevent directory traversal
+    if ".." in filename or filename.startswith("/"):
+        raise HTTPException(status_code=400, detail="Invalid filename")
+    
+    # Check possible locations
+    locations = [
+        Path("/data/uploads") / exp_name / filename,
+        Path("/app/assets/models") / exp_name / "recordings" / filename,
+        Path("/app/uploads") / exp_name / filename,
+    ]
+    
+    for file_path in locations:
+        if file_path.exists() and file_path.is_file():
+            # Determine media type
+            suffix = file_path.suffix.lower()
+            media_types = {
+                ".wav": "audio/wav",
+                ".mp3": "audio/mpeg",
+                ".flac": "audio/flac",
+                ".ogg": "audio/ogg",
+                ".m4a": "audio/mp4",
+                ".webm": "audio/webm",
+            }
+            media_type = media_types.get(suffix, "application/octet-stream")
+            
+            return FileResponse(
+                path=str(file_path),
+                media_type=media_type,
+                filename=filename
+            )
+    
+    raise HTTPException(status_code=404, detail=f"Audio file '{filename}' not found for model '{exp_name}'")
 
 
 @router.get("/models")

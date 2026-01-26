@@ -78,6 +78,10 @@ Route::prefix('trainer')->group(function () {
     Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
     Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
     Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
+    
+    // Audio file streaming (proxy to voice-engine)
+    Route::get('/model/{modelSlug}/audio/{filename}', [TrainerController::class, 'streamAudioFile'])
+        ->where('filename', '.*');  // Allow slashes in filename
 });
 
 // ==========================================================================

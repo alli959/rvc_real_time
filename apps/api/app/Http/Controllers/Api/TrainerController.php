@@ -899,4 +899,56 @@ class TrainerController extends Controller
 
         return false;
     }
+
+    /**
+     * Stream an audio file from a model's recordings
+     * 
+     * Proxies to voice-engine to serve audio files for playback in UI
+     */
+    public function streamAudioFile(string $modelSlug, string $filename)
+    {
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        
+        try {
+            // Proxy request to voice-engine
+            $voiceEngineUrl = config('services.voice_engine.trainer_url', 'http://voice-engine:8001/api/v1/trainer');
+            $url = "{$voiceEngineUrl}/model/{$expName}/audio/" . urlencode($filename);
+            
+            $response = \Illuminate\Support\Facades\Http::timeout(30)->get($url);
+            
+            if ($response->successful()) {
+                $contentType = $response->header('Content-Type') ?? 'audio/wav';
+                
+                return response($response->body())
+                    ->header('Content-Type', $contentType)
+                    ->header('Content-Disposition', 'inline; filename="' . $filename . '"')
+                    ->header('Accept-Ranges', 'bytes')
+                    ->header('Cache-Control', 'public, max-age=3600');
+            }
+
+            return response()->json([
+                'error' => 'Audio file not found',
+                'detail' => $response->json('detail') ?? 'Unknown error'
+            ], $response->status());
+        } catch (\Exception $e) {
+            \Illuminate\Support\Facades\Log::error('Audio stream error', [
+                'model' => $modelSlug,
+                'filename' => $filename,
+                'error' => $e->getMessage()
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to stream audio',
+                'detail' => $e->getMessage()
+            ], 500);
+        }
+    }
 }

@@ -788,7 +788,32 @@ class RecordingWizard:
                             except Exception as e:
                                 logger.warning(f"Could not read {audio_path}: {e}")
         
-        # Also check uploads directory (files uploaded via /trainer/upload endpoint)
+        # Check /data/uploads directory (files uploaded via preprocessor service)
+        # This is the shared volume from preprocessor container
+        data_uploads_dir = Path("/data/uploads") / exp_name
+        if data_uploads_dir.exists():
+            existing_filenames = {Path(p).name for p in all_audio_paths}
+            audio_extensions = ['*.wav', '*.mp3', '*.flac', '*.ogg', '*.m4a', '*.webm']
+            
+            for ext in audio_extensions:
+                for audio_path in data_uploads_dir.glob(f"**/{ext}"):
+                    if audio_path.name not in existing_filenames:
+                        try:
+                            import soundfile as sf
+                            info = sf.info(str(audio_path))
+                            all_audio_paths.append(str(audio_path))
+                            total_duration += info.duration
+                            existing_filenames.add(audio_path.name)
+                            
+                            # Put in "uploaded" category
+                            if "uploaded" not in recordings_by_category:
+                                recordings_by_category["uploaded"] = []
+                            recordings_by_category["uploaded"].append(str(audio_path))
+                            logger.info(f"Found preprocessor upload: {audio_path}")
+                        except Exception as e:
+                            logger.warning(f"Could not read {audio_path}: {e}")
+        
+        # Also check legacy /app/uploads directory (files uploaded via /trainer/upload endpoint)
         # This is separate from model recordings dir
         # Go up to /app level: __file__ is /app/app/wizard/__init__.py
         uploads_dir = Path(__file__).parent.parent.parent / "uploads" / exp_name
