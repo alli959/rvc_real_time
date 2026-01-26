@@ -390,14 +390,16 @@ def calculate_optimal_config(
     # Target steps based on training type
     TARGET_STEPS_SPEECH = 1800    # Minimum steps for speech voice model
     TARGET_STEPS_SINGING = 3000   # More steps for singing (broader range)
-    MIN_TOTAL_STEPS = 1200        # Absolute minimum to avoid collapse
+    MIN_TOTAL_STEPS = 1500        # Absolute minimum to avoid collapse
     
-    # Batch size rules based on dataset size (segments)
-    # Smaller datasets need smaller batches for more optimizer updates
-    if chunks < 100:
-        batch_size = 4      # Tiny dataset: maximize steps
+    # For very small datasets, we need to reduce batch size further to get more steps
+    # Start with batch_size based on chunk count, then reduce if needed
+    if chunks < 20:
+        batch_size = 2      # Tiny dataset: use batch=2 for maximum steps
+    elif chunks < 100:
+        batch_size = 4      # Small dataset: maximize steps
     elif chunks < 300:
-        batch_size = 6      # Small dataset
+        batch_size = 6      # Medium-small dataset
     elif chunks < 800:
         batch_size = 8      # Medium dataset
     elif chunks < 2000:
@@ -421,11 +423,19 @@ def calculate_optimal_config(
         # Need more epochs to meet minimum steps
         final_epochs = max(final_epochs, math.ceil(MIN_TOTAL_STEPS / steps_per_epoch))
     
-    # Cap at reasonable maximum
-    epochs = max(20, min(final_epochs, 300))
+    # For tiny datasets, allow high epoch counts to achieve minimum steps
+    # With 7 chunks @ batch=2, we get ~3 steps/epoch, need 600 epochs for 1800 steps
+    # Max 2000 epochs should be plenty for any reasonable dataset
+    max_epochs = 2000 if chunks < 50 else 500 if chunks < 200 else 300
+    epochs = max(20, min(final_epochs, max_epochs))
     
     # Recalculate for logging
     estimated_total_steps = epochs * steps_per_epoch
+    
+    # Warn if we still can't reach minimum steps (extremely small dataset)
+    if estimated_total_steps < MIN_TOTAL_STEPS:
+        logger.warning(f"⚠️ Dataset too small: {chunks} chunks can only achieve {estimated_total_steps} steps "
+                      f"(minimum recommended: {MIN_TOTAL_STEPS}). Consider adding more training data.")
     
     # Log step-based calculation
     logger.info(f"Step-based config: {chunks} segments / batch={batch_size} = {steps_per_epoch} steps/epoch × {epochs} epochs = {estimated_total_steps} total steps")
