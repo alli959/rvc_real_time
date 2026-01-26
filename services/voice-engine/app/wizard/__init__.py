@@ -839,6 +839,32 @@ class RecordingWizard:
                         except Exception as e:
                             logger.warning(f"Could not read {audio_path}: {e}")
         
+        # Also check model's trainset directory
+        # This is where files uploaded via preprocessor go (/models/{exp_name}/trainset/)
+        if self.models_dir:
+            model_trainset_dir = self.models_dir / exp_name / "trainset"
+            if model_trainset_dir.exists():
+                existing_filenames = {Path(p).name for p in all_audio_paths}
+                audio_extensions = ['*.wav', '*.mp3', '*.flac', '*.ogg', '*.m4a', '*.webm']
+                
+                for ext in audio_extensions:
+                    for audio_path in model_trainset_dir.glob(ext):
+                        if audio_path.name not in existing_filenames:
+                            try:
+                                import soundfile as sf
+                                info = sf.info(str(audio_path))
+                                all_audio_paths.append(str(audio_path))
+                                total_duration += info.duration
+                                existing_filenames.add(audio_path.name)
+                                
+                                # Put in "trainset" category
+                                if "trainset" not in recordings_by_category:
+                                    recordings_by_category["trainset"] = []
+                                recordings_by_category["trainset"].append(str(audio_path))
+                                logger.info(f"Found trainset audio: {audio_path}")
+                            except Exception as e:
+                                logger.warning(f"Could not read {audio_path}: {e}")
+        
         return {
             "exp_name": exp_name,
             "total_recordings": len(all_audio_paths),
