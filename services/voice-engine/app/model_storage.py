@@ -117,17 +117,21 @@ class ModelStorage:
     
     Stores everything under assets/models/{model_name}/ to keep
     all model-related files together.
+    
+    Also scans /data/uploads/{model_name}/ for recordings from preprocessor.
     """
     
-    def __init__(self, models_dir: str):
+    def __init__(self, models_dir: str, uploads_dir: str = "/data/uploads"):
         """
         Initialize model storage.
         
         Args:
             models_dir: Path to the models directory (e.g., assets/models)
+            uploads_dir: Path to uploads directory (e.g., /data/uploads)
         """
         self.models_dir = Path(models_dir)
         self.models_dir.mkdir(parents=True, exist_ok=True)
+        self.uploads_dir = Path(uploads_dir) if uploads_dir else None
         logger.info(f"ModelStorage initialized at {self.models_dir}")
     
     def get_model_dir(self, model_name: str) -> Path:
@@ -399,11 +403,12 @@ class ModelStorage:
         Scan an existing model directory and create/update metadata.
         
         Useful for models that were trained outside this system.
+        Also scans uploads directory for recordings from preprocessor.
         """
         model_dir = self.get_model_dir(model_name)
         metadata = self.load_metadata(model_name)
         
-        # Check for recordings
+        # Check for recordings in model directory
         recordings_dir = model_dir / "recordings"
         if recordings_dir.exists():
             existing_files = {r.filename for r in metadata.recordings}
@@ -420,6 +425,29 @@ class ModelStorage:
                         ))
                     except Exception as e:
                         logger.warning(f"Failed to read {wav_path}: {e}")
+        
+        # Also check uploads directory from preprocessor (/data/uploads/{model_name}/)
+        if self.uploads_dir:
+            uploads_model_dir = self.uploads_dir / model_name
+            if uploads_model_dir.exists():
+                existing_files = {r.filename for r in metadata.recordings}
+                # Check all audio file types
+                for pattern in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.m4a", "*.webm"]:
+                    for audio_path in uploads_model_dir.glob(pattern):
+                        if audio_path.name not in existing_files:
+                            try:
+                                data, sr = sf.read(str(audio_path))
+                                duration = len(data) / sr
+                                metadata.recordings.append(RecordingInfo(
+                                    filename=audio_path.name,
+                                    duration_seconds=round(duration, 2),
+                                    sample_rate=sr,
+                                    uploaded_at=datetime.fromtimestamp(audio_path.stat().st_mtime).isoformat() + "Z"
+                                ))
+                                logger.debug(f"Found upload: {audio_path.name} ({duration:.1f}s)")
+                            except Exception as e:
+                                logger.warning(f"Failed to read {audio_path}: {e}")
+                logger.info(f"Scanned uploads dir for {model_name}, found {len(metadata.recordings)} total recordings")
         
         # Also check 0_gt_wavs for existing training data
         gt_wavs_dir = model_dir / "0_gt_wavs"
@@ -482,6 +510,9 @@ class ModelStorage:
 # Global instance
 _model_storage: Optional[ModelStorage] = None
 
+# Path to preprocessor uploads (shared volume)
+UPLOADS_DIR = "/data/uploads"
+
 
 def get_model_storage() -> ModelStorage:
     """Get the global model storage instance"""
@@ -489,11 +520,13 @@ def get_model_storage() -> ModelStorage:
     if _model_storage is None:
         from pathlib import Path
         models_dir = Path(__file__).parent.parent / "assets" / "models"
-        _model_storage = ModelStorage(str(models_dir))
+        # Pass uploads_dir so we can scan preprocessor uploads
+        uploads_dir = UPLOADS_DIR if Path(UPLOADS_DIR).exists() else None
+        _model_storage = ModelStorage(str(models_dir), uploads_dir)
     return _model_storage
 
 
-def init_model_storage(models_dir: str):
+def init_model_storage(models_dir: str, uploads_dir: str = None):
     """Initialize the global model storage"""
     global _model_storage
-    _model_storage = ModelStorage(models_dir)
+    _model_storage = ModelStorage(models_dir, uploads_dir or UPLOADS_DIR)

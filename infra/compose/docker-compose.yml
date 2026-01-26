@@ -273,6 +273,8 @@ services:
       - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
       # Mount same models path that API uses so model paths match
       - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Shared data directory - uploads from preprocessor (SAME volume as preprocessor/trainer)
+      - training_data:/data
     ports:
       - "8001:8001"   # HTTP API
       - "8765:8765"   # WebSocket
