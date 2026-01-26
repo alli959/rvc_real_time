@@ -398,6 +398,102 @@ class RVCTrainingPipeline:
         
         return str(g_path), str(d_path)
     
+    def _resolve_pretrained_paths_with_checkpoint(
+        self,
+        config: TrainingConfig,
+        exp_dir: Path
+    ) -> tuple[str, str]:
+        """
+        Resolve pretrained model paths, with special handling for checkpoint continuation.
+        
+        This method checks if we're continuing from an existing training session and
+        ensures that checkpoints exist if expected. This prevents the silent fallback
+        to base pretrained models that can corrupt existing voice models.
+        
+        Logic:
+        1. Check if G_*.pth and D_*.pth checkpoints exist in exp_dir
+        2. If checkpoints exist: train.py will auto-resume from them (return base pretrain paths)
+        3. If no checkpoints but extracted model exists: this is a "continue training" scenario
+           - We should NOT silently start from scratch
+           - Raise an error to alert the user
+        4. If no checkpoints and no extracted model: fresh training (return base pretrain paths)
+        
+        Returns:
+            tuple[str, str]: (pretrain_G path, pretrain_D path)
+        """
+        import re
+        
+        # Get base pretrained paths
+        base_g, base_d = self._resolve_pretrained_paths(config)
+        
+        # Check for existing checkpoints in exp_dir
+        g_checkpoints = list(exp_dir.glob("G_*.pth"))
+        d_checkpoints = list(exp_dir.glob("D_*.pth"))
+        
+        if g_checkpoints and d_checkpoints:
+            # Checkpoints exist - train.py will auto-resume from them
+            # Sort to find latest
+            def get_step(p):
+                match = re.search(r'[GD]_(\d+)\.pth', p.name)
+                return int(match.group(1)) if match else 0
+            
+            latest_g = max(g_checkpoints, key=get_step)
+            latest_d = max(d_checkpoints, key=get_step)
+            g_step = get_step(latest_g)
+            d_step = get_step(latest_d)
+            
+            logger.info(f"[CHECKPOINT CONTINUATION] Found existing checkpoints:")
+            logger.info(f"  Generator: {latest_g.name} (step {g_step})")
+            logger.info(f"  Discriminator: {latest_d.name} (step {d_step})")
+            logger.info(f"  train.py will auto-resume from these checkpoints")
+            
+            # Return base pretrain paths - train.py will prioritize checkpoints
+            return base_g, base_d
+        
+        # No checkpoints found - check if this is an existing model (has extracted .pth)
+        exp_name = config.exp_name
+        extracted_model = exp_dir / f"{exp_name}.pth"
+        infer_model = exp_dir / f"{exp_name}_infer.pth"
+        
+        has_existing_model = extracted_model.exists() or infer_model.exists()
+        
+        if has_existing_model:
+            # IMPORTANT: Existing extracted model but no checkpoints
+            # 
+            # Extracted models (*.pth) have a different format than training checkpoints:
+            # - Extracted model: {'weight': ..., 'config': ..., 'info': ..., 'sr': ..., 'f0': ..., 'version': ...}
+            # - Training checkpoint: {'model': ..., 'optimizer': ..., 'iteration': ..., ...}
+            # 
+            # We CANNOT use extracted models as pretrain_G because train.py expects
+            # checkpoint format with ['model'] key.
+            # 
+            # Instead, we fall back to base pretrained models. This means:
+            # - Training will start from the generic pretrained weights
+            # - The model's voice characteristics will be learned fresh
+            # - The trained epochs count will reset
+            
+            logger.warning("=" * 70)
+            logger.warning("[CHECKPOINT CONTINUATION WARNING]")
+            logger.warning(f"  Model '{exp_name}' has an existing trained model but NO checkpoints!")
+            logger.warning(f"  Existing model: {extracted_model if extracted_model.exists() else infer_model}")
+            logger.warning("")
+            logger.warning("  Extracted models cannot be used as training checkpoints because")
+            logger.warning("  they have a different format (inference-only weights).")
+            logger.warning("")
+            logger.warning("  FALLING BACK TO BASE PRETRAINED MODELS")
+            logger.warning("  Training will start fresh from pretrained weights.")
+            logger.warning("  To continue from existing training, ensure G_*.pth and D_*.pth")
+            logger.warning("  checkpoint files are preserved in the model directory.")
+            logger.warning("=" * 70)
+            
+            # Fall through to use base pretrained models
+        
+        # Fresh training - no existing model or checkpoints
+        logger.info(f"[FRESH TRAINING] No existing checkpoints or models found in {exp_dir}")
+        logger.info(f"  Using base pretrained models: G={base_g}, D={base_d}")
+        
+        return base_g, base_d
+
     def create_job(self, config: TrainingConfig) -> str:
         """Create a new training job"""
         job_id = str(uuid.uuid4())[:8]
@@ -580,7 +676,9 @@ class RVCTrainingPipeline:
         self,
         config: TrainingConfig,
         audio_paths: List[Union[str, Path]],
-        job_id: Optional[str] = None
+        job_id: Optional[str] = None,
+        force_reprocess: bool = False,
+        continue_from_checkpoint: bool = False
     ) -> TrainingResult:
         """
         Run the full training pipeline.
@@ -589,6 +687,10 @@ class RVCTrainingPipeline:
             config: Training configuration
             audio_paths: List of audio file paths to train on
             job_id: Optional existing job ID
+            force_reprocess: If True, re-run preprocessing even if data exists.
+                             Use when new audio files have been added.
+            continue_from_checkpoint: If True, continue from existing checkpoint.
+                                      If False and model exists, start fresh.
             
         Returns:
             TrainingResult with model paths
@@ -613,6 +715,11 @@ class RVCTrainingPipeline:
             
             exp_dir.mkdir(parents=True, exist_ok=True)
             trainset_dir = exp_dir / "trainset"
+            
+            # Check if preprocessing already exists
+            gt_wavs_dir = exp_dir / "0_gt_wavs"
+            wav16k_dir = exp_dir / "1_16k_wavs"
+            
             trainset_dir.mkdir(exist_ok=True)
             
             # Copy/link audio files to trainset
@@ -623,66 +730,173 @@ class RVCTrainingPipeline:
                     if not dest.exists():
                         shutil.copy2(audio_path, dest)
             
-            if self._check_cancelled(job_id):
-                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
-                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
+            # Get all source audio files in trainset
+            source_files = set()
+            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
+                source_files.update(f.stem for f in trainset_dir.glob(ext))
             
-            # Step 2: Preprocess
-            self._update_progress(
-                job_id,
-                step="Preprocessing audio",
-                progress=0.1,
-                message="Slicing and resampling audio..."
-            )
+            # Get already processed files (check 0_gt_wavs for file stems)
+            processed_files = set()
+            if gt_wavs_dir.exists():
+                # Files are saved as {stem}_{chunk_id}.wav, extract original stem
+                for f in gt_wavs_dir.glob("*.wav"):
+                    # Remove the _N suffix to get original file stem
+                    parts = f.stem.rsplit("_", 1)
+                    if len(parts) == 2 and parts[1].isdigit():
+                        processed_files.add(parts[0])
+                    else:
+                        processed_files.add(f.stem)
             
-            await self._run_preprocess(
-                exp_dir=str(exp_dir),
-                trainset_dir=str(trainset_dir),
-                sample_rate=config.sample_rate.value,
-                n_threads=config.n_threads
-            )
+            # Determine which files need processing
+            new_files = source_files - processed_files
             
-            if self._check_cancelled(job_id):
-                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
-                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
-            
-            # Step 3: Extract F0
-            self._update_progress(
-                job_id,
-                status=TrainingStatus.EXTRACTING_F0,
-                step="Extracting pitch (F0)",
-                progress=0.25,
-                message=f"Using {config.f0_method.value} method..."
-            )
-            
-            await self._run_f0_extraction(
-                exp_dir=str(exp_dir),
-                f0_method=config.f0_method.value,
-                device=self.device
-            )
-            
-            if self._check_cancelled(job_id):
-                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
-                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
-            
-            # Step 4: Extract Features
-            self._update_progress(
-                job_id,
-                status=TrainingStatus.EXTRACTING_FEATURES,
-                step="Extracting features (HuBERT)",
-                progress=0.4,
-                message="Extracting speaker embeddings..."
-            )
-            
-            await self._run_feature_extraction(
-                exp_dir=str(exp_dir),
-                device=self.device,
-                version=config.version.value
-            )
+            # Decide if we need to run preprocessing
+            if force_reprocess:
+                logger.info(f"[FORCE REPROCESS] Clearing existing preprocessed data for {config.exp_name}")
+                # Clear only preprocessed data, NOT the source trainset directory
+                for clear_dir in [gt_wavs_dir, wav16k_dir]:
+                    if clear_dir.exists():
+                        shutil.rmtree(clear_dir)
+                # Also clear F0 and feature data since they depend on preprocessed audio
+                for clear_dir in [exp_dir / "2a_f0", exp_dir / "2b_f0nsf", exp_dir / "3_feature256", exp_dir / "3_feature768"]:
+                    if clear_dir.exists():
+                        shutil.rmtree(clear_dir)
+                need_full_reprocess = True
+            elif new_files:
+                logger.info(f"[INCREMENTAL PREPROCESS] Found {len(new_files)} new files to process: {list(new_files)[:5]}...")
+                need_full_reprocess = False  # Only process new files
+            elif not gt_wavs_dir.exists() or not any(gt_wavs_dir.glob("*.wav")):
+                logger.info(f"[FULL PREPROCESS] No preprocessed data found for {config.exp_name}")
+                need_full_reprocess = True
+            else:
+                logger.info(f"[SKIP PREPROCESS] All {len(source_files)} files already preprocessed for {config.exp_name}")
+                need_full_reprocess = False
+                new_files = set()  # Nothing to process
             
             if self._check_cancelled(job_id):
                 self._update_progress(job_id, status=TrainingStatus.CANCELLED)
                 return TrainingResult(success=False, job_id=job_id, error="Cancelled")
+            
+            # Step 2: Preprocess (if needed)
+            if need_full_reprocess or new_files:
+                if new_files and not need_full_reprocess:
+                    # Incremental: only process specific new files
+                    files_to_process = [trainset_dir / f"{stem}.wav" for stem in new_files]
+                    # Also check other extensions
+                    for stem in new_files:
+                        for ext in [".wav", ".mp3", ".flac", ".ogg"]:
+                            f = trainset_dir / f"{stem}{ext}"
+                            if f.exists():
+                                files_to_process.append(f)
+                                break
+                    message = f"Processing {len(new_files)} new audio files..."
+                else:
+                    files_to_process = None  # Process all
+                    message = "Slicing and resampling audio..."
+                
+                self._update_progress(
+                    job_id,
+                    step="Preprocessing audio",
+                    progress=0.1,
+                    message=message
+                )
+                
+                await self._run_preprocess(
+                    exp_dir=str(exp_dir),
+                    trainset_dir=str(trainset_dir),
+                    sample_rate=config.sample_rate.value,
+                    n_threads=config.n_threads,
+                    specific_files=files_to_process
+                )
+            else:
+                logger.info(f"[SKIP PREPROCESS] Using existing preprocessed data for {config.exp_name}")
+                self._update_progress(
+                    job_id,
+                    step="Using existing preprocessed data",
+                    progress=0.1,
+                    message="Preprocessed audio found, skipping..."
+                )
+            
+            if self._check_cancelled(job_id):
+                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
+                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
+            
+            # Step 3: Extract F0 (if needed)
+            # F0 extraction should run if we did any preprocessing (full or incremental)
+            f0_dir = exp_dir / "2a_f0"
+            f0_exists = f0_dir.exists() and any(f0_dir.glob("*.npy"))
+            need_f0 = need_full_reprocess or bool(new_files) or not f0_exists
+            
+            if need_f0:
+                self._update_progress(
+                    job_id,
+                    status=TrainingStatus.EXTRACTING_F0,
+                    step="Extracting pitch (F0)",
+                    progress=0.25,
+                    message=f"Using {config.f0_method.value} method..."
+                )
+                
+                await self._run_f0_extraction(
+                    exp_dir=str(exp_dir),
+                    f0_method=config.f0_method.value,
+                    device=self.device
+                )
+            else:
+                logger.info(f"[SKIP F0] Using existing F0 data for {config.exp_name}")
+                self._update_progress(
+                    job_id,
+                    status=TrainingStatus.EXTRACTING_F0,
+                    step="Using existing F0 data",
+                    progress=0.25,
+                    message="F0 extraction found, skipping..."
+                )
+            
+            if self._check_cancelled(job_id):
+                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
+                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
+            
+            # Step 4: Extract Features (if needed)
+            # Feature extraction should run if we did any preprocessing (full or incremental)
+            features_dir = exp_dir / "3_feature768" if config.version == RVCVersion.V2 else exp_dir / "3_feature256"
+            features_exist = features_dir.exists() and any(features_dir.glob("*.npy"))
+            need_features = need_full_reprocess or bool(new_files) or not features_exist
+            
+            if need_features:
+                self._update_progress(
+                    job_id,
+                    status=TrainingStatus.EXTRACTING_FEATURES,
+                    step="Extracting features (HuBERT)",
+                    progress=0.4,
+                    message="Extracting speaker embeddings..."
+                )
+                
+                await self._run_feature_extraction(
+                    exp_dir=str(exp_dir),
+                    device=self.device,
+                    version=config.version.value
+                )
+            else:
+                logger.info(f"[SKIP FEATURES] Using existing feature data for {config.exp_name}")
+                self._update_progress(
+                    job_id,
+                    status=TrainingStatus.EXTRACTING_FEATURES,
+                    step="Using existing features",
+                    progress=0.4,
+                    message="Feature extraction found, skipping..."
+                )
+            
+            if self._check_cancelled(job_id):
+                self._update_progress(job_id, status=TrainingStatus.CANCELLED)
+                return TrainingResult(success=False, job_id=job_id, error="Cancelled")
+            
+            # Handle checkpoint continuation vs fresh start
+            if not continue_from_checkpoint:
+                # Fresh training requested - clear any existing checkpoints
+                logger.info(f"[FRESH TRAINING] Clearing existing checkpoints for {config.exp_name}")
+                for ckpt_pattern in ["G_*.pth", "D_*.pth"]:
+                    for ckpt in exp_dir.glob(ckpt_pattern):
+                        logger.info(f"  Removing checkpoint: {ckpt.name}")
+                        ckpt.unlink()
             
             # Step 5: Train Model
             self._update_progress(
@@ -693,8 +907,11 @@ class RVCTrainingPipeline:
                 message="Starting model training..."
             )
             
-            # Resolve pretrained paths
-            pretrain_g, pretrain_d = self._resolve_pretrained_paths(config)
+            # Resolve pretrained paths - use checkpoint if available, otherwise base pretrained
+            pretrain_g, pretrain_d = self._resolve_pretrained_paths_with_checkpoint(
+                config=config,
+                exp_dir=exp_dir
+            )
             
             await self._run_training(
                 exp_dir=str(exp_dir),
@@ -830,7 +1047,8 @@ class RVCTrainingPipeline:
         exp_dir: str,
         trainset_dir: str,
         sample_rate: int,
-        n_threads: int = 4
+        n_threads: int = 4,
+        specific_files: list = None
     ):
         """
         Run audio preprocessing.
@@ -838,6 +1056,9 @@ class RVCTrainingPipeline:
         Creates:
         - {exp_dir}/0_gt_wavs/     - Ground truth wavs at target SR
         - {exp_dir}/1_16k_wavs/    - 16kHz wavs for feature extraction
+        
+        Args:
+            specific_files: If provided, only process these files (for incremental preprocessing)
         """
         import asyncio
         import soundfile as sf
@@ -851,10 +1072,14 @@ class RVCTrainingPipeline:
         gt_wavs_dir.mkdir(exist_ok=True)
         wav16k_dir.mkdir(exist_ok=True)
         
-        # Get all audio files
-        audio_files = []
-        for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
-            audio_files.extend(Path(trainset_dir).glob(ext))
+        # Get audio files to process
+        if specific_files:
+            audio_files = [Path(f) for f in specific_files if Path(f).exists()]
+            logger.info(f"Incremental preprocessing: {len(audio_files)} specific files")
+        else:
+            audio_files = []
+            for ext in ["*.wav", "*.mp3", "*.flac", "*.ogg"]:
+                audio_files.extend(Path(trainset_dir).glob(ext))
         
         logger.info(f"Preprocessing {len(audio_files)} audio files")
         
