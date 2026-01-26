@@ -429,53 +429,81 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
             net_g = DDP(net_g)
             net_d = DDP(net_d)
 
-    try:  # 如果能加载自动resume
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path(hps.model_dir, "D_*.pth"), net_d, optim_d
-        )  # D多半加载没事
+    # =========================================================================
+    # CHECKPOINT LOADING - with explicit logging for debugging
+    # Priority: 1) Existing G_*.pth/D_*.pth checkpoints, 2) Pretrained weights
+    # =========================================================================
+    checkpoint_loaded = False
+    try:
+        # Try to find and load existing checkpoints
+        d_checkpoint_path = utils.latest_checkpoint_path(hps.model_dir, "D_*.pth")
+        g_checkpoint_path = utils.latest_checkpoint_path(hps.model_dir, "G_*.pth")
+        
         if rank == 0:
-            logger.info("loaded D")
-        # _, _, _, epoch_str = utils.load_checkpoint(utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g,load_opt=0)
-        _, _, _, epoch_str = utils.load_checkpoint(
-            utils.latest_checkpoint_path(hps.model_dir, "G_*.pth"), net_g, optim_g
-        )
+            logger.info("=" * 60)
+            logger.info("[CHECKPOINT LOADING] Attempting to load existing checkpoints...")
+            logger.info(f"  Model dir: {hps.model_dir}")
+            logger.info(f"  D checkpoint: {d_checkpoint_path}")
+            logger.info(f"  G checkpoint: {g_checkpoint_path}")
+        
+        _, _, _, epoch_str = utils.load_checkpoint(d_checkpoint_path, net_d, optim_d)
+        if rank == 0:
+            logger.info(f"  ✓ Loaded D checkpoint (epoch {epoch_str})")
+        
+        _, _, _, epoch_str = utils.load_checkpoint(g_checkpoint_path, net_g, optim_g)
+        if rank == 0:
+            logger.info(f"  ✓ Loaded G checkpoint (epoch {epoch_str})")
+        
         global_step = (epoch_str - 1) * len(train_loader)
-        # epoch_str = 1
-        # global_step = 0
-    except:  # 如果首次不能加载，加载pretrain
-        # traceback.print_exc()
+        checkpoint_loaded = True
+        
+        if rank == 0:
+            logger.info(f"  → RESUMING from epoch {epoch_str}, global_step {global_step}")
+            logger.info("=" * 60)
+            
+    except Exception as e:
+        # No checkpoints found or loading failed - fall back to pretrained
+        if rank == 0:
+            logger.info("=" * 60)
+            logger.info("[CHECKPOINT LOADING] No checkpoints found or loading failed")
+            logger.info(f"  Reason: {str(e)}")
+            logger.info("  → Starting fresh training from pretrained weights")
+            logger.info("=" * 60)
+        
         epoch_str = 1
         global_step = 0
+        
         if hps.pretrainG != "":
             if rank == 0:
-                logger.info("loaded pretrained %s" % (hps.pretrainG))
+                logger.info(f"[PRETRAIN] Loading generator: {hps.pretrainG}")
             if hasattr(net_g, "module"):
-                logger.info(
-                    net_g.module.load_state_dict(
-                        torch.load(hps.pretrainG, map_location="cpu")["model"]
-                    )
-                )  ##测试不加载优化器
+                load_result = net_g.module.load_state_dict(
+                    torch.load(hps.pretrainG, map_location="cpu")["model"]
+                )
+                if rank == 0:
+                    logger.info(f"  ✓ Generator loaded: {load_result}")
             else:
-                logger.info(
-                    net_g.load_state_dict(
-                        torch.load(hps.pretrainG, map_location="cpu")["model"]
-                    )
-                )  ##测试不加载优化器
+                load_result = net_g.load_state_dict(
+                    torch.load(hps.pretrainG, map_location="cpu")["model"]
+                )
+                if rank == 0:
+                    logger.info(f"  ✓ Generator loaded: {load_result}")
+                    
         if hps.pretrainD != "":
             if rank == 0:
-                logger.info("loaded pretrained %s" % (hps.pretrainD))
+                logger.info(f"[PRETRAIN] Loading discriminator: {hps.pretrainD}")
             if hasattr(net_d, "module"):
-                logger.info(
-                    net_d.module.load_state_dict(
-                        torch.load(hps.pretrainD, map_location="cpu")["model"]
-                    )
+                load_result = net_d.module.load_state_dict(
+                    torch.load(hps.pretrainD, map_location="cpu")["model"]
                 )
+                if rank == 0:
+                    logger.info(f"  ✓ Discriminator loaded: {load_result}")
             else:
-                logger.info(
-                    net_d.load_state_dict(
-                        torch.load(hps.pretrainD, map_location="cpu")["model"]
-                    )
+                load_result = net_d.load_state_dict(
+                    torch.load(hps.pretrainD, map_location="cpu")["model"]
                 )
+                if rank == 0:
+                    logger.info(f"  ✓ Discriminator loaded: {load_result}")
 
     scheduler_g = torch.optim.lr_scheduler.ExponentialLR(
         optim_g, gamma=hps.train.lr_decay, last_epoch=epoch_str - 2
