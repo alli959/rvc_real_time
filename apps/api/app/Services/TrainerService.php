@@ -21,12 +21,15 @@ use App\Models\VoiceModel;
 class TrainerService
 {
     protected string $baseUrl;
+    protected string $scannerUrl;
     protected int $timeout;
 
     public function __construct()
     {
-        // Use the new separate trainer service URL
+        // Training jobs use the dedicated trainer service
         $this->baseUrl = config('services.trainer.url', 'http://trainer:8002') . '/api/v1/trainer';
+        // Model scanning uses the voice-engine trainer API (has ModelScanner)
+        $this->scannerUrl = config('services.voice_engine.trainer_url', 'http://voice-engine:8001/api/v1/trainer');
         $this->timeout = config('services.trainer.timeout', 600);
     }
 
@@ -53,7 +56,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/prompts/languages");
+                ->get("{$this->scannerUrl}/prompts/languages");
             
             if ($response->successful()) {
                 return $response->json('languages', ['en', 'is']);
@@ -84,7 +87,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/scan", [
+                ->post("{$this->scannerUrl}/scan", [
                     'model_path' => $modelPath,
                     'languages' => $languages,
                 ]);
@@ -122,7 +125,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/analyze-gaps", [
+                ->post("{$this->scannerUrl}/analyze-gaps", [
                     'model_path' => $modelPath,
                     'language' => $language,
                 ]);
@@ -149,7 +152,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/phonemes/{$language}");
+                ->get("{$this->scannerUrl}/phonemes/{$language}");
 
             if ($response->successful()) {
                 return $response->json();
@@ -168,7 +171,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/prompts/{$language}");
+                ->get("{$this->scannerUrl}/prompts/{$language}");
 
             if ($response->successful()) {
                 return $response->json();
@@ -187,7 +190,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/prompts/{$language}/for-phonemes", $phonemes);
+                ->post("{$this->scannerUrl}/prompts/{$language}/for-phonemes", $phonemes);
 
             if ($response->successful()) {
                 return $response->json();
@@ -421,7 +424,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/checkpoint/{$jobId}", [
+                ->post("{$this->scannerUrl}/checkpoint/{$jobId}", [
                     'stop_after' => $stopAfter,
                 ]);
 
@@ -448,7 +451,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/checkpoint/{$jobId}/status");
+                ->get("{$this->scannerUrl}/checkpoint/{$jobId}/status");
 
             if ($response->successful()) {
                 return $response->json();
@@ -500,7 +503,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions", $payload);
+                ->post("{$this->scannerUrl}/wizard/sessions", $payload);
 
             if ($response->successful()) {
                 return $response->json();
@@ -520,7 +523,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/wizard/sessions/{$sessionId}");
+                ->get("{$this->scannerUrl}/wizard/sessions/{$sessionId}");
 
             if ($response->successful()) {
                 return $response->json();
@@ -539,7 +542,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions/{$sessionId}/start");
+                ->post("{$this->scannerUrl}/wizard/sessions/{$sessionId}/start");
 
             if ($response->successful()) {
                 return $response->json();
@@ -558,7 +561,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/wizard/sessions/{$sessionId}/current");
+                ->get("{$this->scannerUrl}/wizard/sessions/{$sessionId}/current");
 
             if ($response->successful()) {
                 return $response->json();
@@ -577,7 +580,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions/{$sessionId}/submit", [
+                ->post("{$this->scannerUrl}/wizard/sessions/{$sessionId}/submit", [
                     'audio' => $audioBase64,
                     'sample_rate' => $sampleRate,
                     'auto_advance' => $autoAdvance,
@@ -615,7 +618,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions/{$sessionId}/{$action}");
+                ->post("{$this->scannerUrl}/wizard/sessions/{$sessionId}/{$action}");
 
             if ($response->successful()) {
                 return $response->json();
@@ -634,7 +637,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions/{$sessionId}/pause");
+                ->post("{$this->scannerUrl}/wizard/sessions/{$sessionId}/pause");
 
             if ($response->successful()) {
                 return $response->json();
@@ -653,7 +656,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/wizard/sessions/{$sessionId}/complete");
+                ->post("{$this->scannerUrl}/wizard/sessions/{$sessionId}/complete");
 
             if ($response->successful()) {
                 return $response->json();
@@ -672,7 +675,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->delete("{$this->baseUrl}/wizard/sessions/{$sessionId}");
+                ->delete("{$this->scannerUrl}/wizard/sessions/{$sessionId}");
 
             return $response->successful();
         } catch (\Exception $e) {
@@ -849,7 +852,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout * 2) // Double timeout for inference tests
-                ->post("{$this->baseUrl}/test", $payload);
+                ->post("{$this->scannerUrl}/test", $payload);
 
             if ($response->successful()) {
                 $results = $response->json();
@@ -937,7 +940,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/model/{$expName}/recordings");
+                ->get("{$this->scannerUrl}/model/{$expName}/recordings");
 
             if ($response->successful()) {
                 return $response->json();
@@ -962,7 +965,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/model/{$expName}/category-status/{$language}");
+                ->get("{$this->scannerUrl}/model/{$expName}/category-status/{$language}");
 
             if ($response->successful()) {
                 return $response->json();
@@ -994,7 +997,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout)
-                ->post("{$this->baseUrl}/model/{$expName}/train", $payload);
+                ->post("{$this->scannerUrl}/model/{$expName}/train", $payload);
 
             if ($response->successful()) {
                 return $response->json();
@@ -1026,7 +1029,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/model/{$expName}/info");
+                ->get("{$this->scannerUrl}/model/{$expName}/info");
 
             if ($response->successful()) {
                 $info = $response->json();
@@ -1034,7 +1037,7 @@ class TrainerService
                 // Also check for active training
                 try {
                     $activeResponse = Http::timeout($this->timeout)
-                        ->get("{$this->baseUrl}/model/{$expName}/active");
+                        ->get("{$this->scannerUrl}/model/{$expName}/active");
                     
                     if ($activeResponse->successful() && $activeResponse->json('active')) {
                         $job = $activeResponse->json('job');
@@ -1079,7 +1082,7 @@ class TrainerService
     {
         try {
             $response = Http::timeout($this->timeout)
-                ->get("{$this->baseUrl}/model/{$modelDir}/config");
+                ->get("{$this->scannerUrl}/model/{$modelDir}/config");
 
             if ($response->successful()) {
                 return $response->json();
@@ -1142,7 +1145,7 @@ class TrainerService
             }
 
             $response = Http::timeout($this->timeout * 2) // Double timeout for potentially long operations
-                ->post("{$this->baseUrl}/model/extract", $payload);
+                ->post("{$this->scannerUrl}/model/extract", $payload);
 
             if ($response->successful()) {
                 return $response->json();

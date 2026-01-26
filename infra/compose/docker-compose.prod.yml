@@ -211,10 +211,6 @@ services:
       TRAINER_URL: http://trainer:8002
       PREPROCESSOR_URL: http://preprocess:8003
       
-      # Training and preprocessing services
-      TRAINER_URL: http://trainer:8002
-      PREPROCESSOR_URL: http://preprocess:8003
-      
       # Voice models configuration - use S3 for cloud storage
       VOICE_MODELS_STORAGE: ${VOICE_MODELS_STORAGE:-local}
       VOICE_MODELS_PATH: /var/www/html/storage/models

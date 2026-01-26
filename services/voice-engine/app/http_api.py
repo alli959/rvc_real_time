@@ -125,10 +125,17 @@ except ImportError:
     YOUTUBE_AVAILABLE = False
     logger.warning("YouTube service not available - yt-dlp may not be installed")
 
-# Trainer API has been moved to the dedicated trainer service (port 8002)
-# This voice-engine service now handles inference only
-TRAINER_AVAILABLE = False
-trainer_router = None
+# Trainer API - needed for model scanning and analysis
+# Training itself is handled by the dedicated trainer service (port 8002)
+# but scanning/analysis endpoints are served here
+try:
+    from app.trainer_api import router as trainer_router
+    TRAINER_AVAILABLE = True
+    logger.info("Trainer API loaded for model scanning")
+except ImportError as e:
+    TRAINER_AVAILABLE = False
+    trainer_router = None
+    logger.warning(f"Trainer API not available: {e}")
 
 # Import admin APIs (optional)
 try:
