@@ -426,28 +426,31 @@ class ModelStorage:
                     except Exception as e:
                         logger.warning(f"Failed to read {wav_path}: {e}")
         
-        # Also check uploads directory from preprocessor (/data/uploads/{model_name}/)
-        if self.uploads_dir:
-            uploads_model_dir = self.uploads_dir / model_name
-            if uploads_model_dir.exists():
-                existing_files = {r.filename for r in metadata.recordings}
-                # Check all audio file types
-                for pattern in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.m4a", "*.webm"]:
-                    for audio_path in uploads_model_dir.glob(pattern):
-                        if audio_path.name not in existing_files:
-                            try:
-                                data, sr = sf.read(str(audio_path))
-                                duration = len(data) / sr
-                                metadata.recordings.append(RecordingInfo(
-                                    filename=audio_path.name,
-                                    duration_seconds=round(duration, 2),
-                                    sample_rate=sr,
-                                    uploaded_at=datetime.fromtimestamp(audio_path.stat().st_mtime).isoformat() + "Z"
-                                ))
-                                logger.debug(f"Found upload: {audio_path.name} ({duration:.1f}s)")
-                            except Exception as e:
-                                logger.warning(f"Failed to read {audio_path}: {e}")
-                logger.info(f"Scanned uploads dir for {model_name}, found {len(metadata.recordings)} total recordings")
+        # Also check trainset directory (where audio is copied for training)
+        trainset_dir = model_dir / "trainset"
+        if trainset_dir.exists():
+            existing_files = {r.filename for r in metadata.recordings}
+            for pattern in ["*.wav", "*.mp3", "*.flac", "*.ogg", "*.m4a", "*.webm"]:
+                for audio_path in trainset_dir.glob(pattern):
+                    if audio_path.name not in existing_files:
+                        try:
+                            data, sr = sf.read(str(audio_path))
+                            duration = len(data) / sr
+                            metadata.recordings.append(RecordingInfo(
+                                filename=audio_path.name,
+                                duration_seconds=round(duration, 2),
+                                sample_rate=sr,
+                                uploaded_at=datetime.fromtimestamp(audio_path.stat().st_mtime).isoformat() + "Z"
+                            ))
+                            logger.debug(f"Found trainset file: {audio_path.name} ({duration:.1f}s)")
+                        except Exception as e:
+                            logger.warning(f"Failed to read {audio_path}: {e}")
+            if metadata.recordings:
+                logger.info(f"Found {len(metadata.recordings)} files in trainset for {model_name}")
+        
+        # NOTE: We no longer scan a separate uploads directory.
+        # All uploaded files now go directly to {model_dir}/trainset/
+        # This simplifies the data flow - one canonical location for all training audio.
         
         # Also check 0_gt_wavs for existing training data
         gt_wavs_dir = model_dir / "0_gt_wavs"
@@ -510,8 +513,8 @@ class ModelStorage:
 # Global instance
 _model_storage: Optional[ModelStorage] = None
 
-# Path to preprocessor uploads (shared volume)
-UPLOADS_DIR = "/data/uploads"
+# Path to uploads directory (local voice-engine uploads)
+UPLOADS_DIR = "/app/uploads"
 
 
 def get_model_storage() -> ModelStorage:
