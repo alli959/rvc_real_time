@@ -103,9 +103,10 @@ class TextAudioLoaderMultiNSFsid(torch.utils.data.Dataset):
                     sampling_rate, self.sampling_rate
                 )
             )
-        audio_norm = audio
-        #        audio_norm = audio / self.max_wav_value
-        #        audio_norm = audio / np.abs(audio).max()
+        # CRITICAL FIX: Normalize int16 audio to [-1, 1] range
+        # scipy.io.wavfile.read() returns raw int16 values (-32768 to 32767)
+        # Without normalization, loss values explode (billions instead of ~10)
+        audio_norm = audio / self.max_wav_value
 
         audio_norm = audio_norm.unsqueeze(0)
         spec_filename = filename.replace(".wav", ".spec.pt")
@@ -295,9 +296,10 @@ class TextAudioLoader(torch.utils.data.Dataset):
                     sampling_rate, self.sampling_rate
                 )
             )
-        audio_norm = audio
-        #        audio_norm = audio / self.max_wav_value
-        #        audio_norm = audio / np.abs(audio).max()
+        # CRITICAL FIX: Normalize int16 audio to [-1, 1] range
+        # scipy.io.wavfile.read() returns raw int16 values (-32768 to 32767)
+        # Without normalization, loss values explode (billions instead of ~10)
+        audio_norm = audio / self.max_wav_value
 
         audio_norm = audio_norm.unsqueeze(0)
         spec_filename = filename.replace(".wav", ".spec.pt")
