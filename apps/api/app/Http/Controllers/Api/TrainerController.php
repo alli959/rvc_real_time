@@ -286,11 +286,17 @@ class TrainerController extends Controller
      */
     public function uploadAudio(Request $request): JsonResponse
     {
+        \Log::warning('=== Upload Audio Method Called ===', [
+            'method' => $request->method(),
+            'content_type' => $request->header('Content-Type'),
+            'content_length' => $request->header('Content-Length'),
+        ]);
+        
         // Normalize files to always be an array (handles both single file and multiple files)
         // Check both 'files' and 'files[]' field names - different clients may use different conventions
         $uploadedFiles = $request->file('files');
         
-        \Log::info('Upload audio request received', [
+        \Log::warning('Upload audio request received', [
             'exp_name' => $request->input('exp_name'),
             'has_files_field' => $request->hasFile('files'),
             'files_field_type' => $uploadedFiles ? gettype($uploadedFiles) : 'null',
@@ -304,7 +310,6 @@ class TrainerController extends Controller
         
         $request->validate([
             'exp_name' => ['required', 'string', 'max:100'],
-            'files' => ['required'],
         ]);
         
         if (!$uploadedFiles || count($uploadedFiles) === 0) {
@@ -314,10 +319,10 @@ class TrainerController extends Controller
         $files = [];
         foreach ($uploadedFiles as $file) {
             // Validate each file
-            if (!in_array($file->getClientOriginalExtension(), ['wav', 'mp3', 'flac', 'ogg'])) {
+            if (!in_array($file->getClientOriginalExtension(), ['wav', 'mp3', 'flac', 'ogg', 'm4a', 'aac'])) {
                 return response()->json(['error' => 'Invalid file type: ' . $file->getClientOriginalName()], 422);
             }
-            if ($file->getSize() > 102400 * 1024) { // 100MB
+            if ($file->getSize() > 102400 * 1024) { // 100MB per file
                 return response()->json(['error' => 'File too large: ' . $file->getClientOriginalName()], 422);
             }
             
@@ -325,9 +330,13 @@ class TrainerController extends Controller
                 'name' => $file->getClientOriginalName(),
                 'size' => $file->getSize(),
             ]);
+            
+            // Use file path instead of loading content into memory
+            // This prevents memory issues when uploading many large files
             $files[] = [
                 'name' => $file->getClientOriginalName(),
-                'content' => file_get_contents($file->getRealPath()),
+                'path' => $file->getRealPath(),
+                'size' => $file->getSize(),
             ];
         }
 

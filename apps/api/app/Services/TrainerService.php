@@ -228,7 +228,11 @@ class TrainerService
             
             // Build multipart form data using Guzzle directly
             // Laravel's Http::attach() sends form fields with filename disposition which FastAPI doesn't parse as Form(...)
-            $client = new \GuzzleHttp\Client(['timeout' => $this->timeout]);
+            // Use a longer timeout for large file uploads (10 minutes)
+            $client = new \GuzzleHttp\Client([
+                'timeout' => 600,  // 10 minutes for large uploads
+                'connect_timeout' => 30,
+            ]);
             
             $multipart = [
                 [
@@ -237,12 +241,23 @@ class TrainerService
                 ],
             ];
             
+            // Stream files directly from disk instead of loading into memory
             foreach ($files as $file) {
-                $multipart[] = [
-                    'name' => 'files',
-                    'contents' => $file['content'],
-                    'filename' => $file['name'],
-                ];
+                if (isset($file['path']) && file_exists($file['path'])) {
+                    // Stream from file path (memory efficient)
+                    $multipart[] = [
+                        'name' => 'files',
+                        'contents' => fopen($file['path'], 'r'),
+                        'filename' => $file['name'],
+                    ];
+                } elseif (isset($file['content'])) {
+                    // Fallback: use content directly (legacy support)
+                    $multipart[] = [
+                        'name' => 'files',
+                        'contents' => $file['content'],
+                        'filename' => $file['name'],
+                    ];
+                }
             }
             
             $response = $client->post("{$preprocessorUrl}/api/v1/preprocess/upload", [
@@ -384,18 +399,18 @@ class TrainerService
             return;
         }
         
-        // Build the model path - models are stored at /models/{exp_name}/{exp_name}.pth
-        // which maps to voice-engine/assets/models/{exp_name}/{exp_name}.pth
-        // The API scans models from VOICE_MODELS_PATH which is mounted to the same directory
-        $modelPath = "{$expName}/{$expName}.pth";
+        // Build the model path - use full absolute path for consistency
+        // Models are stored at /var/www/html/storage/models/{exp_name}/{exp_name}.pth
+        $storageBasePath = config('voice_models.local.path', '/var/www/html/storage/models');
+        $modelPath = "{$storageBasePath}/{$expName}/{$expName}.pth";
         $indexPath = null;
         
         // Try to find the index file name from result
         if (isset($status['result']['index_path'])) {
-            // Convert absolute path to relative path for storage
+            // Convert to full absolute path
             $resultIndex = $status['result']['index_path'];
-            // Extract just the relative path part: {exp_name}/{exp_name}.index
-            $indexPath = "{$expName}/" . basename($resultIndex);
+            // Build full path: {storage_base}/{exp_name}/{filename}.index
+            $indexPath = "{$storageBasePath}/{$expName}/" . basename($resultIndex);
         }
         
         // Update the model

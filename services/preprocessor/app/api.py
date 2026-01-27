@@ -432,27 +432,46 @@ async def upload_training_audio(
     # Allowed extensions
     allowed_extensions = {'.wav', '.mp3', '.flac', '.ogg', '.m4a', '.aac'}
     
-    for file in files:
+    async def save_file(file: UploadFile) -> tuple[bool, str]:
+        """Save a single file asynchronously with chunked reading."""
         try:
-            # Validate extension
             ext = Path(file.filename).suffix.lower()
             if ext not in allowed_extensions:
-                errors.append(f"Skipped {file.filename}: unsupported format {ext}")
-                continue
+                return False, f"Skipped {file.filename}: unsupported format {ext}"
             
-            # Save file
             file_path = upload_dir / file.filename
-            with open(file_path, "wb") as f:
-                shutil.copyfileobj(file.file, f)
             
-            uploaded_count += 1
+            # Use chunked async reading to avoid blocking the event loop
+            # Read in 1MB chunks for large files
+            chunk_size = 1024 * 1024  # 1MB chunks
+            
+            with open(file_path, "wb") as f:
+                while True:
+                    # Read chunk asynchronously
+                    chunk = await file.read(chunk_size)
+                    if not chunk:
+                        break
+                    f.write(chunk)
+            
             logger.info(f"Uploaded: {file.filename} -> {file_path}")
+            return True, file.filename
             
         except Exception as e:
-            errors.append(f"Failed to upload {file.filename}: {str(e)}")
             logger.error(f"Upload error for {file.filename}: {e}")
+            return False, f"Failed to upload {file.filename}: {str(e)}"
         finally:
             await file.close()
+    
+    # Process all files concurrently for better performance
+    results = await asyncio.gather(*[save_file(f) for f in files], return_exceptions=True)
+    
+    for result in results:
+        if isinstance(result, Exception):
+            errors.append(str(result))
+        elif result[0]:  # Success
+            uploaded_count += 1
+        else:  # Error message
+            errors.append(result[1])
     
     if uploaded_count == 0:
         raise HTTPException(400, f"No files uploaded. Errors: {'; '.join(errors)}")

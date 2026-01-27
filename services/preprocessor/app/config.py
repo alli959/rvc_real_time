@@ -44,12 +44,19 @@ class Settings:
     # ASSETS_ROOT is for read-only shared assets (hubert, rmvpe, etc)
     assets_root: str = os.getenv("ASSETS_ROOT", "/app/assets")
     
-    # Legacy compatibility: models_dir now points to data_root for experiment outputs
+    # Preprocessing output directory - where preprocessing artifacts go
+    # This is under data_root/preprocess to separate from uploads and training
+    @property
+    def preprocess_dir(self) -> str:
+        """Preprocessing artifacts directory."""
+        return os.path.join(self.data_root, "preprocess")
+    
+    # Legacy compatibility: models_dir now points to preprocess_dir for experiment outputs
     # Final trained models go to models_root (handled by trainer)
     @property
     def models_dir(self) -> str:
         """Experiment output directory (for preprocessing artifacts)."""
-        return self.data_root
+        return self.preprocess_dir
     
     # Asset paths (read-only)
     @property
