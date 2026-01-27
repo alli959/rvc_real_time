@@ -11,6 +11,7 @@ export const api = axios.create({
   },
   withCredentials: true,
   withXSRFToken: true,
+  timeout: 300000,  // 5 minutes for large file uploads
 });
 
 // Fetch CSRF cookie from Sanctum
@@ -113,6 +114,12 @@ export interface VoiceModel {
   is_phoneme_coverage?: number | null;
   is_missing_phonemes?: string[] | null;
   language_scanned_at?: string | null;
+
+  // Training progress (when status === 'training')
+  training_progress?: number;
+  training_job_id?: string | null;
+  training_epoch?: number | null;
+  training_total_epochs?: number | null;
 
   // URLs (optional, may be included by API)
   download_url?: string | null;
@@ -1169,6 +1176,9 @@ export const trainerApi = {
     status: string;
     progress: number;
     created_at: string;
+    current_epoch?: number;
+    total_epochs?: number;
+    message?: string;
   }>> => {
     const response = await api.get('/trainer/jobs');
     return response.data;
@@ -1180,6 +1190,79 @@ export const trainerApi = {
   cancelTraining: async (jobId: string): Promise<{ success: boolean; message: string }> => {
     const response = await api.post(`/trainer/jobs/${jobId}/cancel`);
     return response.data;
+  },
+
+  /**
+   * Upload training audio files for a model
+   * Uploads files in batches to avoid timeout issues with large uploads
+   */
+  uploadTrainingAudio: async (
+    expName: string, 
+    files: File[], 
+    language: string = 'en',
+    onProgress?: (progress: number) => void
+  ): Promise<{ success: boolean; files_uploaded: number; files: string[] }> => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    const BATCH_SIZE = 4;  // Upload 4 files at a time to avoid timeout issues
+    
+    const allUploadedFiles: string[] = [];
+    let totalUploaded = 0;
+    
+    // Split files into batches
+    const batches: File[][] = [];
+    for (let i = 0; i < files.length; i += BATCH_SIZE) {
+      batches.push(files.slice(i, i + BATCH_SIZE));
+    }
+    
+    // Upload each batch sequentially
+    for (let batchIndex = 0; batchIndex < batches.length; batchIndex++) {
+      const batch = batches[batchIndex];
+      const formData = new FormData();
+      formData.append('exp_name', expName);
+      formData.append('language', language);
+      batch.forEach(file => {
+        formData.append('files[]', file);
+      });
+
+      // Calculate progress including previous batches
+      const previousBatchesProgress = (batchIndex / batches.length) * 100;
+      const currentBatchWeight = 100 / batches.length;
+      
+      const response = await axios.post(`${API_URL}/trainer/upload`, formData, {
+        headers: {
+          ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        },
+        withCredentials: true,
+        timeout: 300000,  // 5 minutes per batch (smaller batches = shorter timeout needed)
+        onUploadProgress: (progressEvent) => {
+          if (onProgress && progressEvent.total) {
+            const batchProgress = (progressEvent.loaded / progressEvent.total) * currentBatchWeight;
+            onProgress(Math.round(previousBatchesProgress + batchProgress));
+          }
+        },
+      });
+      
+      if (response.data.files) {
+        allUploadedFiles.push(...response.data.files);
+      }
+      totalUploaded += batch.length;
+      
+      // Report 100% for this batch before moving to next
+      if (onProgress && batchIndex < batches.length - 1) {
+        onProgress(Math.round(((batchIndex + 1) / batches.length) * 100));
+      }
+    }
+    
+    // Final progress
+    if (onProgress) {
+      onProgress(100);
+    }
+    
+    return { 
+      success: true, 
+      files_uploaded: totalUploaded, 
+      files: allUploadedFiles 
+    };
   },
 
   // ============================================================================
@@ -1238,6 +1321,8 @@ export const trainerApi = {
     batch_size?: number;
     sample_rate?: number;
     f0_method?: string;
+    force_reprocess?: boolean;
+    continue_from_checkpoint?: boolean;
   }): Promise<{
     job_id: string;
     status: string;
