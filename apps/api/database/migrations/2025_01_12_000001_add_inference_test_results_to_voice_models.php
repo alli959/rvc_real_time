@@ -13,13 +13,13 @@ return new class extends Migration
     {
         Schema::table('voice_models', function (Blueprint $table) {
             // Inference test results
-            $table->float('inference_test_score')->nullable()->after('is_readiness_score');
+            $table->float('inference_test_score')->nullable()->after('metadata');
             $table->json('inference_test_results')->nullable()->after('inference_test_score');
             $table->timestamp('inference_tested_at')->nullable()->after('inference_test_results');
             
             // Per-language inference scores
-            $table->float('en_inference_score')->nullable()->after('en_readiness_score');
-            $table->float('is_inference_score')->nullable()->after('is_readiness_score');
+            $table->float('en_inference_score')->nullable()->after('inference_tested_at');
+            $table->float('is_inference_score')->nullable()->after('en_inference_score');
         });
     }
 
