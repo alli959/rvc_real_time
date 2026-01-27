@@ -744,16 +744,37 @@ function MyModelCard({
           {/* Training Progress or Add Recordings Link */}
           <div className="pt-2">
             {isTraining ? (
-              <button
-                onClick={(e) => {
-                  e.stopPropagation();
-                  router.push(`/dashboard/train?model=${model.slug || model.id}&resume=true`);
-                }}
-                className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-sm text-amber-400 hover:text-amber-300 transition-colors"
-              >
-                <Loader2 className="h-4 w-4 animate-spin" />
-                View Training Progress
-              </button>
+              <div className="space-y-2">
+                {/* Training Progress Bar */}
+                <div className="space-y-1">
+                  <div className="flex items-center justify-between text-xs">
+                    <span className="text-amber-400 flex items-center gap-1">
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      Training...
+                    </span>
+                    <span className="text-gray-400">
+                      {model.training_epoch && model.training_total_epochs 
+                        ? `Epoch ${model.training_epoch}/${model.training_total_epochs}` 
+                        : `${model.training_progress || 0}%`}
+                    </span>
+                  </div>
+                  <div className="h-2 bg-gray-700 rounded-full overflow-hidden">
+                    <div 
+                      className="h-full bg-amber-500 transition-all duration-300"
+                      style={{ width: `${model.training_progress || 0}%` }}
+                    />
+                  </div>
+                </div>
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    router.push(`/dashboard/train?model=${model.slug || model.id}&resume=true`);
+                  }}
+                  className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-sm text-amber-400 hover:text-amber-300 transition-colors"
+                >
+                  View Training Progress
+                </button>
+              </div>
             ) : (
               <Link
                 href={`/dashboard/train?model=${model.id}`}

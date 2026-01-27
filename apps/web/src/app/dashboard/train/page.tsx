@@ -4,7 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo, Suspense } from 'rea
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import {
-  Mic2, Upload, FileAudio, Check, X, ChevronLeft, ChevronRight,
+  Mic2, Mic, Upload, FileAudio, Check, X, ChevronLeft, ChevronRight,
   Loader2, AlertCircle, RotateCcw, Square, FolderUp, Wand2,
   Volume2, Waves, Target, Sparkles, Play, Plus, Music, Zap,
   Activity, ChevronDown, ChevronUp, GitBranch, History
@@ -154,6 +154,7 @@ function TrainPageContent() {
   // Import tab state
   const [importFiles, setImportFiles] = useState<File[]>([]);
   const [importUploading, setImportUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
   const [filesUploadedCount, setFilesUploadedCount] = useState(0); // Track uploaded file count
   const fileInputRef = useRef<HTMLInputElement>(null);
   
@@ -161,6 +162,13 @@ function TrainPageContent() {
   const [trainingJobId, setTrainingJobId] = useState<string | null>(null);
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [trainingStatus, setTrainingStatus] = useState<string>('');
+  const [trainingDetails, setTrainingDetails] = useState<any>(null);
+  const [checkpointMode, setCheckpointMode] = useState<'continue' | 'add-audio' | 'new-audio' | null>(null);
+  const [targetEpochs, setTargetEpochs] = useState<number>(200);
+  const [batchSize, setBatchSize] = useState<number>(6);
+  const [useAutoConfig, setUseAutoConfig] = useState<boolean>(false);
+  const [forceReprocess, setForceReprocess] = useState<boolean>(false);
+  const isPollingRef = useRef<boolean>(false);
   
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -174,7 +182,8 @@ function TrainPageContent() {
   const { data: modelsData, isLoading: modelsLoading, refetch: refetchModels } = useQuery({
     queryKey: ['my-models-for-training'],
     queryFn: () => voiceModelsApi.myModels({ per_page: 100 }),
-    enabled: step === 'select-model' || step === 'training-areas',
+    // Also enable when we need to get training job ID for resume
+    enabled: step === 'select-model' || step === 'training-areas' || (step === 'training-progress' && !trainingJobId),
   });
   
   // Fetch available languages
@@ -206,7 +215,7 @@ function TrainPageContent() {
     queryFn: () => selectedModel?.slug 
       ? trainerApi.getModelRecordings(selectedModel.slug)
       : null,
-    enabled: !!selectedModel?.slug && (step === 'training-areas' || step === 'start-training'),
+    enabled: !!selectedModel?.slug && (step === 'select-language' || step === 'training-areas' || step === 'start-training'),
   });
 
   // Fetch model training info (includes checkpoint status)
@@ -388,6 +397,14 @@ function TrainPageContent() {
         // If resuming training and model is training, go directly to progress view
         if (resumeTraining && model.status === 'training') {
           setStep('training-progress');
+          // Set job ID and initial progress - polling will be triggered by useEffect
+          if (model.training_job_id) {
+            setTrainingJobId(model.training_job_id);
+            setTrainingProgress(model.training_progress || 0);
+            setTrainingStatus(model.training_epoch && model.training_total_epochs 
+              ? `Training... Epoch ${model.training_epoch}/${model.training_total_epochs}`
+              : 'Training in progress...');
+          }
         } else {
           setStep('select-language');
         }
@@ -522,42 +539,43 @@ function TrainPageContent() {
     if (!selectedModel || importFiles.length === 0) return;
     
     setImportUploading(true);
+    setUploadProgress(0);
     setError(null);
     
     try {
-      const formData = new FormData();
-      formData.append('exp_name', selectedModel.slug || selectedModel.name);
-      formData.append('language', selectedLanguage);
-      importFiles.forEach(file => {
-        formData.append('files[]', file);
+      const expName = selectedModel.slug || selectedModel.name;
+      console.log('Uploading files to trainer:', { 
+        exp_name: expName,
+        fileCount: importFiles.length,
+        language: selectedLanguage 
       });
       
-      // Use 'auth_token' to match the axios interceptor
-      const token = localStorage.getItem('auth_token');
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'https://morphvox.net/api'}/trainer/upload`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Accept': 'application/json',
-        },
-        body: formData,
-      });
+      const result = await trainerApi.uploadTrainingAudio(
+        expName,
+        importFiles,
+        selectedLanguage,
+        (progress) => {
+          console.log('Upload progress:', progress);
+          setUploadProgress(progress);
+        }
+      );
       
-      if (!response.ok) {
-        const data = await response.json().catch(() => ({}));
-        throw new Error(data.message || data.error || 'Failed to upload audio files');
-      }
+      console.log('Upload result:', result);
       
       const uploadedCount = importFiles.length;
       setFilesUploadedCount(uploadedCount);
       setImportFiles([]);
+      // New files uploaded - force reprocessing
+      setForceReprocess(true);
       // Refresh recordings data then go to training step
       await refetchModelRecordings();
       setStep('start-training');
     } catch (err: any) {
-      setError(err.message || 'Failed to upload audio files');
+      console.error('Upload failed:', err);
+      setError(err.response?.data?.message || err.message || 'Failed to upload audio files');
     } finally {
       setImportUploading(false);
+      setUploadProgress(0);
     }
   };
   
@@ -608,6 +626,8 @@ function TrainPageContent() {
         // Refresh category status to show the new recordings
         refetchCategoryStatus();
         refetchModelRecordings();
+        // New recordings - force reprocessing
+        setForceReprocess(true);
         setStep('start-training');
       } else {
         const prompt = await trainerApi.getWizardPrompt(session.session_id);
@@ -645,6 +665,8 @@ function TrainPageContent() {
         // Refresh category status to show the new recordings
         refetchCategoryStatus();
         refetchModelRecordings();
+        // New recordings - force reprocessing
+        setForceReprocess(true);
         setStep('start-training');
       } else {
         const prompt = await trainerApi.getWizardPrompt(session.session_id);
@@ -671,27 +693,59 @@ function TrainPageContent() {
   };
   
   // Start actual training using all collected recordings
-  const startTraining = async () => {
+  const startTraining = async (mode?: 'continue' | 'fresh') => {
     if (!selectedModel) return;
     
     setError(null);
     setTrainingStatus('Starting training...');
     
+    // Determine training options based on mode and checkpointMode
+    // checkpointMode:
+    //   'continue' = just train more epochs (no reprocess, continue from checkpoint)
+    //   'add-audio' = add new audio and continue (reprocess, continue from checkpoint)
+    //   'new-audio' = fresh start with new audio (reprocess, no continue)
+    
+    // Mode param overrides checkpointMode for explicit button clicks
+    let shouldContinue = checkpointMode === 'continue' || checkpointMode === 'add-audio';
+    let needsReprocess = checkpointMode === 'add-audio' || checkpointMode === 'new-audio' || forceReprocess;
+    
+    // Override based on explicit mode parameter
+    if (mode === 'fresh') {
+      shouldContinue = false;
+      needsReprocess = true; // Fresh always implies reprocess
+    } else if (mode === 'continue') {
+      shouldContinue = true;
+      // Keep needsReprocess from checkpointMode
+    }
+    
     try {
       // Use the new API that collects all recordings from wizard sessions
+      const trainingConfig: {
+        force_reprocess: boolean;
+        continue_from_checkpoint: boolean;
+        epochs?: number;
+        batch_size?: number;
+      } = {
+        force_reprocess: needsReprocess,
+        continue_from_checkpoint: shouldContinue,
+      };
+      
+      // Always respect user's explicit epoch/batch choices unless auto-config is enabled
+      if (!useAutoConfig) {
+        trainingConfig.epochs = targetEpochs;
+        trainingConfig.batch_size = batchSize;
+      }
+      // When useAutoConfig is true, omit epochs/batch_size to let server auto-configure
+      
       const response = await trainerApi.trainModelWithRecordings(
         selectedModel.slug || selectedModel.name,
-        {
-          batch_size: 8,
-          epochs: 100,
-        }
+        trainingConfig
       );
       
       setTrainingJobId(response.job_id);
       setStep('training-progress');
       
-      // Poll for training status
-      pollTrainingStatus(response.job_id);
+      // Polling will be triggered by useEffect
     } catch (err: any) {
       setError(err.response?.data?.message || err.response?.data?.detail || err.message || 'Failed to start training');
     }
@@ -699,10 +753,17 @@ function TrainPageContent() {
   
   // Poll training status
   const pollTrainingStatus = async (jobId: string) => {
+    // Prevent multiple polling loops
+    if (isPollingRef.current) return;
+    isPollingRef.current = true;
+    
     const poll = async () => {
       try {
         const status = await trainerApi.trainingStatus(jobId);
         setTrainingProgress(status.progress || 0);
+        
+        // Store detailed status for display
+        setTrainingDetails(status);
         
         // Build a meaningful status message
         let statusMessage = status.message || status.status_message || status.status;
@@ -720,6 +781,7 @@ function TrainPageContent() {
         setTrainingStatus(statusMessage);
         
         if (status.status === 'completed') {
+          isPollingRef.current = false;
           // Rescan model to update scores
           if (selectedModel) {
             await trainerApi.scanModel(selectedModel.id, [selectedLanguage]);
@@ -729,10 +791,12 @@ function TrainPageContent() {
           refetchTrainingInfo();
           setTrainingStatus('Training complete! Model updated.');
         } else if (status.status === 'failed') {
+          isPollingRef.current = false;
           // Refresh training info - checkpoint may have been saved before failure
           refetchTrainingInfo();
           setError(status.error || 'Training failed');
         } else if (status.status === 'cancelled') {
+          isPollingRef.current = false;
           // Refresh training info - checkpoint may have been saved
           refetchTrainingInfo();
           setTrainingStatus('Training cancelled. You can continue from the saved checkpoint.');
@@ -741,12 +805,56 @@ function TrainPageContent() {
           setTimeout(poll, 5000);
         }
       } catch (err: any) {
+        isPollingRef.current = false;
         setError(err.message || 'Failed to check training status');
       }
     };
     
     poll();
   };
+
+  // Start polling when trainingJobId is set and we're on progress step
+  useEffect(() => {
+    if (trainingJobId && step === 'training-progress') {
+      // Reset polling flag and start polling
+      isPollingRef.current = false;
+      pollTrainingStatus(trainingJobId);
+    }
+    
+    // Cleanup: stop polling when leaving
+    return () => {
+      isPollingRef.current = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [trainingJobId, step]);
+
+  // Fetch active training job when on progress step without job ID
+  useEffect(() => {
+    const fetchActiveJob = async () => {
+      if (step === 'training-progress' && selectedModel?.slug && !trainingJobId) {
+        try {
+          // Fetch all jobs and find the one for this model
+          const jobs = await trainerApi.listTrainingJobs();
+          const activeJob = jobs.find((j: any) => 
+            j.exp_name === selectedModel.slug && 
+            ['training', 'queued', 'preprocessing'].includes(j.status)
+          );
+          
+          if (activeJob) {
+            setTrainingJobId(activeJob.job_id);
+            setTrainingProgress(activeJob.progress || 0);
+            setTrainingStatus(activeJob.current_epoch && activeJob.total_epochs 
+              ? `Training... Epoch ${activeJob.current_epoch}/${activeJob.total_epochs}`
+              : activeJob.message || 'Training in progress...');
+          }
+        } catch (err) {
+          console.error('Failed to fetch active job:', err);
+        }
+      }
+    };
+    
+    fetchActiveJob();
+  }, [step, selectedModel?.slug, trainingJobId]);
   
   // Cancel and reset
   const cancelSession = async () => {
@@ -981,6 +1089,19 @@ function TrainPageContent() {
                 </div>
               </div>
               
+              {/* Recording count badge */}
+              {modelRecordings && (
+                <div className="flex items-center justify-center gap-2 p-3 bg-gray-800/50 rounded-lg border border-gray-700">
+                  <FileAudio className="w-5 h-5 text-primary-400" />
+                  <span className="text-gray-300">
+                    {modelRecordings.total_recordings > 0 
+                      ? <><span className="font-semibold text-primary-400">{modelRecordings.total_recordings}</span> recordings ({Math.round(modelRecordings.total_duration_seconds / 60)} min)</>
+                      : <span className="text-gray-500">No recordings yet</span>
+                    }
+                  </span>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
                 {(languages || ['en', 'is']).map((lang) => (
                   <button
@@ -1041,6 +1162,43 @@ function TrainPageContent() {
                   )}
                   {isStartingSession ? 'Starting...' : 'Start Wizard'}
                 </button>
+              </div>
+
+              {/* Recording count and quick actions */}
+              <div className="flex items-center justify-between p-4 bg-gray-800/50 rounded-lg border border-gray-700">
+                <div className="flex items-center gap-3">
+                  <FileAudio className="w-5 h-5 text-primary-400" />
+                  <div>
+                    {modelRecordings && modelRecordings.total_recordings > 0 ? (
+                      <>
+                        <span className="font-semibold text-primary-400">{modelRecordings.total_recordings}</span>
+                        <span className="text-gray-300"> recordings</span>
+                        <span className="text-gray-500 ml-2">({Math.round(modelRecordings.total_duration_seconds / 60)} min)</span>
+                      </>
+                    ) : (
+                      <span className="text-gray-400">No recordings yet</span>
+                    )}
+                  </div>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    onClick={() => startCategorySession('_wizard')}
+                    disabled={isStartingSession}
+                    className="flex items-center gap-2 px-3 py-1.5 bg-green-600/20 hover:bg-green-600/30 border border-green-600/50 text-green-400 rounded-lg text-sm font-medium transition-colors"
+                  >
+                    <Mic className="w-4 h-4" />
+                    Record
+                  </button>
+                  {modelRecordings && modelRecordings.total_recordings > 0 && (
+                    <button
+                      onClick={() => setStep('start-training')}
+                      className="flex items-center gap-2 px-3 py-1.5 bg-primary-600/20 hover:bg-primary-600/30 border border-primary-600/50 text-primary-400 rounded-lg text-sm font-medium transition-colors"
+                    >
+                      <Play className="w-4 h-4" />
+                      Train
+                    </button>
+                  )}
+                </div>
               </div>
 
               {/* Training Area Cards */}
@@ -1230,7 +1388,7 @@ function TrainPageContent() {
                       {importUploading ? (
                         <>
                           <Loader2 className="w-4 h-4 animate-spin" />
-                          Uploading...
+                          Uploading... {uploadProgress > 0 && `${uploadProgress}%`}
                         </>
                       ) : (
                         <>
@@ -1239,6 +1397,16 @@ function TrainPageContent() {
                         </>
                       )}
                     </button>
+                    
+                    {/* Upload progress bar */}
+                    {importUploading && uploadProgress > 0 && (
+                      <div className="w-full bg-gray-700 rounded-full h-2 mt-2">
+                        <div 
+                          className="bg-primary-500 h-2 rounded-full transition-all duration-300"
+                          style={{ width: `${uploadProgress}%` }}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -1418,44 +1586,257 @@ function TrainPageContent() {
 
               {/* Show checkpoint info - training can be resumed */}
               {modelTrainingInfo?.training?.latest_checkpoint && (
-                <div className="max-w-md mx-auto p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
+                <div className="max-w-xl mx-auto p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <RotateCcw className="w-5 h-5 text-blue-400" />
-                    <span className="font-medium text-blue-300">Previous Training Found</span>
+                    <span className="font-medium text-blue-300">Previous Training Found (Epoch {modelTrainingInfo.training.epochs_trained || 0})</span>
                   </div>
-                  <p className="text-sm text-gray-400 mb-3">
-                    {modelTrainingInfo.training.epochs_trained > 0 
-                      ? `Training was stopped at epoch ${modelTrainingInfo.training.epochs_trained}. You can continue from this checkpoint.`
-                      : 'A checkpoint exists from a previous training session. You can continue from where you left off.'}
+                  <p className="text-sm text-gray-400 mb-4 text-center">
+                    You can continue from this checkpoint or start fresh with new data.
                   </p>
-                  <div className="grid grid-cols-2 gap-3 text-sm">
-                    <div className="p-2 bg-gray-800/50 rounded">
-                      <div className="text-lg font-bold text-blue-400">{modelTrainingInfo.training.epochs_trained || 0}</div>
-                      <div className="text-xs text-gray-500">Epochs Completed</div>
-                    </div>
-                    <div className="p-2 bg-gray-800/50 rounded">
-                      <div className="text-lg font-bold text-orange-400">{(modelTrainingInfo.training.target_epochs || 100) - (modelTrainingInfo.training.epochs_trained || 0)}</div>
-                      <div className="text-xs text-gray-500">Epochs Remaining</div>
-                    </div>
+                  
+                  {/* Checkpoint Training Options */}
+                  <div className="space-y-2">
+                    <button
+                      onClick={() => setCheckpointMode('continue')}
+                      className={`w-full p-3 rounded-lg border transition-all text-left ${
+                        checkpointMode === 'continue'
+                          ? 'bg-green-500/20 border-green-500/50 text-green-300'
+                          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600 text-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          checkpointMode === 'continue' ? 'border-green-400' : 'border-gray-500'
+                        }`}>
+                          {checkpointMode === 'continue' && <div className="w-2.5 h-2.5 bg-green-400 rounded-full" />}
+                        </div>
+                        <div>
+                          <div className="font-medium">Continue Training</div>
+                          <div className="text-xs text-gray-500">Use existing audio files and continue from checkpoint</div>
+                        </div>
+                      </div>
+                    </button>
+                    
+                    <button
+                      onClick={() => setCheckpointMode('add-audio')}
+                      className={`w-full p-3 rounded-lg border transition-all text-left ${
+                        checkpointMode === 'add-audio'
+                          ? 'bg-purple-500/20 border-purple-500/50 text-purple-300'
+                          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600 text-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          checkpointMode === 'add-audio' ? 'border-purple-400' : 'border-gray-500'
+                        }`}>
+                          {checkpointMode === 'add-audio' && <div className="w-2.5 h-2.5 bg-purple-400 rounded-full" />}
+                        </div>
+                        <div>
+                          <div className="font-medium">Add New Audio + Continue</div>
+                          <div className="text-xs text-gray-500">Keep existing audio, add new recordings, continue from checkpoint</div>
+                        </div>
+                      </div>
+                    </button>
+                    
+                    <button
+                      onClick={() => setCheckpointMode('new-audio')}
+                      className={`w-full p-3 rounded-lg border transition-all text-left ${
+                        checkpointMode === 'new-audio'
+                          ? 'bg-orange-500/20 border-orange-500/50 text-orange-300'
+                          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600 text-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          checkpointMode === 'new-audio' ? 'border-orange-400' : 'border-gray-500'
+                        }`}>
+                          {checkpointMode === 'new-audio' && <div className="w-2.5 h-2.5 bg-orange-400 rounded-full" />}
+                        </div>
+                        <div>
+                          <div className="font-medium">New Audio Only</div>
+                          <div className="text-xs text-gray-500">Replace existing audio with new recordings, continue from checkpoint</div>
+                        </div>
+                      </div>
+                    </button>
                   </div>
+                  
+                  {/* Show guidance based on selected mode */}
+                  {checkpointMode === 'add-audio' && (
+                    <div className="mt-3 p-2 bg-purple-500/10 rounded text-xs text-purple-300 text-center">
+                      ⚠️ Adding new audio requires re-preprocessing all files. Model will continue from checkpoint with combined dataset.
+                    </div>
+                  )}
+                  {checkpointMode === 'new-audio' && (
+                    <div className="mt-3 p-2 bg-orange-500/10 rounded text-xs text-orange-300 text-center">
+                      ⚠️ This will use the checkpoint weights but retrain on completely new audio data
+                    </div>
+                  )}
                 </div>
               )}
+
+              {/* Training Configuration */}
+              <div className="max-w-md mx-auto p-4 bg-gray-800/50 border border-gray-700 rounded-lg space-y-4">
+                <h3 className="text-sm font-medium text-gray-300 mb-3">Training Configuration</h3>
+                
+                {/* Auto-config toggle */}
+                <div className="flex items-center justify-between pb-3 border-b border-gray-700">
+                  <div>
+                    <label className="text-sm text-gray-400">Use Auto-Configuration</label>
+                    <p className="text-xs text-gray-500">Let the system optimize based on your audio</p>
+                  </div>
+                  <button
+                    onClick={() => setUseAutoConfig(!useAutoConfig)}
+                    className={`relative w-12 h-6 rounded-full transition-colors ${useAutoConfig ? 'bg-green-500' : 'bg-gray-600'}`}
+                  >
+                    <span className={`absolute w-5 h-5 bg-white rounded-full top-0.5 transition-transform ${useAutoConfig ? 'translate-x-6' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
+                {/* Manual config (shown when auto-config is off) */}
+                {!useAutoConfig && (
+                  <>
+                    {/* Epochs */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm text-gray-400">Target Epochs</label>
+                        <p className="text-xs text-gray-500">More = better quality, longer training</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setTargetEpochs(Math.max(10, targetEpochs - 10))}
+                          className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          value={targetEpochs}
+                          onChange={(e) => setTargetEpochs(Math.max(10, Math.min(1000, parseInt(e.target.value) || 200)))}
+                          className="w-20 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white"
+                        />
+                        <button
+                          onClick={() => setTargetEpochs(Math.min(1000, targetEpochs + 10))}
+                          className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Batch Size */}
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <label className="text-sm text-gray-400">Batch Size</label>
+                        <p className="text-xs text-gray-500">Lower = more steps, better for small datasets</p>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => setBatchSize(Math.max(2, batchSize - 2))}
+                          className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                        >
+                          -
+                        </button>
+                        <input
+                          type="number"
+                          value={batchSize}
+                          onChange={(e) => setBatchSize(Math.max(2, Math.min(16, parseInt(e.target.value) || 6)))}
+                          className="w-20 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white"
+                        />
+                        <button
+                          onClick={() => setBatchSize(Math.min(16, batchSize + 2))}
+                          className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                        >
+                          +
+                        </button>
+                      </div>
+                    </div>
+                    
+                    {/* Epoch recommendations */}
+                    <div className="pt-2 border-t border-gray-700">
+                      <p className="text-xs text-gray-500 mb-2">Quick presets:</p>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => { setTargetEpochs(100); setBatchSize(8); }}
+                          className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+                        >
+                          Quick (100)
+                        </button>
+                        <button
+                          onClick={() => { setTargetEpochs(200); setBatchSize(6); }}
+                          className="px-3 py-1 text-xs bg-blue-600 hover:bg-blue-500 rounded text-white"
+                        >
+                          Standard (200)
+                        </button>
+                        <button
+                          onClick={() => { setTargetEpochs(300); setBatchSize(4); }}
+                          className="px-3 py-1 text-xs bg-gray-700 hover:bg-gray-600 rounded text-gray-300"
+                        >
+                          Quality (300)
+                        </button>
+                      </div>
+                    </div>
+                  </>
+                )}
+                
+                {/* Auto-config info */}
+                {useAutoConfig && (
+                  <div className="p-3 bg-blue-500/10 rounded-lg">
+                    <p className="text-xs text-blue-300">
+                      🤖 The system will analyze your audio and automatically set optimal epochs and batch size based on duration, quality, and training type.
+                    </p>
+                  </div>
+                )}
+                
+                {modelTrainingInfo?.training?.epochs_trained && !useAutoConfig && targetEpochs <= modelTrainingInfo.training.epochs_trained && (
+                  <p className="mt-2 text-xs text-yellow-400">
+                    ⚠️ Target ({targetEpochs}) is less than already trained ({modelTrainingInfo.training.epochs_trained}). Increase to train more.
+                  </p>
+                )}
+              </div>
               
               {/* Show total recordings from all sessions */}
               {modelRecordings && modelRecordings.total_recordings > 0 && (
-                <div className="grid grid-cols-3 gap-4 max-w-md mx-auto">
-                  <div className="p-4 bg-gray-800/50 rounded-lg">
-                    <div className="text-2xl font-bold text-green-400">{modelRecordings.total_recordings}</div>
-                    <div className="text-sm text-gray-400">Total Recordings</div>
+                <div className="space-y-4 max-w-2xl mx-auto">
+                  <div className="grid grid-cols-3 gap-4">
+                    <div className="p-4 bg-gray-800/50 rounded-lg">
+                      <div className="text-2xl font-bold text-green-400">{modelRecordings.total_recordings}</div>
+                      <div className="text-sm text-gray-400">Total Recordings</div>
+                    </div>
+                    <div className="p-4 bg-gray-800/50 rounded-lg">
+                      <div className="text-2xl font-bold text-blue-400">{Math.round(modelRecordings.total_duration_seconds / 60)}</div>
+                      <div className="text-sm text-gray-400">Minutes</div>
+                    </div>
+                    <div className="p-4 bg-gray-800/50 rounded-lg">
+                      <div className="text-2xl font-bold text-purple-400">{Object.keys(modelRecordings.categories || {}).length}</div>
+                      <div className="text-sm text-gray-400">Categories</div>
+                    </div>
                   </div>
-                  <div className="p-4 bg-gray-800/50 rounded-lg">
-                    <div className="text-2xl font-bold text-blue-400">{Math.round(modelRecordings.total_duration_seconds / 60)}</div>
-                    <div className="text-sm text-gray-400">Minutes</div>
-                  </div>
-                  <div className="p-4 bg-gray-800/50 rounded-lg">
-                    <div className="text-2xl font-bold text-purple-400">{Object.keys(modelRecordings.categories || {}).length}</div>
-                    <div className="text-sm text-gray-400">Categories</div>
-                  </div>
+                  
+                  {/* Expandable Recording Files List */}
+                  <details className="bg-gray-800/30 border border-gray-700 rounded-lg">
+                    <summary className="px-4 py-3 cursor-pointer flex items-center justify-between hover:bg-gray-800/50 rounded-lg transition-colors">
+                      <span className="flex items-center gap-2 text-sm text-gray-300">
+                        <FileAudio className="w-4 h-4" />
+                        View Recording Files
+                      </span>
+                      <ChevronDown className="w-4 h-4 text-gray-500" />
+                    </summary>
+                    <div className="px-4 pb-4 max-h-64 overflow-y-auto">
+                      <div className="space-y-1">
+                        {modelRecordings.audio_paths.map((path, index) => {
+                          const fileName = path.split('/').pop() || path;
+                          return (
+                            <div key={index} className="flex items-center gap-2 py-2 px-3 bg-gray-900/50 rounded text-sm">
+                              <Music className="w-3 h-3 text-gray-500 flex-shrink-0" />
+                              <span className="text-gray-400 truncate flex-1">{fileName}</span>
+                              <span className="text-xs text-gray-600">#{index + 1}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </details>
                 </div>
               )}
 
@@ -1500,18 +1881,20 @@ function TrainPageContent() {
                 >
                   Add More Data
                 </button>
-                {/* Show Continue Training button if checkpoint exists */}
+                {/* Show Continue Training button if checkpoint exists and continue mode is selected */}
                 {modelTrainingInfo?.training?.latest_checkpoint && (
                   <button
-                    onClick={startTraining}
-                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 rounded-lg font-medium transition-colors flex items-center gap-2"
+                    onClick={() => startTraining('continue')}
+                    disabled={checkpointMode === 'add-audio' || checkpointMode === 'new-audio'}
+                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center gap-2"
+                    title={checkpointMode === 'add-audio' || checkpointMode === 'new-audio' ? 'Cannot continue - new audio requires fresh training' : ''}
                   >
                     <RotateCcw className="w-5 h-5" />
                     Continue Training
                   </button>
                 )}
                 <button
-                  onClick={startTraining}
+                  onClick={() => startTraining('fresh')}
                   disabled={
                     // Allow if: checkpoint exists OR files were uploaded OR have 10+ recordings OR have 2+ min of audio
                     !(modelTrainingInfo?.training?.latest_checkpoint ||
@@ -1593,6 +1976,56 @@ function TrainPageContent() {
                     style={{ width: `${trainingProgress}%` }}
                   />
                 </div>
+                
+                {/* Detailed training stats */}
+                {trainingDetails && trainingProgress < 100 && !error && !trainingStatus.includes('cancelled') && (
+                  <div className="mt-4 grid grid-cols-2 gap-3 text-sm">
+                    {trainingDetails.current_epoch > 0 && (
+                      <>
+                        <div className="p-2 bg-gray-800/50 rounded">
+                          <div className="text-lg font-bold text-blue-400">{trainingDetails.current_epoch}</div>
+                          <div className="text-xs text-gray-500">Current Epoch</div>
+                        </div>
+                        <div className="p-2 bg-gray-800/50 rounded">
+                          <div className="text-lg font-bold text-gray-300">{trainingDetails.total_epochs}</div>
+                          <div className="text-xs text-gray-500">Target Epochs</div>
+                        </div>
+                      </>
+                    )}
+                    <div className="p-2 bg-gray-800/50 rounded">
+                      <div className="text-sm font-medium text-purple-400 capitalize">{trainingDetails.step || trainingDetails.status}</div>
+                      <div className="text-xs text-gray-500">Current Step</div>
+                    </div>
+                    {trainingDetails.started_at && (
+                      <div className="p-2 bg-gray-800/50 rounded">
+                        <div className="text-sm font-medium text-orange-400">
+                          {Math.round((Date.now() - new Date(trainingDetails.started_at).getTime()) / 60000)}m
+                        </div>
+                        <div className="text-xs text-gray-500">Elapsed</div>
+                      </div>
+                    )}
+                  </div>
+                )}
+                
+                {/* Progress breakdown */}
+                {trainingProgress > 0 && trainingProgress < 100 && !error && (
+                  <div className="mt-4 text-xs text-gray-500">
+                    <div className="flex justify-between mb-1">
+                      <span className={trainingProgress >= 5 ? 'text-green-400' : ''}>Preprocess</span>
+                      <span className={trainingProgress >= 25 ? 'text-green-400' : ''}>F0 Extract</span>
+                      <span className={trainingProgress >= 40 ? 'text-green-400' : ''}>Features</span>
+                      <span className={trainingProgress >= 50 ? 'text-green-400' : ''}>Training</span>
+                      <span className={trainingProgress >= 95 ? 'text-green-400' : ''}>Index</span>
+                    </div>
+                    <div className="flex gap-1">
+                      <div className={`h-1 flex-1 rounded ${trainingProgress >= 5 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                      <div className={`h-1 flex-1 rounded ${trainingProgress >= 25 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                      <div className={`h-1 flex-1 rounded ${trainingProgress >= 40 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                      <div className={`h-1 flex-[3] rounded ${trainingProgress >= 95 ? 'bg-green-500' : trainingProgress >= 50 ? 'bg-blue-500' : 'bg-gray-600'}`} />
+                      <div className={`h-1 flex-1 rounded ${trainingProgress >= 95 ? 'bg-green-500' : 'bg-gray-600'}`} />
+                    </div>
+                  </div>
+                )}
               </div>
 
               {/* Show checkpoint info for failed/cancelled training */}
