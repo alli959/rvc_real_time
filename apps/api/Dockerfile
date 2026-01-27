@@ -42,6 +42,9 @@ COPY --from=composer:2 /usr/bin/composer /usr/bin/composer
 RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 COPY docker/php.ini /usr/local/etc/php/conf.d/custom.ini
 
+# Configure PHP-FPM with increased workers for production load
+COPY docker/www.conf /usr/local/etc/php-fpm.d/www.conf
+
 # Configure nginx
 COPY docker/nginx.conf /etc/nginx/nginx.conf
 
