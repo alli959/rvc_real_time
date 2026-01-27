@@ -343,17 +343,29 @@ class RVCTrainingPipeline:
         self,
         base_dir: Union[str, Path],
         assets_dir: Optional[Union[str, Path]] = None,
+        preprocess_dir: Optional[Union[str, Path]] = None,
+        training_dir: Optional[Union[str, Path]] = None,
         device: str = "cuda:0"
     ):
         """
         Initialize the training pipeline.
         
         Args:
-            base_dir: Base directory for training outputs (logs/)
-            assets_dir: Directory containing pretrained models
+            base_dir: Base directory for final model outputs (e.g., /storage/models or /app/assets/models)
+            assets_dir: Directory containing pretrained models (e.g., /app/assets)
+            preprocess_dir: Directory for preprocessing artifacts (e.g., /data/preprocess)
+                           If None, uses base_dir (legacy behavior)
+            training_dir: Directory for training checkpoints (e.g., /data/training)
+                         If None, uses base_dir (legacy behavior)
             device: Training device (cuda:0, cpu)
         """
         self.base_dir = Path(base_dir)
+        
+        # Unified storage paths - separate preprocessing, training, and final models
+        # This follows the storage layout in docs/STORAGE_LAYOUT.md
+        self.preprocess_dir = Path(preprocess_dir) if preprocess_dir else self.base_dir
+        self.training_dir = Path(training_dir) if training_dir else self.base_dir
+        
         # If base_dir is assets/models, assets_dir should be assets/ (parent of models)
         # Otherwise use the default parent/assets logic
         if assets_dir:
@@ -366,6 +378,8 @@ class RVCTrainingPipeline:
         
         # Create directories
         self.base_dir.mkdir(parents=True, exist_ok=True)
+        self.preprocess_dir.mkdir(parents=True, exist_ok=True)
+        self.training_dir.mkdir(parents=True, exist_ok=True)
         
         # Job tracking
         self._jobs: Dict[str, TrainingProgress] = {}
@@ -701,7 +715,16 @@ class RVCTrainingPipeline:
             job_id = self.create_job(config)
         
         start_time = time.time()
-        exp_dir = self.base_dir / config.exp_name
+        
+        # Use separate directories for preprocessing, training, and final models
+        # This follows the unified storage layout in docs/STORAGE_LAYOUT.md
+        preprocess_exp_dir = self.preprocess_dir / config.exp_name  # /data/preprocess/{exp_name}
+        training_exp_dir = self.training_dir / config.exp_name       # /data/training/{exp_name}
+        models_exp_dir = self.base_dir / config.exp_name             # /storage/models/{exp_name}
+        
+        # For legacy compatibility, exp_dir points to preprocessing directory for now
+        # TODO: Full refactor to separate all paths
+        exp_dir = preprocess_exp_dir
         
         try:
             # Step 1: Setup experiment directory
@@ -713,12 +736,14 @@ class RVCTrainingPipeline:
                 message="Creating experiment directory..."
             )
             
-            exp_dir.mkdir(parents=True, exist_ok=True)
-            trainset_dir = exp_dir / "trainset"
+            preprocess_exp_dir.mkdir(parents=True, exist_ok=True)
+            training_exp_dir.mkdir(parents=True, exist_ok=True)
+            models_exp_dir.mkdir(parents=True, exist_ok=True)
+            trainset_dir = preprocess_exp_dir / "trainset"
             
             # Check if preprocessing already exists
-            gt_wavs_dir = exp_dir / "0_gt_wavs"
-            wav16k_dir = exp_dir / "1_16k_wavs"
+            gt_wavs_dir = preprocess_exp_dir / "0_gt_wavs"
+            wav16k_dir = preprocess_exp_dir / "1_16k_wavs"
             
             trainset_dir.mkdir(exist_ok=True)
             
@@ -948,6 +973,15 @@ class RVCTrainingPipeline:
                 version=config.version.value
             )
             
+            # Copy index to unified models directory if it was created in preprocess dir
+            if index_path and Path(index_path).parent != models_exp_dir:
+                models_exp_dir.mkdir(parents=True, exist_ok=True)
+                index_dest = models_exp_dir / Path(index_path).name
+                if not index_dest.exists():
+                    shutil.copy2(index_path, index_dest)
+                    logger.info(f"Copied index to unified storage: {index_dest}")
+                index_path = str(index_dest)
+            
             # Step 7: Create metadata
             self._update_progress(
                 job_id,
@@ -961,34 +995,71 @@ class RVCTrainingPipeline:
             # 2) <exp>.pth (final extracted model)
             # 3) latest G_*.pth by step number (highest step)
             # Never use D_*.pth as a model
+            #
+            # Note: train.py saves models to assets/models/{exp_name}/ (relative to voice-engine root)
+            # We need to look there AND in models_exp_dir (unified storage location)
             import re
             model_path = None
             exp_name = config.exp_name
             
-            # Priority 1: <exp>_infer.pth
-            infer_pth = exp_dir / f"{exp_name}_infer.pth"
-            if infer_pth.exists():
-                model_path = str(infer_pth)
-                logger.info(f"Selected model (priority 1 - _infer.pth): {model_path}")
+            # train.py saves to voice_engine_root/assets/models/{exp_name}/
+            voice_engine_root = Path(__file__).parent.parent.parent
+            train_output_dir = voice_engine_root / "assets" / "models" / exp_name
             
-            # Priority 2: <exp>.pth
-            if not model_path:
-                final_pth = exp_dir / f"{exp_name}.pth"
+            # Search in both train_output_dir (where train.py writes) and models_exp_dir (unified storage)
+            search_dirs = [train_output_dir, models_exp_dir]
+            
+            for search_dir in search_dirs:
+                if model_path:
+                    break
+                if not search_dir.exists():
+                    continue
+                    
+                # Priority 1: <exp>_infer.pth
+                infer_pth = search_dir / f"{exp_name}_infer.pth"
+                if infer_pth.exists():
+                    model_path = str(infer_pth)
+                    logger.info(f"Selected model (priority 1 - _infer.pth): {model_path}")
+                    break
+                
+                # Priority 2: <exp>.pth
+                final_pth = search_dir / f"{exp_name}.pth"
                 if final_pth.exists():
                     model_path = str(final_pth)
                     logger.info(f"Selected model (priority 2 - final .pth): {model_path}")
+                    break
+                
+                # Priority 3: latest *_e*_s*.pth by step number (extractable models saved by train.py)
+                extractable_models = list(search_dir.glob(f"{exp_name}_e*_s*.pth"))
+                if extractable_models:
+                    def get_step_from_name(p):
+                        # Extract step from {name}_e{epoch}_s{step}.pth
+                        match = re.search(r'_s(\d+)\.pth$', p.name)
+                        return int(match.group(1)) if match else 0
+                    extractable_models.sort(key=get_step_from_name, reverse=True)
+                    model_path = str(extractable_models[0])
+                    logger.info(f"Selected model (priority 3 - latest extractable): {model_path}")
+                    break
             
-            # Priority 3: latest G_*.pth by step number
+            # Fallback: check for G_*.pth checkpoints in preprocess_exp_dir (legacy location)
             if not model_path:
                 g_checkpoints = list(exp_dir.glob("G_*.pth"))
                 if g_checkpoints:
-                    # Sort by step number (extract from G_<step>.pth)
                     def get_step(p):
                         match = re.search(r'G_(\d+)\.pth', p.name)
                         return int(match.group(1)) if match else 0
                     g_checkpoints.sort(key=get_step, reverse=True)
-                    model_path = str(g_checkpoints[0])  # Latest checkpoint
-                    logger.info(f"Selected model (priority 3 - latest checkpoint): {model_path}")
+                    model_path = str(g_checkpoints[0])
+                    logger.info(f"Selected model (fallback - checkpoint): {model_path}")
+            
+            # If model was found in train_output_dir but not in models_exp_dir, copy it to unified storage
+            if model_path and Path(model_path).parent == train_output_dir and train_output_dir != models_exp_dir:
+                models_exp_dir.mkdir(parents=True, exist_ok=True)
+                dest_path = models_exp_dir / Path(model_path).name
+                if not dest_path.exists():
+                    shutil.copy2(model_path, dest_path)
+                    logger.info(f"Copied model to unified storage: {dest_path}")
+                    model_path = str(dest_path)
             
             # Create metadata
             metadata = self._create_metadata(
@@ -999,7 +1070,8 @@ class RVCTrainingPipeline:
                 index_path=index_path
             )
             
-            metadata_path = exp_dir / "model_metadata.json"
+            # Save metadata to models directory (unified storage)
+            metadata_path = models_exp_dir / "model_metadata.json"
             metadata.save(metadata_path)
             
             # Done!
@@ -2033,29 +2105,53 @@ class RVCTrainingPipeline:
 def create_training_pipeline(
     base_dir: Optional[str] = None,
     assets_dir: Optional[str] = None,
+    preprocess_dir: Optional[str] = None,
+    training_dir: Optional[str] = None,
     device: str = "cuda:0"
 ) -> RVCTrainingPipeline:
     """
     Create a training pipeline with default paths.
     
+    Uses the unified storage layout:
+    - base_dir: Final models output (/storage/models - uses MODEL_PATH env var)
+    - preprocess_dir: Preprocessing artifacts (/storage/data/preprocess)
+    - training_dir: Training checkpoints (/storage/data/training)
+    
     Args:
-        base_dir: Base directory for training outputs
+        base_dir: Base directory for final model outputs
         assets_dir: Directory containing pretrained models
+        preprocess_dir: Directory for preprocessing artifacts
+        training_dir: Directory for training checkpoints
         device: Training device
         
     Returns:
         Configured RVCTrainingPipeline
     """
+    import os
+    
+    # Use unified storage paths from environment variables
+    storage_root = Path(os.getenv("STORAGE_ROOT", "/storage"))
+    data_root = Path(os.getenv("DATA_ROOT", str(storage_root / "data")))
+    
     if base_dir is None:
-        # Use assets/models so checkpoints persist with model files
-        base_dir = Path(__file__).parent.parent.parent / "assets" / "models"
+        # Use MODEL_PATH env var for final models (set in docker-compose.yml)
+        # This maps to /storage/models which is shared across all services
+        base_dir = Path(os.getenv("MODEL_PATH", str(storage_root / "models")))
     
     if assets_dir is None:
         assets_dir = Path(__file__).parent.parent.parent / "assets"
     
+    # Use unified storage paths for preprocessing and training
+    if preprocess_dir is None:
+        preprocess_dir = data_root / "preprocess"
+    if training_dir is None:
+        training_dir = data_root / "training"
+    
     return RVCTrainingPipeline(
         base_dir=base_dir,
         assets_dir=assets_dir,
+        preprocess_dir=preprocess_dir,
+        training_dir=training_dir,
         device=device
     )
 

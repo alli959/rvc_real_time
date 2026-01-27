@@ -73,11 +73,22 @@ _model_scanner: Optional[ModelScanner] = None
 _recording_wizard: Optional[RecordingWizard] = None
 _model_storage: Optional[ModelStorage] = None
 
-# Config
+# Config - Unified storage paths
+# Use environment variables with fallbacks to maintain backward compatibility
+import os as _os
+STORAGE_ROOT = Path(_os.getenv("STORAGE_ROOT", "/storage"))
+DATA_DIR = Path(_os.getenv("DATA_ROOT", "/storage/data"))
 LOGS_DIR = Path(__file__).parent.parent / "logs"
 ASSETS_DIR = Path(__file__).parent.parent / "assets"
-MODELS_DIR = ASSETS_DIR / "models"
-UPLOAD_DIR = Path(__file__).parent.parent / "uploads"
+# Final models go to /storage/models (unified storage location)
+# MODEL_PATH env var is set in docker-compose.yml
+MODELS_DIR = Path(_os.getenv("MODEL_PATH", str(STORAGE_ROOT / "models")))
+# Preprocessing artifacts go to /storage/data/preprocess
+PREPROCESS_DIR = DATA_DIR / "preprocess"
+# Training checkpoints go to /storage/data/training  
+TRAINING_DIR = DATA_DIR / "training"
+# Uploads from users
+UPLOAD_DIR = DATA_DIR / "uploads"
 
 
 def detect_existing_model(model_dir: Path) -> tuple[Optional[str], int]:
