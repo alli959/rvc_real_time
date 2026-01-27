@@ -252,4 +252,4 @@ storage/framework/
 storage/logs/
 storage/models/
 storage/assets/
-storage/data/
+storage/data/tsconfig.tsbuildinfo
