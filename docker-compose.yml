@@ -1,0 +1,20 @@
+# =============================================================================
+# MorphVox Platform - Root Docker Compose
+# =============================================================================
+# This is a convenience wrapper for the main compose files in infra/compose/.
+# It includes the development stack by default.
+#
+# Usage:
+#   docker compose up -d              # Start dev environment
+#   docker compose --profile prod up -d   # Start production environment
+#   docker compose up -d api web      # Start specific services
+#
+# For production with SSL:
+#   cd infra/compose && docker compose -f docker-compose.prod.yml up -d
+#
+# =============================================================================
+
+include:
+  - path: infra/compose/docker-compose.prod.yml
+    env_file:
+      - .env

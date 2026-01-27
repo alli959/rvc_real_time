@@ -228,19 +228,18 @@ services:
       # Trusted proxies for Nginx
       TRUSTED_PROXIES: "*"
     volumes:
-      - api_storage:/var/www/html/storage
-      # Mount local models directory for scanning
-      - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Unified storage
+      - ../../storage:/storage
       # Mount API source code for development
       - ../../apps/api/app:/var/www/html/app
       # Mount API config for development
       - ../../apps/api/config:/var/www/html/config
-      # Mount logs directory for local access
-      - ../../apps/api/storage/logs:/var/www/html/storage/logs
       # Mount Docker socket for accessing container logs (admin panel)
       - /var/run/docker.sock:/var/run/docker.sock
       # Mount container log directories for direct access
       - /var/lib/docker/containers:/var/lib/docker/containers:ro
+      # Legacy storage link for compatibility
+      - ../../storage:/var/www/html/storage
     networks:
       - morphvox
 
@@ -271,10 +270,12 @@ services:
       AWS_ENDPOINT: http://minio:9000
       VOICE_ENGINE_URL: http://voice-engine:8001
     volumes:
+      # Unified storage
+      - ../../storage:/storage
       # Mount API source code for development
       - ../../apps/api/app:/var/www/html/app
-      # Mount logs directory for local access
-      - ../../apps/api/storage/logs:/var/www/html/storage/logs
+      # Legacy storage link
+      - ../../storage:/var/www/html/storage
     networks:
       - morphvox
 
@@ -325,9 +326,12 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      MODEL_PATH: /app/assets/models
-      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
-      RMVPE_PATH: /app/assets/rmvpe
+      # Unified storage paths
+      STORAGE_ROOT: /storage
+      MODEL_PATH: /storage/models
+      DATA_ROOT: /storage/data
+      HUBERT_PATH: /storage/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /storage/assets/rmvpe
       
       HTTP_PORT: 8001
       WS_PORT: 8765
@@ -340,25 +344,19 @@ services:
       - ../../services/voice-engine/rvc:/app/rvc
       # Mount infer module for inference
       - ../../services/voice-engine/infer:/app/infer
-      # Mount local models directory directly (bind mount)
-      # Training outputs AND checkpoints (G_*.pth, D_*.pth) go here
-      - ../../services/voice-engine/assets/models:/app/assets/models
-      - ../../services/voice-engine/assets/hubert:/app/assets/hubert
-      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe
-      # Mount pretrained RVC models
-      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2
-      # Mount UVR5 weights for vocal separation
-      - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
-      # Mount Bark TTS models
-      - ../../services/voice-engine/assets/bark:/app/assets/bark
-      # Mount uploads directory (wizard recordings and uploads)
-      - ../../services/voice-engine/uploads:/app/uploads
-      # Mount logs directory (training data, sessions, preprocessed audio)
-      - ../../services/voice-engine/logs:/app/logs
-      # Shared data directory - uploads from preprocessor (same path as preprocessor uses)
-      - ../../services/voice-engine/data:/data
-      # Share API storage models with voice-engine for scanning
-      - api_storage:/shared/api_storage:ro
+      # Unified storage
+      - ../../storage:/storage
+      # Legacy model path (symlink to unified storage)
+      - ../../storage/models:/app/assets/models
+      - ../../storage/assets/hubert:/app/assets/hubert
+      - ../../storage/assets/rmvpe:/app/assets/rmvpe
+      - ../../storage/assets/pretrained_v2:/app/assets/pretrained_v2
+      - ../../storage/assets/uvr5_weights:/app/assets/uvr5_weights
+      - ../../storage/assets/bark:/app/assets/bark
+      # Data directories from unified storage
+      - ../../storage/data/uploads:/app/uploads
+      - ../../storage/logs/voice-engine:/app/logs
+      - ../../storage/data:/data
     deploy:
       resources:
         limits:
@@ -406,14 +404,14 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ../../services/preprocessor:/app
-      # Shared data directory for preprocessing outputs (WRITABLE) - bind mount for local access
-      - ../../services/voice-engine/data:/data
-      # Mount models directory for trainset uploads (WRITABLE)
-      # Uploads go to /models/{exp_name}/trainset/ which maps to voice-engine/assets/models
-      - ../../services/voice-engine/assets/models:/models
-      # Shared assets - hubert, rmvpe (READ-ONLY)
-      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
-      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      # Unified storage
+      - ../../storage:/storage
+      # Data directories
+      - ../../storage/data:/data
+      - ../../storage/models:/models
+      # Shared assets (READ-ONLY)
+      - ../../storage/assets/hubert:/app/assets/hubert:ro
+      - ../../storage/assets/rmvpe:/app/assets/rmvpe:ro
       # RVC code for RMVPE import (READ-ONLY)
       - ../../services/voice-engine/rvc:/app/rvc:ro
       # Infer module for RMVPE jit imports (READ-ONLY)
@@ -464,19 +462,20 @@ services:
       LOG_LEVEL: INFO
     volumes:
       - ../../services/trainer:/app
-      # Shared data directory - preprocessing outputs (SAME as preprocessor) - bind mount for local access
-      - ../../services/voice-engine/data:/data
-      # Uploads directory for audio files
-      - ../../services/voice-engine/uploads:/data/uploads
-      # Output models directory (shared with voice-engine for inference)
-      - ../../services/voice-engine/assets/models:/models
+      # Unified storage
+      - ../../storage:/storage
+      # Data directories
+      - ../../storage/data:/data
+      - ../../storage/data/uploads:/data/uploads
+      # Output models directory
+      - ../../storage/models:/models
       # RVC training code (mounted read-only from voice-engine)
       - ../../services/voice-engine/infer:/app/rvc/infer:ro
       - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
       # Shared assets - pretrained models (READ-ONLY)
-      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2:ro
-      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
-      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      - ../../storage/assets/pretrained_v2:/app/assets/pretrained_v2:ro
+      - ../../storage/assets/hubert:/app/assets/hubert:ro
+      - ../../storage/assets/rmvpe:/app/assets/rmvpe:ro
     deploy:
       resources:
         limits:
@@ -509,6 +508,5 @@ volumes:
   postgres_data:
   redis_data:
   minio_data:
-  api_storage:
   certbot_www:
   certbot_conf:

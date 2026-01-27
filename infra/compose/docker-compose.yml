@@ -10,6 +10,10 @@
 # - Python Voice Engine service (inference)
 # - Python Preprocessor service (audio preprocessing)
 # - Python Trainer service (RVC training)
+#
+# Storage Layout:
+#   All services use ./storage as the unified storage root.
+#   See docs/STORAGE_LAYOUT.md for full documentation.
 # =============================================================================
 
 services:
@@ -27,7 +31,8 @@ services:
       MYSQL_PASSWORD: ${DB_PASSWORD:-secret}
       MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-rootpass}
     volumes:
-      - postgres_data:/var/lib/mysql
+      - ../../storage/data/infra/mariadb:/var/lib/mysql
+      - ../../storage/logs/mariadb:/var/log/mysql
     ports:
       - "3306:3306"
     healthcheck:
@@ -46,9 +51,10 @@ services:
     image: redis:7-alpine
     container_name: morphvox-redis
     restart: unless-stopped
-    command: redis-server --appendonly yes
+    command: redis-server --appendonly yes --logfile /var/log/redis/redis.log
     volumes:
-      - redis_data:/data
+      - ../../storage/data/infra/redis:/data
+      - ../../storage/logs/redis:/var/log/redis
     ports:
       - "6379:6379"
     healthcheck:
@@ -72,7 +78,7 @@ services:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
     volumes:
-      - minio_data:/data
+      - ../../storage/data/infra/minio:/data
     ports:
       - "9000:9000"   # API
       - "9001:9001"   # Console
@@ -155,14 +161,14 @@ services:
       TRAINER_URL: http://trainer:8002
       PREPROCESSOR_URL: http://preprocess:8003
       
-      # Local voice models path (shared with voice-engine)
-      VOICE_MODELS_PATH: /var/www/html/storage/models
+      # Unified storage paths
+      STORAGE_ROOT: /storage
+      VOICE_MODELS_PATH: /storage/models
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
-      - api_storage:/var/www/html/storage
-      # Mount local models directory for scanning (voice-engine outputs here)
-      - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
+      # Unified storage mount
+      - ../../storage:/storage
       # Mount Docker socket for admin panel container logs (dev parity with prod)
       - /var/run/docker.sock:/var/run/docker.sock
       # Mount container log directories for direct access (optional in dev)
@@ -198,9 +204,12 @@ services:
       AWS_BUCKET: ${AWS_BUCKET:-morphvox}
       AWS_ENDPOINT: http://minio:9000
       VOICE_ENGINE_URL: http://voice-engine:8001
+      # Unified storage paths
+      STORAGE_ROOT: /storage
     volumes:
       - ../../apps/api:/var/www/html
       - api_vendor:/var/www/html/vendor
+      - ../../storage:/storage
     networks:
       - morphvox
 
@@ -224,6 +233,7 @@ services:
       - ../../apps/web:/app
       - web_node_modules:/app/node_modules
       - web_next:/app/.next
+      - ../../storage/logs/web:/app/logs
     ports:
       - "3000:3000"
     networks:
@@ -251,10 +261,12 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      # Model paths (can be local or S3)
-      MODEL_PATH: /app/assets/models
-      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
-      RMVPE_PATH: /app/assets/rmvpe
+      # Unified storage paths
+      STORAGE_ROOT: /storage
+      MODEL_PATH: /storage/models
+      DATA_ROOT: /storage/data
+      HUBERT_PATH: /storage/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /storage/assets/rmvpe
       
       # Server settings
       HTTP_PORT: 8001
@@ -268,14 +280,14 @@ services:
     volumes:
       - ../../services/voice-engine:/app
       - voice_engine_cache:/app/.cache
-      # Use bind mount for models so they persist on host (not a Docker volume)
-      # This allows models to be shared and survive container rebuilds
-      # Mount UVR5 weights for vocal separation
-      - ../../services/voice-engine/assets/uvr5_weights:/app/assets/uvr5_weights
-      # Mount same models path that API uses so model paths match
-      - ../../services/voice-engine/assets/models:/var/www/html/storage/models:ro
-      # Shared data directory - uploads from preprocessor (SAME volume as preprocessor/trainer)
-      - training_data:/data
+      # Unified storage mount
+      - ../../storage:/storage
+      # Mount storage/models to assets/models so inference can find trained models
+      - ../../storage/models:/app/assets/models
+      # Mount storage assets for HuBERT, RMVPE, pretrained models
+      - ../../storage/assets/hubert:/app/assets/hubert
+      - ../../storage/assets/rmvpe:/app/assets/rmvpe
+      - ../../storage/assets/pretrained_v2:/app/assets/pretrained_v2
     ports:
       - "8001:8001"   # HTTP API
       - "8765:8765"   # WebSocket
@@ -310,16 +322,13 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      # Paths - UNIFIED with trainer service
-      # DATA_ROOT: Where preprocessing outputs go (shared with trainer)
-      DATA_ROOT: /data
-      # UPLOADS_DIR: Where uploaded audio files are stored  
-      UPLOADS_DIR: /data/uploads
-      # ASSETS_ROOT: Read-only shared assets (hubert, rmvpe, etc)
-      ASSETS_ROOT: /app/assets
-      # Legacy env vars for compatibility
-      HUBERT_PATH: /app/assets/hubert/hubert_base.pt
-      RMVPE_PATH: /app/assets/rmvpe
+      # Unified storage paths
+      STORAGE_ROOT: /storage
+      DATA_ROOT: /storage/data
+      UPLOADS_DIR: /storage/data/uploads
+      ASSETS_ROOT: /storage/assets
+      HUBERT_PATH: /storage/assets/hubert/hubert_base.pt
+      RMVPE_PATH: /storage/assets/rmvpe
       
       # Server settings
       HTTP_PORT: 8003
@@ -331,11 +340,8 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ../../services/preprocessor:/app
-      # Shared data directory for preprocessing outputs (WRITABLE)
-      - training_data:/data
-      # Shared assets - hubert, rmvpe (READ-ONLY)
-      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
-      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
+      # Unified storage mount
+      - ../../storage:/storage
       # RVC code for RMVPE import (READ-ONLY)
       - ../../services/voice-engine/rvc:/app/rvc:ro
     ports:
@@ -371,15 +377,12 @@ services:
       S3_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       S3_BUCKET: ${AWS_BUCKET:-morphvox}
       
-      # Paths - UNIFIED with preprocessor service
-      # DATA_ROOT: Where preprocessing outputs are (shared with preprocessor)
-      DATA_ROOT: /data
-      # MODELS_ROOT: Where final trained models go (shared with voice-engine)
-      MODELS_ROOT: /models
-      # RVC_ROOT: RVC training code
+      # Unified storage paths
+      STORAGE_ROOT: /storage
+      DATA_ROOT: /storage/data
+      MODELS_ROOT: /storage/models
+      ASSETS_ROOT: /storage/assets
       RVC_ROOT: /app/rvc
-      # ASSETS_ROOT: Read-only shared assets (pretrained models, etc)
-      ASSETS_ROOT: /app/assets
       
       # Service URLs
       PREPROCESSOR_URL: http://preprocess:8003
@@ -394,17 +397,11 @@ services:
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
     volumes:
       - ../../services/trainer:/app
-      # Shared data directory - preprocessing outputs (SAME volume as preprocessor)
-      - training_data:/data
-      # Output models directory (shared with voice-engine for inference)
-      - ../../services/voice-engine/assets/models:/models
+      # Unified storage mount
+      - ../../storage:/storage
       # RVC training code (mounted read-only from voice-engine)
       - ../../services/voice-engine/infer:/app/rvc/infer:ro
       - ../../services/voice-engine/rvc:/app/rvc/rvc:ro
-      # Shared assets - pretrained models (READ-ONLY)
-      - ../../services/voice-engine/assets/pretrained_v2:/app/assets/pretrained_v2:ro
-      - ../../services/voice-engine/assets/hubert:/app/assets/hubert:ro
-      - ../../services/voice-engine/assets/rmvpe:/app/assets/rmvpe:ro
     ports:
       - "8002:8002"   # HTTP API
     deploy:
@@ -428,25 +425,16 @@ networks:
 # =============================================================================
 # Volumes
 # =============================================================================
+# NOTE: Most data now uses bind mounts to ./storage (unified storage layout).
+# Only ephemeral caches and npm/vendor directories use named volumes.
+# See docs/STORAGE_LAYOUT.md for full documentation.
 
 volumes:
-  postgres_data:
-    driver: local
-  redis_data:
-    driver: local
-  minio_data:
-    driver: local
   api_vendor:
-    driver: local
-  api_storage:
     driver: local
   web_node_modules:
     driver: local
   web_next:
     driver: local
   voice_engine_cache:
-    driver: local
-  voice_engine_models:
-    driver: local
-  training_data:
     driver: local
