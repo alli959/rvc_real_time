@@ -180,9 +180,30 @@ class VoiceModelController extends Controller
 
         $models = $query->with('user:id,name')->paginate($request->get('per_page', 20));
 
-        // Add is_owned flag to each model
-        $models->getCollection()->transform(function ($model) use ($user) {
+        // Fetch active training jobs to merge with model status
+        $trainerService = app(\App\Services\TrainerService::class);
+        $activeJobs = $trainerService->listTrainingJobs() ?? [];
+        
+        // Index jobs by exp_name (model slug) for quick lookup
+        $jobsByModel = collect($activeJobs)->filter(function ($job) {
+            return in_array($job['status'] ?? '', ['training', 'queued', 'preprocessing']);
+        })->keyBy('exp_name');
+
+        // Add is_owned flag and check for active training jobs
+        $models->getCollection()->transform(function ($model) use ($user, $jobsByModel) {
             $model->is_owned = $model->user_id === $user->id;
+            
+            // Check if there's an active training job for this model
+            $activeJob = $jobsByModel->get($model->slug);
+            if ($activeJob) {
+                // Override database status with live training status
+                $model->status = 'training';
+                $model->training_progress = $activeJob['progress'] ?? 0;
+                $model->training_job_id = $activeJob['job_id'] ?? null;
+                $model->training_epoch = $activeJob['epoch'] ?? null;
+                $model->training_total_epochs = $activeJob['total_epochs'] ?? null;
+            }
+            
             return $model;
         });
 

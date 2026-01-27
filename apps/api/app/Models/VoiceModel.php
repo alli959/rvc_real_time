@@ -148,6 +148,7 @@ class VoiceModel extends Model
 
     /**
      * Get the model path for voice-engine (absolute path inside voice-engine container)
+     * Uses unified storage layout: /storage/models/<model_name>/<file>.pth
      */
     public function getVoiceEngineModelPath(): ?string
     {
@@ -157,19 +158,24 @@ class VoiceModel extends Model
 
         $path = $this->model_path;
 
-        // If already absolute path for voice-engine, return as-is
-        if (str_starts_with($path, '/app/assets/models/')) {
+        // If already using unified storage path, return as-is
+        if (str_starts_with($path, '/storage/models/')) {
             return $path;
         }
 
-        // If relative path, prepend voice-engine assets path
-        if (!str_starts_with($path, '/')) {
-            return '/app/assets/models/' . ltrim($path, '/');
+        // Legacy: /app/assets/models/ -> /storage/models/
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return str_replace('/app/assets/models/', '/storage/models/', $path);
         }
 
-        // Translate API container path to voice-engine path
+        // Legacy: /var/www/html/storage/models/ -> /storage/models/
         if (str_starts_with($path, '/var/www/html/storage/models/')) {
-            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+            return str_replace('/var/www/html/storage/models/', '/storage/models/', $path);
+        }
+
+        // If relative path, prepend unified storage models path
+        if (!str_starts_with($path, '/')) {
+            return '/storage/models/' . ltrim($path, '/');
         }
 
         return $path;
@@ -177,6 +183,7 @@ class VoiceModel extends Model
 
     /**
      * Get the index path for voice-engine (absolute path inside voice-engine container)
+     * Uses unified storage layout: /storage/models/<model_name>/<file>.index
      */
     public function getVoiceEngineIndexPath(): ?string
     {
@@ -186,19 +193,24 @@ class VoiceModel extends Model
 
         $path = $this->index_path;
 
-        // If already absolute path for voice-engine, return as-is
-        if (str_starts_with($path, '/app/assets/models/')) {
+        // If already using unified storage path, return as-is
+        if (str_starts_with($path, '/storage/models/')) {
             return $path;
         }
 
-        // If relative path, prepend voice-engine assets path
-        if (!str_starts_with($path, '/')) {
-            return '/app/assets/models/' . ltrim($path, '/');
+        // Legacy: /app/assets/models/ -> /storage/models/
+        if (str_starts_with($path, '/app/assets/models/')) {
+            return str_replace('/app/assets/models/', '/storage/models/', $path);
         }
 
-        // Translate API container path to voice-engine path
+        // Legacy: /var/www/html/storage/models/ -> /storage/models/
         if (str_starts_with($path, '/var/www/html/storage/models/')) {
-            return str_replace('/var/www/html/storage/models/', '/app/assets/models/', $path);
+            return str_replace('/var/www/html/storage/models/', '/storage/models/', $path);
+        }
+
+        // If relative path, prepend unified storage models path
+        if (!str_starts_with($path, '/')) {
+            return '/storage/models/' . ltrim($path, '/');
         }
 
         return $path;
