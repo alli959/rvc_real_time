@@ -163,6 +163,48 @@ apps/web/out/
 data/
 
 # ============================================
+# Unified Storage Directory
+# ============================================
+# See docs/STORAGE_LAYOUT.md for full documentation
+# Keep directory structure but ignore runtime data
+
+# Models (large binary files)
+storage/models/**/*.pth
+storage/models/**/*.index
+storage/models/**/*.npy
+storage/models/**/*.pt
+storage/models/**/*.ckpt
+storage/models/**/*.onnx
+
+# Assets (downloaded on setup)
+storage/assets/hubert/*.pt
+storage/assets/rmvpe/*.pt
+storage/assets/rmvpe/*.pth
+storage/assets/uvr5_weights/*.pth
+storage/assets/uvr5_weights/**/*.pth
+storage/assets/bark/*.pt
+storage/assets/bark/*.th
+storage/assets/pretrained_v2/*.pt
+storage/assets/pretrained_v2/*.pth
+storage/assets/pretrained_v2/*.th
+storage/assets/whisper/
+
+# Runtime data directories
+storage/data/uploads/
+storage/data/preprocess/
+storage/data/training/
+storage/data/outputs/
+storage/data/infra/
+
+# Logs
+storage/logs/**/*.log
+storage/logs/**/
+
+# Keep directory structure with .gitkeep files
+!storage/**/.gitkeep
+!storage/**/README.md
+
+# ============================================
 # General
 # ============================================
 
@@ -192,3 +234,22 @@ node_modules/
 
 huggingface/
 suno/
+# ============================================
+# SSL Certificates (sensitive)
+# ============================================
+infra/nginx/ssl/
+*.key
+*.crt
+*.pem
+
+# ============================================
+# Runtime Storage (Docker volumes)
+# ============================================
+# The storage/ directory is used as Docker volumes at runtime
+# Keep .gitkeep files and README.md but ignore all runtime data
+storage/app/
+storage/framework/
+storage/logs/
+storage/models/
+storage/assets/
+storage/data/

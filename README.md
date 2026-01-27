@@ -224,6 +224,9 @@ python main.py --mode api
 - [x] Dedicated Song Remix page
 - [x] Dedicated preprocessor service (audio slicing, F0, HuBERT)
 - [x] Dedicated trainer service (RVC training, index building)
+- [x] Training wizard with upload progress tracking
+- [x] Batched file uploads for reliable large transfers
+- [x] Audio normalization fix for training quality
 - [ ] Real-time WebRTC streaming
 - [ ] Subscription billing
 - [ ] Model marketplace

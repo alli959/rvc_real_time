@@ -243,6 +243,27 @@ Preprocessing outputs go to `DATA_ROOT/{exp_name}/`. Check:
 #### "Permission denied" writing to assets
 Assets are mounted read-only. Preprocessing should write to `DATA_ROOT`, not `ASSETS_ROOT`.
 
+#### Training produces broken audio / very high loss values
+If `loss_disc` shows values in the billions instead of 1-10, the audio normalization may be disabled. Check `data_utils.py`:
+```python
+# This line MUST be uncommented:
+audio_norm = audio / self.max_wav_value
+```
+After fixing, delete all `.spec.pt` cache files and restart training.
+
+#### File uploads getting stuck / timeout
+Large multi-file uploads are batched (4 files at a time). If uploads still timeout:
+- Check PHP memory_limit (should be 1024M+)
+- Check upload_max_filesize and post_max_size in php.ini
+- Verify PHP-FPM has enough workers (pm.max_children ≥ 20)
+
+#### Site freezes during training
+PHP-FPM may be exhausted. Check `apps/api/docker/www.conf` has sufficient workers:
+```ini
+pm.max_children = 50
+pm.start_servers = 10
+```
+
 ### Health Checks
 
 ```bash

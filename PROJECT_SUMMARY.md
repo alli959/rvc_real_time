@@ -40,6 +40,11 @@ MorphVox is a comprehensive AI voice conversion platform built as a full-stack m
 - ✅ Dedicated trainer service for model training
 - ✅ Checkpoint extraction and model packaging
 - ✅ FAISS index building
+- ✅ Training wizard with step-by-step workflow
+- ✅ Batched file uploads (auto-splits large uploads)
+- ✅ Upload progress tracking with visual feedback
+- ✅ Audio normalization for proper training quality
+- ✅ Continue training from checkpoint support
 
 ### API & Streaming
 - ✅ RESTful HTTP API (port 8001)
@@ -268,6 +273,18 @@ Key settings include database credentials, S3 storage, OAuth keys, and service U
 - [ ] Additional RVC model architectures
 - [ ] Performance monitoring dashboard
 - [ ] Distributed training across multiple GPUs
+
+## Recent Updates (January 2026)
+
+### Training Pipeline Improvements
+- **Audio Normalization Fix**: Fixed critical bug where training received unnormalized int16 audio values instead of normalized floats (-1 to 1), causing loss values in billions instead of normal ranges (~1-10)
+- **Batched File Uploads**: Large file uploads are now automatically batched (4 files at a time) to prevent timeout issues
+- **Upload Progress Tracking**: Visual progress bar shows upload status across all batches
+- **PHP-FPM Tuning**: Increased max workers from 5 to 50 for better concurrent request handling
+
+### Infrastructure
+- **Storage Layout**: Unified storage directory structure for all services
+- **PHP Configuration**: Optimized memory limits (1GB) and upload sizes for large audio files
 
 ## Development Guidelines
 
