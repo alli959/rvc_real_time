@@ -5,9 +5,8 @@ set -uo pipefail
 notify() {
   local message="$1"
   if [ -n "${COST_ALERT_WEBHOOK:-}" ]; then
-    curl -s -H "Content-Type: application/json" \
-      -d "{\"content\": \"$message\"}" \
-      "$COST_ALERT_WEBHOOK"
+    jq -n --arg msg "$message" '{content: $msg}' | \
+      curl -s -H "Content-Type: application/json" -d @- "$COST_ALERT_WEBHOOK"
   fi
   echo "[$(date)] $message"
 }

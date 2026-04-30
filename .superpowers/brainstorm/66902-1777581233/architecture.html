@@ -1,0 +1,90 @@
+<h2>MorphVox Cloud Architecture — Vast.ai + Cloudflare</h2>
+<p class="subtitle">Full design overview — review each section</p>
+
+<div class="mockup">
+  <div class="mockup-header">System Architecture</div>
+  <div class="mockup-body" style="font-family: monospace; font-size: 13px; line-height: 1.6; padding: 24px; background: #1a1a2e; color: #e0e0e0;">
+<pre style="margin:0; white-space:pre; overflow-x:auto;">
+┌─────────────────────────────────────────────────────────────────────────┐
+│                          CLOUDFLARE EDGE                                │
+│                                                                         │
+│  ┌──────────┐    ┌───────────────┐    ┌──────────────────────┐         │
+│  │ DNS      │    │ Maintenance   │    │ Cloudflare R2        │         │
+│  │morphvox  │    │ Worker (503)  │    │ (Backup Storage)     │         │
+│  │  .net    │    │               │    │ • DB dumps (hourly)  │         │
+│  └────┬─────┘    └───────────────┘    │ • Models (on change) │         │
+│       │                                │ • Configs (daily)    │         │
+│       │                                └──────────────────────┘         │
+│  ┌────▼──────────────────────┐                                          │
+│  │    Cloudflare Tunnel      │  ← Zero-trust HTTPS, no exposed ports   │
+│  │    (cloudflared daemon)   │                                          │
+│  └────────────┬──────────────┘                                          │
+└───────────────┼─────────────────────────────────────────────────────────┘
+                │ encrypted tunnel
+┌───────────────▼─────────────────────────────────────────────────────────┐
+│                    VAST.AI PERSISTENT POD                                │
+│                    RTX 3090 (24GB) · 32GB RAM · 100GB SSD               │
+│                                                                         │
+│  ┌────────────────────────────────────────────────────────────────┐     │
+│  │              Docker Compose Production Stack                    │     │
+│  │                                                                │     │
+│  │  ┌─────────┐  ┌─────────┐  ┌──────────────┐                  │     │
+│  │  │ Nginx   │  │ Next.js │  │  Laravel API │                  │     │
+│  │  │ :9080   │──│  :3000  │  │    :80       │                  │     │
+│  │  └────┬────┘  └─────────┘  └──────┬───────┘                  │     │
+│  │       │                            │                          │     │
+│  │  ┌────▼────────────────────────────▼───────┐                  │     │
+│  │  │        Voice Engine (GPU)               │                  │     │
+│  │  │        HTTP :8001  ·  WS :8765          │                  │     │
+│  │  └─────────────────────────────────────────┘                  │     │
+│  │                                                                │     │
+│  │  ┌────────────┐  ┌────────┐  ┌───────┐  ┌───────────┐       │     │
+│  │  │Preprocessor│  │Trainer │  │MariaDB│  │Redis/MinIO│       │     │
+│  │  │   :8003    │  │ :8002  │  │ :3306 │  │:6379/:9000│       │     │
+│  │  └────────────┘  └────────┘  └───────┘  └───────────┘       │     │
+│  └────────────────────────────────────────────────────────────────┘     │
+│                                                                         │
+│  ┌──────────────┐  ┌──────────────────┐  ┌─────────────────────┐       │
+│  │ cloudflared  │  │ backup-cron      │  │ cost-monitor        │       │
+│  │ (tunnel)     │  │ (hourly → R2)    │  │ (alerts at $80/$100)│       │
+│  └──────────────┘  └──────────────────┘  └─────────────────────┘       │
+└─────────────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────────────┐
+│                     GITHUB ACTIONS CI/CD                                 │
+│                                                                         │
+│  push to main → build images → SSH deploy to pod → health check         │
+└─────────────────────────────────────────────────────────────────────────┘
+</pre>
+  </div>
+</div>
+
+<div class="section" style="margin-top: 24px;">
+  <h3>Key Design Decisions</h3>
+  <table style="width:100%; border-collapse:collapse; font-size:14px;">
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;"><strong>Networking</strong></td>
+      <td style="padding:8px;">Cloudflare Tunnel (no ports exposed, free HTTPS + DDoS protection)</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;"><strong>Storage</strong></td>
+      <td style="padding:8px;">Local SSD for hot data + Cloudflare R2 for backups</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;"><strong>GPU</strong></td>
+      <td style="padding:8px;">RTX 3090 24GB — handles inference + training concurrently</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;"><strong>Deployment</strong></td>
+      <td style="padding:8px;">GitHub Actions → SSH → docker compose pull && up</td>
+    </tr>
+    <tr style="border-bottom:1px solid #333;">
+      <td style="padding:8px;"><strong>Cost Control</strong></td>
+      <td style="padding:8px;">Vast.ai API monitoring + email/webhook alerts at $80/$100</td>
+    </tr>
+    <tr>
+      <td style="padding:8px;"><strong>Recovery</strong></td>
+      <td style="padding:8px;">Auto-restore from R2 on new instance (10-min RTO)</td>
+    </tr>
+  </table>
+</div>

@@ -514,7 +514,6 @@ services:
       - ../vastai/health-check.sh:/scripts/health-check.sh:ro
       - ../vastai/setup-rclone.sh:/scripts/setup-rclone.sh:ro
       - ../vastai/crontab:/etc/crontabs/root:ro
-      - mariadb_data:/var/lib/mysql:ro
       - minio_data:/minio-data:ro
       - ../../storage:/storage:ro
       - ../../infra/compose/.env:/env-file:ro
