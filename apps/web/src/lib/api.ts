@@ -242,6 +242,11 @@ export interface TrainingConfig {
   f0_method?: 'rmvpe' | 'pm' | 'harvest';
   batch_size?: number;
   save_every_epoch?: number;
+  // Advanced training options
+  gradient_accumulation_steps?: number;
+  max_steps?: number;
+  early_stop_patience?: number;
+  save_every_steps?: number;
   [key: string]: any;
 }
 
@@ -482,6 +487,14 @@ export const voiceModelsApi = {
     });
     return response.data;
   },
+
+  /**
+   * Cancel training for a model (stops active training job)
+   */
+  cancelTraining: async (slugOrId: string): Promise<{ success: boolean; message?: string }> => {
+    const response = await api.post(`/voice-models/${slugOrId}/cancel-training`);
+    return response.data;
+  },
 };
 
 // Legacy alias - modelsApi points to the same functionality
@@ -674,6 +687,7 @@ export interface AudioProcessRequest {
   sample_rate?: number;
   mode: 'split' | 'convert' | 'swap';
   model_id?: number;
+  checkpoint?: string; // Optional checkpoint filename for model versioning
   f0_up_key?: number;
   index_rate?: number;
   pitch_shift_all?: number; // Pitch shift for both vocals and instrumental (split mode) or just instrumental (swap mode)
@@ -705,6 +719,7 @@ export const audioProcessingApi = {
       sample_rate: request.sample_rate || 44100,
       mode: request.mode,
       model_id: request.model_id,
+      checkpoint: request.checkpoint,
       f0_up_key: request.f0_up_key || 0,
       index_rate: request.index_rate || 0.75,
       pitch_shift_all: request.pitch_shift_all || 0,
@@ -1323,6 +1338,11 @@ export const trainerApi = {
     f0_method?: string;
     force_reprocess?: boolean;
     continue_from_checkpoint?: boolean;
+    // Advanced training options
+    gradient_accumulation_steps?: number;
+    max_steps?: number;
+    early_stop_patience?: number;
+    save_every_steps?: number;
   }): Promise<{
     job_id: string;
     status: string;
@@ -1381,6 +1401,40 @@ export const trainerApi = {
     };
   }> => {
     const response = await api.get(`/trainer/model/${modelSlug}/training-info`);
+    return response.data;
+  },
+
+  /**
+   * Get available checkpoints for a model
+   * 
+   * Returns list of extracted model checkpoints that can be used for inference,
+   * as well as raw training checkpoints (G_*.pth) that can be extracted.
+   */
+  getModelCheckpoints: async (modelSlug: string): Promise<{
+    exp_name: string;
+    checkpoints: Array<{
+      filename: string;
+      path: string;
+      epoch: number | null;
+      step: number | null;
+      size_mb: number;
+      created_at: number;
+      is_default?: boolean;
+      type?: string;
+    }>;
+    training_checkpoints: Array<{
+      filename: string;
+      path: string;
+      step: number;
+      size_mb: number;
+      created_at: number;
+      type: string;
+    }>;
+    default: string | null;
+    model_dir?: string | null;
+    training_dir?: string | null;
+  }> => {
+    const response = await api.get(`/trainer/model/${modelSlug}/checkpoints`);
     return response.data;
   },
 

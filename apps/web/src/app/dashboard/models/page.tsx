@@ -1,13 +1,13 @@
 'use client';
 
-import { useState, useEffect, Suspense } from 'react';
+import { useState, useEffect, Suspense, useRef } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { useQuery } from '@tanstack/react-query';
 import Link from 'next/link';
 import { 
   Search, Mic2, HardDrive, FileAudio, Check, X, Cloud, Server, Lock, Globe, Upload, 
   Plus, Trash2, Pencil, Link as LinkIcon, Settings, Users,
-  ChevronLeft, MessageSquare, Loader2, Music, Share2, Languages
+  ChevronLeft, MessageSquare, Loader2, Music, Share2, Languages, ChevronDown
 } from 'lucide-react';
 import { voiceModelsApi, VoiceModel, SystemVoiceModel, trainerApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
@@ -26,6 +26,7 @@ type WorkflowTab = 'upload' | 'tts' | 'remix';
 type SelectedModelInfo = {
   id: number;
   name: string;
+  slug?: string;
   model_file?: string;
   size?: string;
   image_url?: string | null;
@@ -38,9 +39,13 @@ function DashboardModelsContent() {
   const [myModelsSearch, setMyModelsSearch] = useState('');
   const [sharedSearch, setSharedSearch] = useState('');
   const [selectedModel, setSelectedModel] = useState<SelectedModelInfo | null>(null);
+  const [selectedCheckpoint, setSelectedCheckpoint] = useState<string | null>(null);
+  const [showCheckpointDropdown, setShowCheckpointDropdown] = useState(false);
   const [activeWorkflowTab, setActiveWorkflowTab] = useState<WorkflowTab>('upload');
   const [showUploadForm, setShowUploadForm] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const modalRef = useRef<HTMLDivElement>(null);
+  const checkpointDropdownRef = useRef<HTMLDivElement>(null);
   
   // Get tab from URL or default
   const user = useAuthStore((state) => state.user);
@@ -94,6 +99,41 @@ function DashboardModelsContent() {
   const sharedModels: VoiceModel[] = allUserModels.filter(m => m.is_owned === false);
   const sharedLoading = myModelsLoading;
 
+  // Query checkpoints for the selected model
+  const { data: checkpointsData } = useQuery({
+    queryKey: ['model-checkpoints', selectedModel?.slug],
+    queryFn: () => selectedModel?.slug ? trainerApi.getModelCheckpoints(selectedModel.slug) : null,
+    enabled: !!selectedModel?.slug,
+  });
+
+  // Click outside to close modal
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (modalRef.current && !modalRef.current.contains(e.target as Node)) {
+        setSelectedModel(null);
+        setSelectedCheckpoint(null);
+        setShowCheckpointDropdown(false);
+      }
+    };
+    if (selectedModel) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [selectedModel]);
+
+  // Close checkpoint dropdown when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      if (checkpointDropdownRef.current && !checkpointDropdownRef.current.contains(e.target as Node)) {
+        setShowCheckpointDropdown(false);
+      }
+    };
+    if (showCheckpointDropdown) {
+      document.addEventListener('mousedown', handleClickOutside);
+    }
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, [showCheckpointDropdown]);
+
   // Edit modal state
   const [editingModel, setEditingModel] = useState<VoiceModel | null>(null);
   const [editName, setEditName] = useState('');
@@ -102,6 +142,7 @@ function DashboardModelsContent() {
   const [editTags, setEditTags] = useState('');
   const [saving, setSaving] = useState(false);
   const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [cancellingId, setCancellingId] = useState<number | null>(null);
 
   const handleEdit = (model: VoiceModel) => {
     setEditingModel(model);
@@ -128,6 +169,20 @@ function DashboardModelsContent() {
       alert('Failed to update model');
     } finally {
       setSaving(false);
+    }
+  };
+
+  const handleCancelTraining = async (id: number) => {
+    if (!confirm('Are you sure you want to cancel training? Progress may be lost.')) return;
+    setCancellingId(id);
+    try {
+      await voiceModelsApi.cancelTraining(id.toString());
+      refetchMyModels();
+    } catch (err) {
+      console.error('Failed to cancel training:', err);
+      alert('Failed to cancel training');
+    } finally {
+      setCancellingId(null);
     }
   };
 
@@ -312,7 +367,7 @@ function DashboardModelsContent() {
                     key={model.slug} 
                     model={model} 
                     isSelected={selectedModel?.id === model.id}
-                    onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
+                    onSelect={() => { setSelectedModel({ id: model.id, name: model.name, slug: model.slug, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url }); setSelectedCheckpoint(null); }}
                   />
                 ))}
               </div>
@@ -391,10 +446,12 @@ function DashboardModelsContent() {
                       key={model.id}
                       model={model}
                       isSelected={selectedModel?.id === model.id}
-                      onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
+                      onSelect={() => { setSelectedModel({ id: model.id, name: model.name, slug: model.slug, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url }); setSelectedCheckpoint(null); }}
                       onEdit={() => handleEdit(model)}
                       onDelete={() => handleDelete(model.id)}
+                      onCancelTraining={() => handleCancelTraining(model.id)}
                       deletingId={deletingId}
+                      cancellingId={cancellingId}
                       getVisibilityIcon={getVisibilityIcon}
                       getVisibilityStyle={getVisibilityStyle}
                     />
@@ -446,7 +503,7 @@ function DashboardModelsContent() {
                       key={model.id}
                       model={model}
                       isSelected={selectedModel?.id === model.id}
-                      onSelect={() => setSelectedModel({ id: model.id, name: model.name, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url })}
+                      onSelect={() => { setSelectedModel({ id: model.id, name: model.name, slug: model.slug, model_file: model.model_file || undefined, size: model.size || undefined, image_url: model.image_url }); setSelectedCheckpoint(null); }}
                     />
                   ))}
               </div>
@@ -500,9 +557,9 @@ function DashboardModelsContent() {
         {/* Selected Model Workflow Panel */}
         {selectedModel && (
           <div className="fixed inset-0 bg-gray-950/95 backdrop-blur-sm z-50 overflow-auto">
-            <div className="max-w-4xl mx-auto px-4 py-4 sm:py-8 pb-20 lg:pb-8">
+            <div ref={modalRef} className="max-w-4xl mx-auto px-4 py-4 sm:py-8 pb-20 lg:pb-8">
               <div className="flex items-center gap-2 sm:gap-4 mb-4 sm:mb-6">
-                <button onClick={() => setSelectedModel(null)} className="p-2 rounded-lg hover:bg-gray-800">
+                <button onClick={() => { setSelectedModel(null); setSelectedCheckpoint(null); }} className="p-2 rounded-lg hover:bg-gray-800">
                   <ChevronLeft className="h-5 w-5 sm:h-6 sm:w-6" />
                 </button>
                 <div className="flex items-center gap-2 sm:gap-3 flex-1 min-w-0">
@@ -517,16 +574,117 @@ function DashboardModelsContent() {
                       <Mic2 className="h-5 w-5 sm:h-6 sm:w-6 text-white" />
                     </div>
                   )}
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <h2 className="text-lg sm:text-xl font-bold truncate">{selectedModel.name}</h2>
-                    {(selectedModel.model_file || selectedModel.size) && (
-                      <p className="text-xs sm:text-sm text-gray-400 truncate">
-                        {selectedModel.model_file && selectedModel.model_file}
-                        {selectedModel.model_file && selectedModel.size && ' • '}
-                        {selectedModel.size && selectedModel.size}
-                      </p>
-                    )}
+                    <div className="flex items-center gap-2 text-xs sm:text-sm text-gray-400">
+                      {(selectedModel.model_file || selectedModel.size) && (
+                        <span className="truncate">
+                          {selectedModel.model_file && selectedModel.model_file}
+                          {selectedModel.model_file && selectedModel.size && ' • '}
+                          {selectedModel.size && selectedModel.size}
+                        </span>
+                      )}
+                    </div>
                   </div>
+                  
+                  {/* Checkpoint Selector Dropdown */}
+                  {((checkpointsData?.checkpoints && checkpointsData.checkpoints.length > 0) || 
+                    (checkpointsData?.training_checkpoints && checkpointsData.training_checkpoints.length > 0)) && (
+                    <div className="relative" ref={checkpointDropdownRef}>
+                      <button
+                        onClick={() => setShowCheckpointDropdown(!showCheckpointDropdown)}
+                        className="flex items-center gap-2 px-3 py-2 bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg text-sm transition-colors"
+                      >
+                        <span className="text-gray-300">
+                          {selectedCheckpoint 
+                            ? (() => {
+                                const extracted = checkpointsData?.checkpoints?.find((c: { filename: string }) => c.filename === selectedCheckpoint);
+                                const training = checkpointsData?.training_checkpoints?.find((c: { filename: string }) => c.filename === selectedCheckpoint);
+                                if (extracted) return `Epoch ${extracted.epoch || '?'}`;
+                                if (training) return `Step ${training.step}`;
+                                return selectedCheckpoint;
+                              })()
+                            : 'Latest'}
+                        </span>
+                        <ChevronDown className={`h-4 w-4 text-gray-400 transition-transform ${showCheckpointDropdown ? 'rotate-180' : ''}`} />
+                      </button>
+                      
+                      {showCheckpointDropdown && (
+                        <div className="absolute right-0 mt-1 w-64 bg-gray-800 border border-gray-700 rounded-lg shadow-xl z-10 max-h-80 overflow-y-auto">
+                          <button
+                            onClick={() => {
+                              setSelectedCheckpoint(null);
+                              setShowCheckpointDropdown(false);
+                            }}
+                            className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between ${!selectedCheckpoint ? 'bg-primary-600/20 text-primary-400' : 'text-gray-300'}`}
+                          >
+                            <span>Latest (Default)</span>
+                            {!selectedCheckpoint && <Check className="h-4 w-4" />}
+                          </button>
+                          
+                          {/* Extracted Models Section */}
+                          {checkpointsData?.checkpoints && checkpointsData.checkpoints.length > 0 && (
+                            <>
+                              <div className="px-4 py-1.5 text-xs text-gray-500 bg-gray-900/50 font-medium border-t border-gray-700">
+                                Extracted Models (Ready)
+                              </div>
+                              {checkpointsData.checkpoints
+                                .sort((a: { epoch: number | null }, b: { epoch: number | null }) => (b.epoch ?? 0) - (a.epoch ?? 0))
+                                .map((checkpoint: { filename: string; epoch: number | null; step: number | null; size_mb: number; is_default?: boolean }) => (
+                                  <button
+                                    key={checkpoint.filename}
+                                    onClick={() => {
+                                      setSelectedCheckpoint(checkpoint.filename);
+                                      setShowCheckpointDropdown(false);
+                                    }}
+                                    className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between ${selectedCheckpoint === checkpoint.filename ? 'bg-primary-600/20 text-primary-400' : 'text-gray-300'}`}
+                                  >
+                                    <div>
+                                      <div className="flex items-center gap-1">
+                                        {checkpoint.is_default && <span className="text-green-400 text-xs">●</span>}
+                                        {checkpoint.epoch ? `Epoch ${checkpoint.epoch}` : checkpoint.filename}
+                                      </div>
+                                      <div className="text-xs text-gray-500">
+                                        {checkpoint.step && `Step ${checkpoint.step} • `}{checkpoint.size_mb?.toFixed(1)} MB
+                                      </div>
+                                    </div>
+                                    {selectedCheckpoint === checkpoint.filename && <Check className="h-4 w-4" />}
+                                  </button>
+                                ))}
+                            </>
+                          )}
+                          
+                          {/* Training Checkpoints Section */}
+                          {checkpointsData?.training_checkpoints && checkpointsData.training_checkpoints.length > 0 && (
+                            <>
+                              <div className="px-4 py-1.5 text-xs text-orange-400 bg-gray-900/50 font-medium border-t border-gray-700">
+                                Training Checkpoints (Raw)
+                              </div>
+                              {checkpointsData.training_checkpoints.map((checkpoint: { filename: string; step: number; size_mb: number }) => (
+                                <button
+                                  key={checkpoint.filename}
+                                  onClick={() => {
+                                    setSelectedCheckpoint(checkpoint.filename);
+                                    setShowCheckpointDropdown(false);
+                                  }}
+                                  className={`w-full px-4 py-2 text-left text-sm hover:bg-gray-700 flex items-center justify-between ${selectedCheckpoint === checkpoint.filename ? 'bg-primary-600/20 text-primary-400' : 'text-gray-300'}`}
+                                >
+                                  <div>
+                                    <div className="flex items-center gap-1">
+                                      <span className="text-orange-400 text-xs">○</span>
+                                      Step {checkpoint.step}
+                                    </div>
+                                    <div className="text-xs text-gray-500">{checkpoint.filename} • {checkpoint.size_mb?.toFixed(1)} MB</div>
+                                  </div>
+                                  {selectedCheckpoint === checkpoint.filename && <Check className="h-4 w-4" />}
+                                </button>
+                              ))}
+                            </>
+                          )}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
 
@@ -556,7 +714,11 @@ function DashboardModelsContent() {
                 </div>
                 <div className="p-4 sm:p-6">
                   {activeWorkflowTab === 'upload' && (
-                    <VoiceConvertUpload selectedModelId={selectedModel.id} modelName={selectedModel.name} />
+                    <VoiceConvertUpload 
+                      selectedModelId={selectedModel.id} 
+                      modelName={selectedModel.name} 
+                      checkpoint={selectedCheckpoint}
+                    />
                   )}
                   {activeWorkflowTab === 'tts' && (
                     <TTSGenerator preSelectedModelId={selectedModel.id} hideModelSelector={true} />
@@ -636,8 +798,10 @@ function MyModelCard({
   isSelected, 
   onSelect, 
   onEdit, 
-  onDelete, 
+  onDelete,
+  onCancelTraining,
   deletingId,
+  cancellingId,
   getVisibilityIcon,
   getVisibilityStyle 
 }: { 
@@ -646,11 +810,14 @@ function MyModelCard({
   onSelect: () => void;
   onEdit: () => void;
   onDelete: () => void;
+  onCancelTraining: () => void;
   deletingId: number | null;
+  cancellingId: number | null;
   getVisibilityIcon: (v: string) => React.ReactNode;
   getVisibilityStyle: (v: string) => string;
 }) {
   const isTraining = model.status === 'training';
+  const isCancelling = cancellingId === model.id;
   const router = useRouter();
   
   return (
@@ -765,15 +932,32 @@ function MyModelCard({
                     />
                   </div>
                 </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    router.push(`/dashboard/train?model=${model.slug || model.id}&resume=true`);
-                  }}
-                  className="flex items-center justify-center gap-2 w-full py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-sm text-amber-400 hover:text-amber-300 transition-colors"
-                >
-                  View Training Progress
-                </button>
+                <div className="flex gap-2">
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      router.push(`/dashboard/train?model=${model.slug || model.id}&resume=true`);
+                    }}
+                    className="flex items-center justify-center gap-2 flex-1 py-2 bg-amber-500/20 hover:bg-amber-500/30 rounded-lg text-sm text-amber-400 hover:text-amber-300 transition-colors"
+                  >
+                    View Progress
+                  </button>
+                  <button
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      onCancelTraining();
+                    }}
+                    disabled={isCancelling}
+                    className="flex items-center justify-center gap-1 px-3 py-2 bg-red-500/20 hover:bg-red-500/30 rounded-lg text-sm text-red-400 hover:text-red-300 transition-colors disabled:opacity-50"
+                    title="Cancel training"
+                  >
+                    {isCancelling ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <X className="h-4 w-4" />
+                    )}
+                  </button>
+                </div>
               </div>
             ) : (
               <Link

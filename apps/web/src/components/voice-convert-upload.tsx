@@ -28,6 +28,7 @@ interface ProcessedResult {
 interface VoiceConvertUploadProps {
   selectedModelId: number;
   modelName: string;
+  checkpoint?: string | null;
   onConversionComplete?: (result: ProcessedResult) => void;
 }
 
@@ -43,7 +44,7 @@ interface RecordedAudio {
   name: string;
 }
 
-export function VoiceConvertUpload({ selectedModelId, modelName, onConversionComplete }: VoiceConvertUploadProps) {
+export function VoiceConvertUpload({ selectedModelId, modelName, checkpoint, onConversionComplete }: VoiceConvertUploadProps) {
   const { token } = useAuthStore();
   
   // Tab state
@@ -217,6 +218,7 @@ export function VoiceConvertUpload({ selectedModelId, modelName, onConversionCom
         model_id: selectedModelId,
         f0_up_key: pitchShift,
         index_rate: indexRate,
+        ...(checkpoint && { checkpoint }),
       });
 
       setProcessingProgress(90);

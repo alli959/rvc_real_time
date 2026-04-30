@@ -416,7 +416,13 @@ export default function SongRemixPage() {
       setProcessingProgress(100);
       setProcessingStep('Complete!');
     } catch (err: any) {
-      setError(err.message || 'Processing failed');
+      // Check for training in progress error
+      const errData = err.response?.data;
+      if (errData?.code === 'TRAINING_IN_PROGRESS') {
+        setError(`🎓 ${errData.message}`);
+      } else {
+        setError(errData?.message || err.message || 'Processing failed');
+      }
     } finally {
       setIsProcessing(false);
     }

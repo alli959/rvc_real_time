@@ -632,7 +632,8 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
   // Defaults optimized for maximum voice model similarity
   const [selectedVoiceModel, setSelectedVoiceModel] = useState<number | null>(preSelectedModelId || null);
   const [selectedVoiceModelData, setSelectedVoiceModelData] = useState<VoiceModel | null>(null);
-  const [indexRatio, setIndexRatio] = useState(0.75); // Higher = more like target voice model
+  const [indexRatio, setIndexRatio] = useState(0.85); // Higher = more like target voice model (increased from 0.75)
+  const [protect, setProtect] = useState(0.2); // Lower = more voice conversion (0.2 is aggressive)
   const [pitchShift, setPitchShift] = useState(0); // Default 0 (no pitch change)
   const [convertEffect, setConvertEffect] = useState('');
   
@@ -864,6 +865,7 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
         convert_voice: true,
         voice_model_id: selectedVoiceModel,
         index_rate: indexRatio,
+        protect: protect, // Lower = more voice conversion
         f0_up_key: pitchShift,
         use_bark: useBark, // Use Bark TTS for native emotions (slower but better)
       };
@@ -887,7 +889,11 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
         const contentType = response.headers.get('content-type');
         if (contentType && contentType.includes('application/json')) {
           const data = await response.json();
-          throw new Error(data.message || 'Generation failed');
+          // Check for training in progress error (503)
+          if (data.detail?.code === 'TRAINING_IN_PROGRESS') {
+            throw new Error(`🎓 ${data.detail.message}`);
+          }
+          throw new Error(data.detail?.message || data.message || 'Generation failed');
         } else {
           throw new Error(`Server error: ${response.status} ${response.statusText}`);
         }
@@ -1480,7 +1486,25 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
             className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
           />
           <p className="text-xs text-gray-500 mt-1">
-            Higher = more like voice model personality (0.7-0.85 recommended)
+            Higher = more like voice model personality (0.8-0.9 recommended)
+          </p>
+        </div>
+
+        <div>
+          <label className="block text-sm font-medium mb-2 text-gray-200">
+            Voice Strength: {((0.5 - protect) * 200).toFixed(0)}%
+          </label>
+          <input
+            type="range"
+            value={protect}
+            onChange={(e) => setProtect(parseFloat(e.target.value))}
+            min={0.1}
+            max={0.5}
+            step={0.05}
+            className="w-full h-2 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500"
+          />
+          <p className="text-xs text-gray-500 mt-1">
+            Higher = stronger voice conversion, more like target voice (60-80% recommended)
           </p>
         </div>
         

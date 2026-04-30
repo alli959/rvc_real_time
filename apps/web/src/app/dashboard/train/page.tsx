@@ -163,12 +163,21 @@ function TrainPageContent() {
   const [trainingProgress, setTrainingProgress] = useState(0);
   const [trainingStatus, setTrainingStatus] = useState<string>('');
   const [trainingDetails, setTrainingDetails] = useState<any>(null);
-  const [checkpointMode, setCheckpointMode] = useState<'continue' | 'add-audio' | 'new-audio' | null>(null);
+  const [checkpointMode, setCheckpointMode] = useState<'continue' | 'add-audio' | 'new-audio' | 'fresh' | null>(null);
   const [targetEpochs, setTargetEpochs] = useState<number>(200);
   const [batchSize, setBatchSize] = useState<number>(6);
   const [useAutoConfig, setUseAutoConfig] = useState<boolean>(false);
   const [forceReprocess, setForceReprocess] = useState<boolean>(false);
+  const [selectedCheckpointEpoch, setSelectedCheckpointEpoch] = useState<number | null>(null);
+  const [selectedCheckpointInfo, setSelectedCheckpointInfo] = useState<{ runId?: number; checkpointId?: number; checkpoint_name?: string } | null>(null);
   const isPollingRef = useRef<boolean>(false);
+  
+  // Advanced training options state
+  const [showAdvancedOptions, setShowAdvancedOptions] = useState<boolean>(false);
+  const [gradientAccumulationSteps, setGradientAccumulationSteps] = useState<number>(1);
+  const [maxSteps, setMaxSteps] = useState<number | null>(null);
+  const [earlyStopPatience, setEarlyStopPatience] = useState<number | null>(null);
+  const [saveEverySteps, setSaveEverySteps] = useState<number | null>(null);
   
   // Audio recording refs
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
@@ -226,6 +235,7 @@ function TrainPageContent() {
       : null,
     enabled: !!selectedModel?.slug && (step === 'training-areas' || step === 'start-training' || step === 'training-progress'),
   });
+  
   
   // Memoize models
   const myModels = useMemo(() => modelsData?.data || [], [modelsData?.data]);
@@ -725,6 +735,10 @@ function TrainPageContent() {
         continue_from_checkpoint: boolean;
         epochs?: number;
         batch_size?: number;
+        gradient_accumulation_steps?: number;
+        max_steps?: number;
+        early_stop_patience?: number;
+        save_every_steps?: number;
       } = {
         force_reprocess: needsReprocess,
         continue_from_checkpoint: shouldContinue,
@@ -734,6 +748,20 @@ function TrainPageContent() {
       if (!useAutoConfig) {
         trainingConfig.epochs = targetEpochs;
         trainingConfig.batch_size = batchSize;
+        
+        // Add advanced options if set
+        if (gradientAccumulationSteps > 1) {
+          trainingConfig.gradient_accumulation_steps = gradientAccumulationSteps;
+        }
+        if (maxSteps) {
+          trainingConfig.max_steps = maxSteps;
+        }
+        if (earlyStopPatience) {
+          trainingConfig.early_stop_patience = earlyStopPatience;
+        }
+        if (saveEverySteps) {
+          trainingConfig.save_every_steps = saveEverySteps;
+        }
       }
       // When useAutoConfig is true, omit epochs/batch_size to let server auto-configure
       
@@ -1589,7 +1617,9 @@ function TrainPageContent() {
                 <div className="max-w-xl mx-auto p-4 bg-blue-500/10 border border-blue-500/30 rounded-lg">
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <RotateCcw className="w-5 h-5 text-blue-400" />
-                    <span className="font-medium text-blue-300">Previous Training Found (Epoch {modelTrainingInfo.training.epochs_trained || 0})</span>
+                    <span className="font-medium text-blue-300">
+                      Previous Training Found (Epoch {modelTrainingInfo.training.epochs_trained || 0})
+                    </span>
                   </div>
                   <p className="text-sm text-gray-400 mb-4 text-center">
                     You can continue from this checkpoint or start fresh with new data.
@@ -1659,6 +1689,27 @@ function TrainPageContent() {
                         </div>
                       </div>
                     </button>
+                    
+                    <button
+                      onClick={() => setCheckpointMode('fresh')}
+                      className={`w-full p-3 rounded-lg border transition-all text-left ${
+                        checkpointMode === 'fresh'
+                          ? 'bg-red-500/20 border-red-500/50 text-red-300'
+                          : 'bg-gray-800/50 border-gray-700 hover:border-gray-600 text-gray-300'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`w-5 h-5 mt-0.5 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+                          checkpointMode === 'fresh' ? 'border-red-400' : 'border-gray-500'
+                        }`}>
+                          {checkpointMode === 'fresh' && <div className="w-2.5 h-2.5 bg-red-400 rounded-full" />}
+                        </div>
+                        <div>
+                          <div className="font-medium">Fresh Start</div>
+                          <div className="text-xs text-gray-500">Discard checkpoint, retrain from epoch 0 with current audio</div>
+                        </div>
+                      </div>
+                    </button>
                   </div>
                   
                   {/* Show guidance based on selected mode */}
@@ -1670,6 +1721,11 @@ function TrainPageContent() {
                   {checkpointMode === 'new-audio' && (
                     <div className="mt-3 p-2 bg-orange-500/10 rounded text-xs text-orange-300 text-center">
                       ⚠️ This will use the checkpoint weights but retrain on completely new audio data
+                    </div>
+                  )}
+                  {checkpointMode === 'fresh' && (
+                    <div className="mt-3 p-2 bg-red-500/10 rounded text-xs text-red-300 text-center">
+                      ⚠️ This will start training from epoch 0, discarding all checkpoint progress
                     </div>
                   )}
                 </div>
@@ -1696,15 +1752,55 @@ function TrainPageContent() {
                 {/* Manual config (shown when auto-config is off) */}
                 {!useAutoConfig && (
                   <>
+                    {/* Selected Checkpoint Info */}
+                    {selectedCheckpointEpoch !== null && checkpointMode !== 'fresh' && (
+                      <div className="p-3 bg-green-500/10 border border-green-500/30 rounded-lg">
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 bg-green-400 rounded-full" />
+                            <span className="text-sm text-green-300">
+                              Starting from Epoch {selectedCheckpointEpoch}
+                            </span>
+                          </div>
+                          <button
+                            onClick={() => {
+                              setSelectedCheckpointEpoch(null);
+                              setSelectedCheckpointInfo(null);
+                            }}
+                            className="text-xs text-gray-400 hover:text-gray-300"
+                          >
+                            Clear
+                          </button>
+                        </div>
+                        {selectedCheckpointInfo?.checkpoint_name && (
+                          <p className="text-xs text-gray-500 mt-1 ml-5">
+                            {selectedCheckpointInfo.checkpoint_name}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
                     {/* Epochs */}
                     <div className="flex items-center justify-between">
                       <div>
                         <label className="text-sm text-gray-400">Target Epochs</label>
-                        <p className="text-xs text-gray-500">More = better quality, longer training</p>
+                        <p className="text-xs text-gray-500">
+                          {checkpointMode === 'fresh' 
+                            ? 'Training from scratch (epoch 0)'
+                            : selectedCheckpointEpoch 
+                              ? `Will train from ${selectedCheckpointEpoch} → your target`
+                              : 'Total epochs to train to'
+                          }
+                        </p>
                       </div>
                       <div className="flex items-center gap-2">
                         <button
-                          onClick={() => setTargetEpochs(Math.max(10, targetEpochs - 10))}
+                          onClick={() => {
+                            const minEpoch = (checkpointMode !== 'fresh' && selectedCheckpointEpoch) 
+                              ? selectedCheckpointEpoch + 1 
+                              : 10;
+                            setTargetEpochs(Math.max(minEpoch, targetEpochs - 10));
+                          }}
                           className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
                         >
                           -
@@ -1712,7 +1808,13 @@ function TrainPageContent() {
                         <input
                           type="number"
                           value={targetEpochs}
-                          onChange={(e) => setTargetEpochs(Math.max(10, Math.min(1000, parseInt(e.target.value) || 200)))}
+                          onChange={(e) => {
+                            const minEpoch = (checkpointMode !== 'fresh' && selectedCheckpointEpoch) 
+                              ? selectedCheckpointEpoch + 1 
+                              : 10;
+                            setTargetEpochs(Math.max(minEpoch, Math.min(1000, parseInt(e.target.value) || 200)));
+                          }}
+                          min={(checkpointMode !== 'fresh' && selectedCheckpointEpoch) ? selectedCheckpointEpoch + 1 : 10}
                           className="w-20 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white"
                         />
                         <button
@@ -1775,6 +1877,139 @@ function TrainPageContent() {
                           Quality (300)
                         </button>
                       </div>
+                    </div>
+                    
+                    {/* Advanced Options Toggle */}
+                    <div className="pt-2 border-t border-gray-700">
+                      <button
+                        onClick={() => setShowAdvancedOptions(!showAdvancedOptions)}
+                        className="flex items-center gap-2 text-sm text-gray-400 hover:text-gray-300"
+                      >
+                        {showAdvancedOptions ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
+                        Advanced Options
+                      </button>
+                      
+                      {showAdvancedOptions && (
+                        <div className="mt-3 space-y-4 p-3 bg-gray-800/50 rounded-lg">
+                          {/* Gradient Accumulation */}
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-sm text-gray-400">Gradient Accumulation</label>
+                              <p className="text-xs text-gray-500">Larger effective batch without more VRAM</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <button
+                                onClick={() => setGradientAccumulationSteps(Math.max(1, gradientAccumulationSteps - 1))}
+                                className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                              >
+                                -
+                              </button>
+                              <input
+                                type="number"
+                                value={gradientAccumulationSteps}
+                                onChange={(e) => setGradientAccumulationSteps(Math.max(1, Math.min(16, parseInt(e.target.value) || 1)))}
+                                className="w-16 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white"
+                              />
+                              <button
+                                onClick={() => setGradientAccumulationSteps(Math.min(16, gradientAccumulationSteps + 1))}
+                                className="w-8 h-8 rounded bg-gray-700 hover:bg-gray-600 text-gray-300 flex items-center justify-center"
+                              >
+                                +
+                              </button>
+                            </div>
+                          </div>
+                          {gradientAccumulationSteps > 1 && (
+                            <p className="text-xs text-blue-400 -mt-2">
+                              Effective batch size: {batchSize * gradientAccumulationSteps}
+                            </p>
+                          )}
+                          
+                          {/* Max Steps */}
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-sm text-gray-400">Max Steps</label>
+                              <p className="text-xs text-gray-500">Stop after N steps (overrides epochs)</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={maxSteps || ''}
+                                placeholder="None"
+                                onChange={(e) => setMaxSteps(e.target.value ? Math.max(100, parseInt(e.target.value)) : null)}
+                                className="w-24 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white placeholder-gray-500"
+                              />
+                              {maxSteps && (
+                                <button
+                                  onClick={() => setMaxSteps(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-300"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Early Stop Patience */}
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-sm text-gray-400">Early Stop Patience</label>
+                              <p className="text-xs text-gray-500">Stop if no improvement for N epochs</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={earlyStopPatience || ''}
+                                placeholder="Disabled"
+                                onChange={(e) => setEarlyStopPatience(e.target.value ? Math.max(5, parseInt(e.target.value)) : null)}
+                                className="w-24 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white placeholder-gray-500"
+                              />
+                              {earlyStopPatience && (
+                                <button
+                                  onClick={() => setEarlyStopPatience(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-300"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Save Every Steps */}
+                          <div className="flex items-center justify-between">
+                            <div>
+                              <label className="text-sm text-gray-400">Save Every N Steps</label>
+                              <p className="text-xs text-gray-500">Checkpoint frequency (in steps)</p>
+                            </div>
+                            <div className="flex items-center gap-2">
+                              <input
+                                type="number"
+                                value={saveEverySteps || ''}
+                                placeholder="Use epochs"
+                                onChange={(e) => setSaveEverySteps(e.target.value ? Math.max(50, parseInt(e.target.value)) : null)}
+                                className="w-24 px-2 py-1 bg-gray-900 border border-gray-600 rounded text-center text-white placeholder-gray-500"
+                              />
+                              {saveEverySteps && (
+                                <button
+                                  onClick={() => setSaveEverySteps(null)}
+                                  className="text-xs text-gray-400 hover:text-gray-300"
+                                >
+                                  Clear
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                          
+                          {/* Info box */}
+                          <div className="p-2 bg-gray-700/50 rounded text-xs text-gray-400">
+                            <p><strong>Tips for small datasets:</strong></p>
+                            <ul className="list-disc list-inside mt-1 space-y-0.5">
+                              <li>Use gradient accumulation 2-4x for effective larger batches</li>
+                              <li>Set early stop patience 20-30 to prevent overfitting</li>
+                              <li>Use max steps ~2000 for quick initial tests</li>
+                            </ul>
+                          </div>
+                        </div>
+                      )}
                     </div>
                   </>
                 )}
@@ -1881,30 +2116,63 @@ function TrainPageContent() {
                 >
                   Add More Data
                 </button>
-                {/* Show Continue Training button if checkpoint exists and continue mode is selected */}
-                {modelTrainingInfo?.training?.latest_checkpoint && (
-                  <button
-                    onClick={() => startTraining('continue')}
-                    disabled={checkpointMode === 'add-audio' || checkpointMode === 'new-audio'}
-                    className="px-6 py-3 bg-blue-600 hover:bg-blue-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center gap-2"
-                    title={checkpointMode === 'add-audio' || checkpointMode === 'new-audio' ? 'Cannot continue - new audio requires fresh training' : ''}
-                  >
-                    <RotateCcw className="w-5 h-5" />
-                    Continue Training
-                  </button>
-                )}
+                
+                {/* Single unified training button - text changes based on mode */}
                 <button
-                  onClick={() => startTraining('fresh')}
+                  onClick={() => {
+                    // Use the selected checkpointMode, or 'fresh' if none selected
+                    const mode = checkpointMode || 'fresh';
+                    startTraining(mode === 'fresh' ? 'fresh' : 'continue');
+                  }}
                   disabled={
-                    // Allow if: checkpoint exists OR files were uploaded OR have 10+ recordings OR have 2+ min of audio
-                    !(modelTrainingInfo?.training?.latest_checkpoint ||
-                      filesUploadedCount > 0 || 
-                      (modelRecordings && (modelRecordings.total_recordings >= 10 || modelRecordings.total_duration_seconds >= 120)))
+                    // Disable if no mode selected when checkpoint exists
+                    (modelTrainingInfo?.training?.latest_checkpoint && !checkpointMode) ||
+                    // Also disable if not enough data and no checkpoint
+                    (!modelTrainingInfo?.training?.latest_checkpoint &&
+                      filesUploadedCount === 0 && 
+                      (!modelRecordings || (modelRecordings.total_recordings < 10 && modelRecordings.total_duration_seconds < 120)))
                   }
-                  className="px-6 py-3 bg-primary-600 hover:bg-primary-500 disabled:bg-gray-700 disabled:cursor-not-allowed rounded-lg font-medium transition-colors flex items-center gap-2"
+                  className={`px-6 py-3 rounded-lg font-medium transition-colors flex items-center gap-2 ${
+                    checkpointMode === 'fresh'
+                      ? 'bg-red-600 hover:bg-red-500 disabled:bg-gray-700'
+                      : checkpointMode === 'add-audio'
+                        ? 'bg-purple-600 hover:bg-purple-500 disabled:bg-gray-700'
+                        : checkpointMode === 'new-audio'
+                          ? 'bg-orange-600 hover:bg-orange-500 disabled:bg-gray-700'
+                          : 'bg-primary-600 hover:bg-primary-500 disabled:bg-gray-700'
+                  } disabled:cursor-not-allowed`}
                 >
-                  <Play className="w-5 h-5" />
-                  {modelTrainingInfo?.training?.latest_checkpoint ? 'Start Fresh' : 'Start Training'}
+                  {checkpointMode === 'fresh' ? (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Fresh Start (Epoch 0)
+                    </>
+                  ) : checkpointMode === 'continue' ? (
+                    <>
+                      <RotateCcw className="w-5 h-5" />
+                      Continue Training
+                    </>
+                  ) : checkpointMode === 'add-audio' ? (
+                    <>
+                      <Plus className="w-5 h-5" />
+                      Add Audio & Continue
+                    </>
+                  ) : checkpointMode === 'new-audio' ? (
+                    <>
+                      <Upload className="w-5 h-5" />
+                      New Audio & Continue
+                    </>
+                  ) : modelTrainingInfo?.training?.latest_checkpoint ? (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Select Training Mode Above
+                    </>
+                  ) : (
+                    <>
+                      <Play className="w-5 h-5" />
+                      Start Training
+                    </>
+                  )}
                 </button>
               </div>
 
@@ -1921,6 +2189,20 @@ function TrainPageContent() {
                   <TrainingRunsHistory 
                     modelSlug={selectedModel.slug}
                     legacyTrainingInfo={modelTrainingInfo}
+                    selectedCheckpointEpoch={selectedCheckpointEpoch}
+                    onSelectCheckpoint={(epoch, info) => {
+                      setSelectedCheckpointEpoch(epoch);
+                      setSelectedCheckpointInfo(info || null);
+                      // Auto-update target epochs if selecting a checkpoint
+                      if (epoch !== null) {
+                        // Set mode to continue and update minimum epochs
+                        setCheckpointMode('continue');
+                        // Ensure target epochs is at least current checkpoint + 1
+                        if (targetEpochs <= epoch) {
+                          setTargetEpochs(epoch + 50);
+                        }
+                      }
+                    }}
                     onStartTraining={(mode, options) => {
                       // When resuming/continuing from history, go to progress view
                       setStep('training-progress');

@@ -52,6 +52,8 @@ interface TrainingRunsHistoryProps {
   modelSlug: string;
   onStartTraining?: (mode: 'new' | 'resume' | 'continue' | 'branch', options?: any) => void;
   legacyTrainingInfo?: LegacyTrainingInfo | null;
+  selectedCheckpointEpoch?: number | null;
+  onSelectCheckpoint?: (epoch: number | null, checkpointInfo?: { runId?: number; checkpointId?: number; checkpoint_name?: string }) => void;
 }
 
 const statusColors: Record<string, string> = {
@@ -81,7 +83,7 @@ const modeColors: Record<string, string> = {
   branch: 'bg-orange-600',
 };
 
-export function TrainingRunsHistory({ modelSlug, onStartTraining, legacyTrainingInfo }: TrainingRunsHistoryProps) {
+export function TrainingRunsHistory({ modelSlug, onStartTraining, legacyTrainingInfo, selectedCheckpointEpoch, onSelectCheckpoint }: TrainingRunsHistoryProps) {
   const queryClient = useQueryClient();
   const [expandedRuns, setExpandedRuns] = useState<Set<number>>(new Set());
   const [selectedCheckpoint, setSelectedCheckpoint] = useState<TrainingCheckpoint | null>(null);
@@ -215,8 +217,8 @@ export function TrainingRunsHistory({ modelSlug, onStartTraining, legacyTraining
         </div>
       </div>
 
-      {/* Active Training Run */}
-      {activeRun && (
+      {/* Active Training Run - only show if actually running */}
+      {activeRun && activeRun.is_active && (
         <div className="bg-gradient-to-r from-green-900/30 to-emerald-900/30 rounded-lg p-4 border border-green-700/50">
           <div className="flex items-center justify-between mb-3">
             <div className="flex items-center gap-2">
@@ -313,6 +315,8 @@ export function TrainingRunsHistory({ modelSlug, onStartTraining, legacyTraining
                   onContinueFromCheckpoint={handleContinueFromCheckpoint}
                   onBranchFromCheckpoint={handleBranchFromCheckpoint}
                   showActions={!run.is_active}
+                  selectedCheckpointEpoch={selectedCheckpointEpoch}
+                  onSelectCheckpoint={onSelectCheckpoint}
                 />
               </div>
             ))}
@@ -355,6 +359,8 @@ interface RunCardProps {
   onContinueFromCheckpoint?: (checkpoint: TrainingCheckpoint) => void;
   onBranchFromCheckpoint?: (checkpoint: TrainingCheckpoint) => void;
   showActions?: boolean;
+  selectedCheckpointEpoch?: number | null;
+  onSelectCheckpoint?: (epoch: number | null, checkpointInfo?: { runId?: number; checkpointId?: number; checkpoint_name?: string }) => void;
 }
 
 function RunCard({
@@ -366,6 +372,8 @@ function RunCard({
   onContinueFromCheckpoint,
   onBranchFromCheckpoint,
   showActions = true,
+  selectedCheckpointEpoch,
+  onSelectCheckpoint,
 }: RunCardProps) {
   const queryClient = useQueryClient();
   
@@ -513,7 +521,14 @@ function RunCard({
                   <CheckpointCard
                     key={checkpoint.id}
                     checkpoint={checkpoint}
+                    runId={run.id}
                     isBest={bestCheckpoint?.id === checkpoint.id}
+                    isSelected={selectedCheckpointEpoch === checkpoint.epoch}
+                    onSelect={() => onSelectCheckpoint?.(checkpoint.epoch, { 
+                      runId: run.id, 
+                      checkpointId: checkpoint.id, 
+                      checkpoint_name: checkpoint.checkpoint_name 
+                    })}
                     onContinue={() => onContinueFromCheckpoint?.(checkpoint)}
                     onBranch={() => onBranchFromCheckpoint?.(checkpoint)}
                   />
@@ -544,19 +559,36 @@ function RunCard({
 
 interface CheckpointCardProps {
   checkpoint: TrainingCheckpoint;
+  runId?: number;
   isBest?: boolean;
+  isSelected?: boolean;
+  onSelect?: () => void;
   onContinue?: () => void;
   onBranch?: () => void;
 }
 
-function CheckpointCard({ checkpoint, isBest, onContinue, onBranch }: CheckpointCardProps) {
+function CheckpointCard({ checkpoint, runId, isBest, isSelected, onSelect, onContinue, onBranch }: CheckpointCardProps) {
   return (
-    <div className={`flex items-center gap-3 p-2 rounded-lg ${
-      isBest ? 'bg-yellow-900/20 border border-yellow-700/50' : 'bg-gray-800/50'
-    }`}>
-      <div className="w-2 h-2 rounded-full bg-gray-500" />
+    <div 
+      className={`flex items-center gap-3 p-2 rounded-lg cursor-pointer transition-all group ${
+        isSelected
+          ? 'bg-green-900/30 border-2 border-green-500/60 ring-1 ring-green-500/30'
+          : isBest 
+            ? 'bg-yellow-900/20 border border-yellow-700/50 hover:bg-yellow-900/30' 
+            : 'bg-gray-800/50 border border-transparent hover:bg-gray-700/50'
+      }`}
+      onClick={onSelect}
+    >
+      {/* Selection indicator */}
+      <div className={`w-4 h-4 rounded-full border-2 flex items-center justify-center flex-shrink-0 ${
+        isSelected ? 'border-green-400' : 'border-gray-500'
+      }`}>
+        {isSelected && <div className="w-2 h-2 bg-green-400 rounded-full" />}
+      </div>
       
       <div className="font-mono text-sm text-gray-300">{checkpoint.short_name}</div>
+
+      <div className="text-xs text-gray-500">Epoch {checkpoint.epoch}</div>
 
       {/* Flags */}
       <div className="flex items-center gap-1">
@@ -589,14 +621,14 @@ function CheckpointCard({ checkpoint, isBest, onContinue, onBranch }: Checkpoint
       {/* Actions */}
       <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
         <button
-          onClick={onContinue}
+          onClick={(e) => { e.stopPropagation(); onContinue?.(); }}
           className="p-1.5 hover:bg-purple-600/20 text-purple-400 rounded transition-colors"
           title="Continue from this checkpoint"
         >
           <ArrowRightFromLine className="w-4 h-4" />
         </button>
         <button
-          onClick={onBranch}
+          onClick={(e) => { e.stopPropagation(); onBranch?.(); }}
           className="p-1.5 hover:bg-orange-600/20 text-orange-400 rounded transition-colors"
           title="Branch from this checkpoint"
         >
