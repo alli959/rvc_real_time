@@ -169,7 +169,11 @@ data/
 # Keep directory structure but ignore runtime data
 
 # Models (large binary files)
-storage/models/**/*.pth
+# Storage directory (local runtime data)
+storage/
+
+# Legacy specific patterns (kept for reference)
+# storage/models/**/*.pth
 storage/models/**/*.index
 storage/models/**/*.npy
 storage/models/**/*.pt
