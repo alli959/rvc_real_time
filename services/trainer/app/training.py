@@ -373,21 +373,29 @@ class TrainingExecutor:
                     return
         
         # Read stdout and stderr concurrently
-        await asyncio.gather(
-            read_output(process.stdout, "stdout"),
-            read_output(process.stderr, "stderr")
-        )
-        
-        return_code = await process.wait()
-        job.process = None
-        
-        # Check success (2333333 is RVC's success code)
-        if return_code == 2333333 % 256 or return_code == 0 or training_complete:
-            logger.info(f"Training completed successfully (return code: {return_code})")
-            return True
-        else:
-            logger.error(f"Training failed with return code: {return_code}")
-            return False
+        try:
+            await asyncio.gather(
+                read_output(process.stdout, "stdout"),
+                read_output(process.stderr, "stderr")
+            )
+            
+            return_code = await process.wait()
+            job.process = None
+            
+            # Check success (2333333 is RVC's success code)
+            if return_code == 2333333 % 256 or return_code == 0 or training_complete:
+                logger.info(f"Training completed successfully (return code: {return_code})")
+                return True
+            else:
+                logger.error(f"Training failed with return code: {return_code}")
+                return False
+        finally:
+            if process.returncode is None:
+                process.terminate()
+                try:
+                    await asyncio.wait_for(process.wait(), timeout=5)
+                except Exception:
+                    process.kill()
     
     async def extract_model(
         self,

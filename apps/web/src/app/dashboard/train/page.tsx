@@ -554,23 +554,19 @@ function TrainPageContent() {
     
     try {
       const expName = selectedModel.slug || selectedModel.name;
-      console.log('Uploading files to trainer:', { 
-        exp_name: expName,
-        fileCount: importFiles.length,
-        language: selectedLanguage 
-      });
+
       
       const result = await trainerApi.uploadTrainingAudio(
         expName,
         importFiles,
         selectedLanguage,
         (progress) => {
-          console.log('Upload progress:', progress);
+
           setUploadProgress(progress);
         }
       );
       
-      console.log('Upload result:', result);
+
       
       const uploadedCount = importFiles.length;
       setFilesUploadedCount(uploadedCount);

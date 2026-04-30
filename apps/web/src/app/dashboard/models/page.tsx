@@ -166,7 +166,7 @@ function DashboardModelsContent() {
       setEditingModel(null);
     } catch (err) {
       console.error('Failed to update model:', err);
-      alert('Failed to update model');
+      console.error('Failed to update model');
     } finally {
       setSaving(false);
     }
@@ -180,7 +180,7 @@ function DashboardModelsContent() {
       refetchMyModels();
     } catch (err) {
       console.error('Failed to cancel training:', err);
-      alert('Failed to cancel training');
+      console.error('Failed to cancel training');
     } finally {
       setCancellingId(null);
     }
@@ -194,7 +194,7 @@ function DashboardModelsContent() {
       refetchMyModels();
     } catch (err) {
       console.error('Failed to delete model:', err);
-      alert('Failed to delete model');
+      console.error('Failed to delete model');
     } finally {
       setDeletingId(null);
     }

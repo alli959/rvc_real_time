@@ -145,7 +145,8 @@ class TrainingJobManager:
                 try:
                     job.process.terminate()
                     await asyncio.wait_for(job.process.wait(), timeout=5.0)
-                except:
+                except Exception as e:
+                    logger.warning(f"Process did not terminate cleanly: {e}")
                     job.process.kill()
 
 
