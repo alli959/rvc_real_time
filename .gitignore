@@ -253,3 +253,7 @@ storage/logs/
 storage/models/
 storage/assets/
 storage/data/tsconfig.tsbuildinfo
+
+# Runtime artifacts
+services/voice-engine/deno/
+services/voice-engine/yt-dlp/

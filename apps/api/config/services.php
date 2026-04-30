@@ -105,4 +105,6 @@ return [
         'timeout' => env('PREPROCESSOR_TIMEOUT', 300),
     ],
 
+    'internal_token' => env('INTERNAL_SERVICE_TOKEN'),
+
 ];
