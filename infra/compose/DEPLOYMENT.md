@@ -3,8 +3,53 @@
 ## Prerequisites
 
 - A server with Docker and Docker Compose installed
+- Host nginx installed on the server
 - A domain name pointing to your server's IP address
 - Ports 80 and 443 open on your firewall
+
+## Architecture
+
+```
+                    ┌─────────────────────────────────────────┐
+                    │              Internet                    │
+                    └─────────────────┬───────────────────────┘
+                                      │
+                              ┌───────▼───────┐
+                              │  Host Nginx   │
+                              │ (SSL termin.) │
+                              │  :80 / :443   │
+                              └───────┬───────┘
+                                      │ proxy_pass
+                                      │ 127.0.0.1:9080
+                              ┌───────▼───────┐
+                              │ Docker Nginx  │
+                              │  (HTTP only)  │
+                              │  9080:80      │
+                              └───────┬───────┘
+                                      │
+              ┌───────────────────────┼───────────────────────┐
+              │                       │                       │
+      ┌───────▼───────┐       ┌───────▼───────┐       ┌───────▼───────┐
+      │   Next.js     │       │  Laravel API  │       │ Voice Engine  │
+      │   Frontend    │       │   Backend     │       │   (Python)    │
+      │    :3000      │       │     :80       │       │ :8001 / :8765 │
+      └───────────────┘       └───────┬───────┘       └───────┬───────┘
+                                      │                       │
+                              ┌───────┴───────────────────────┤
+                              │                               │
+              ┌───────────────┼───────────────────────┐       │
+              │               │                       │       │
+      ┌───────▼───────┐ ┌─────▼─────┐         ┌───────▼───────┐
+      │   MariaDB     │ │   Redis   │         │     MinIO     │
+      │    :3306      │ │   :6379   │         │  :9000/:9001  │
+      └───────────────┘ └───────────┘         └───────────────┘
+```
+
+**Key points:**
+- Host nginx (ports 80/443) handles SSL termination and certbot
+- Docker nginx (port 9080:80) is HTTP-only, handles internal routing
+- SSL configs live in `/etc/nginx/sites-available/` on the host
+- SSL certs are managed by host certbot in `/etc/letsencrypt/`
 
 ## Quick Start
 
@@ -39,14 +84,20 @@ VOICE_ENGINE_DEVICE=cuda  # or 'cpu'
 ### 2. Run SSL Setup
 
 ```bash
-./setup-ssl.sh your-domain.com your-email@example.com
+sudo ./setup-ssl.sh morphvox.net your-email@example.com
 ```
 
 This script will:
-1. Start Nginx with HTTP-only config
-2. Obtain SSL certificate from Let's Encrypt
-3. Switch to HTTPS config
-4. Start all services
+1. Install certbot on the host if needed
+2. Create a host nginx config for the domain
+3. Obtain SSL certificate from Let's Encrypt via host certbot
+4. Enable HTTPS in the host nginx config
+5. Start all Docker services
+
+For the admin subdomain:
+```bash
+sudo ./setup-admin-ssl.sh your-email@example.com
+```
 
 ### 3. Access Your Application
 
@@ -71,49 +122,6 @@ docker compose -f docker-compose.prod.yml logs -f
 docker compose -f docker-compose.prod.yml down
 ```
 
-## Architecture
-
-```
-                    ┌─────────────────────────────────────────┐
-                    │              Internet                    │
-                    └─────────────────┬───────────────────────┘
-                                      │
-                              ┌───────▼───────┐
-                              │    Nginx      │
-                              │  (SSL/Proxy)  │
-                              │  :80 / :443   │
-                              └───────┬───────┘
-                                      │
-              ┌───────────────────────┼───────────────────────┐
-              │                       │                       │
-      ┌───────▼───────┐       ┌───────▼───────┐       ┌───────▼───────┐
-      │   Next.js     │       │  Laravel API  │       │ Voice Engine  │
-      │   Frontend    │       │   Backend     │       │   (Python)    │
-      │    :3000      │       │     :80       │       │ :8001 / :8765 │
-      └───────────────┘       └───────┬───────┘       └───────┬───────┘
-                                      │                       │
-                              ┌───────┴───────────────────────┤
-                              │                               │
-              ┌───────────────┼───────────────────────┐       │
-              │               │                       │       │
-      ┌───────▼───────┐ ┌─────▼─────┐         ┌───────▼───────┐
-      │   MariaDB     │ │   Redis   │         │     MinIO     │
-      │    :3306      │ │   :6379   │         │  :9000/:9001  │
-      └───────────────┘ └───────────┘         └───────────────┘
-              
-        ┌───────────────────────────────────────────────────────┐
-        │                  Training Services                    │
-        │                                                       │
-        │   ┌─────────────────┐       ┌─────────────────┐      │
-        │   │  Preprocessor   │──────▶│    Trainer      │      │
-        │   │     :8003       │       │     :8002       │      │
-        │   │ (F0, HuBERT)    │       │ (RVC Training)  │      │
-        │   └─────────────────┘       └─────────────────┘      │
-        └───────────────────────────────────────────────────────┘
-      │    :5432      │ │   :6379   │         │ (S3 Storage)  │
-      └───────────────┘ └───────────┘         └───────────────┘
-```
-
 ## URL Routing
 
 | Path | Service | Description |
@@ -125,11 +133,17 @@ docker compose -f docker-compose.prod.yml down
 
 ## SSL Certificate Renewal
 
-Certificates auto-renew via the certbot container. To manually renew:
+Certificates auto-renew via the host certbot timer. To check or manually renew:
 
 ```bash
-docker compose -f docker-compose.prod.yml run --rm certbot renew
-docker compose -f docker-compose.prod.yml exec nginx nginx -s reload
+# Check timer status
+systemctl list-timers certbot.timer
+
+# Manually renew all certificates
+sudo certbot renew
+
+# Reload host nginx after renewal
+sudo systemctl reload nginx
 ```
 
 ## Troubleshooting
@@ -157,13 +171,14 @@ curl -I https://your-domain.com
 
 ### Check certificate status
 ```bash
-docker compose -f docker-compose.prod.yml run --rm certbot certificates
+sudo certbot certificates
 ```
 
 ## Security Checklist
 
 - [ ] Strong passwords in `.env`
-- [ ] Firewall configured (only 80/443 exposed)
+- [ ] Firewall configured (only 80/443 exposed to internet)
+- [ ] Docker nginx only on port 9080 (not exposed externally)
 - [ ] SSH key-only authentication
 - [ ] Regular backups of database volume
 - [ ] Monitoring set up (optional)

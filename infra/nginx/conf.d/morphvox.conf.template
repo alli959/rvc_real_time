@@ -1,6 +1,12 @@
 # =============================================================================
-# MorphVox Platform - Site Configuration (HTTPS)
+# DEPRECATED - This template is no longer used.
 # =============================================================================
+# SSL is now handled by the HOST nginx (/etc/nginx/sites-available/).
+# Docker nginx runs HTTP-only on port 9080 using default.conf.
+# See setup-ssl.sh which now configures host nginx directly.
+# =============================================================================
+#
+# Original purpose: Site Configuration (HTTPS) for Docker nginx
 # Replace YOUR_DOMAIN with your actual domain (e.g., morphvox.example.com)
 # =============================================================================
 

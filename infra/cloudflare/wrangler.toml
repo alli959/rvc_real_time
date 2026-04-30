@@ -1,0 +1,10 @@
+name = "morphvox-maintenance"
+main = "maintenance-worker.js"
+compatibility_date = "2024-01-01"
+
+# Route: intercept all traffic to morphvox.net (and subdomains if desired)
+# Update zone_id with your Cloudflare zone ID for morphvox.net
+routes = [
+  { pattern = "morphvox.net/*", zone_name = "morphvox.net" },
+  { pattern = "admin.morphvox.net/*", zone_name = "morphvox.net" },
+]

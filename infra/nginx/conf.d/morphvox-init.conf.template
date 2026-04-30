@@ -1,7 +1,13 @@
 # =============================================================================
-# MorphVox Platform - Initial HTTP-only config for SSL certificate generation
+# DEPRECATED - This template is no longer used.
 # =============================================================================
-# This config is used BEFORE certificates are obtained
+# SSL and certbot are now handled by the HOST nginx, not Docker.
+# Docker nginx runs HTTP-only on port 9080 using default.conf.
+# See setup-ssl.sh which now uses host certbot directly.
+# =============================================================================
+#
+# Original purpose: Initial HTTP-only config for SSL certificate generation
+# This config was used BEFORE certificates were obtained
 # =============================================================================
 
 server {
