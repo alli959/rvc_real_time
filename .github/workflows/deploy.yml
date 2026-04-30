@@ -1,0 +1,62 @@
+name: Deploy to Vast.ai
+
+on:
+  push:
+    branches: [main]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Deploy via SSH
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.VASTAI_HOST }}
+          username: deploy
+          key: ${{ secrets.VASTAI_SSH_KEY }}
+          port: ${{ secrets.VASTAI_SSH_PORT }}
+          script: |
+            set -e
+            cd /workspace/rvc_real_time
+
+            # Save current commit for rollback
+            PREV_COMMIT=$(git rev-parse HEAD)
+            echo "Previous commit: $PREV_COMMIT"
+
+            # Pull and build
+            git pull origin main
+            NEW_COMMIT=$(git rev-parse HEAD)
+            cd infra/compose
+            docker compose -f docker-compose.prod.yml build --parallel
+            docker compose -f docker-compose.prod.yml up -d
+
+            # Health check with retry (3 attempts, 10s apart)
+            HEALTHY=false
+            for i in 1 2 3; do
+              sleep 10
+              if docker compose -f docker-compose.prod.yml exec -T nginx curl -sf http://localhost:80/api/health > /dev/null 2>&1; then
+                HEALTHY=true
+                break
+              fi
+              echo "Health check attempt $i failed, retrying..."
+            done
+
+            if [ "$HEALTHY" = "true" ]; then
+              echo "✅ Deploy successful ($(git rev-parse --short HEAD))"
+            else
+              echo "❌ Health check failed — rolling back to $PREV_COMMIT"
+              cd /workspace/rvc_real_time
+              git reset --hard "$PREV_COMMIT"
+              cd infra/compose
+              docker compose -f docker-compose.prod.yml build --parallel
+              docker compose -f docker-compose.prod.yml up -d
+              sleep 15
+              if docker compose -f docker-compose.prod.yml exec -T nginx curl -sf http://localhost:80/api/health > /dev/null 2>&1; then
+                echo "⚠️ Rollback to $PREV_COMMIT successful"
+              else
+                echo "🚨 CRITICAL: Rollback also failed, manual intervention needed"
+              fi
+              exit 1
+            fi
