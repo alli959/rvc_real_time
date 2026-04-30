@@ -286,7 +286,10 @@ class TrainingRunService
             // Create the training run record
             $run = TrainingRun::create([
                 'voice_model_id' => $model->id,
-                'dataset_version_id' => $dataset?->id ?? 1, // Default if no dataset
+                'dataset_version_id' => $dataset?->id ?? throw new \Illuminate\Validation\ValidationException(
+                    validator: \Illuminate\Support\Facades\Validator::make([], []),
+                    response: response()->json(['error' => 'No dataset version available for training run'], 422)
+                ),
                 'parent_run_id' => $parentRun?->id,
                 'parent_checkpoint_id' => $parentCheckpoint?->id,
                 'mode' => $mode,

@@ -24,33 +24,41 @@ class JobsAdminController extends Controller
      */
     public function index(Request $request)
     {
+        $validated = $request->validate([
+            'status' => 'nullable|string|in:pending,queued,processing,completed,failed,cancelled',
+            'type' => 'nullable|string|in:inference,training',
+            'per_page' => 'nullable|integer|min:1|max:100',
+            'user_id' => 'nullable|integer|exists:users,id',
+            'search' => 'nullable|string|max:255',
+        ]);
+
         $query = JobQueue::with(['user:id,name,email', 'voiceModel:id,uuid,name,slug']);
 
         // Filter by status
-        if ($request->filled('status')) {
-            $query->where('status', $request->status);
+        if ($validated['status'] ?? null) {
+            $query->where('status', $validated['status']);
         }
 
         // Filter by type
-        if ($request->filled('type')) {
-            $query->where('type', $request->type);
+        if ($validated['type'] ?? null) {
+            $query->where('type', $validated['type']);
         }
 
         // Filter by user
-        if ($request->filled('user_id')) {
-            $query->where('user_id', $request->user_id);
+        if ($validated['user_id'] ?? null) {
+            $query->where('user_id', $validated['user_id']);
         }
 
         // Search by user email or name
-        if ($request->filled('search')) {
-            $search = $request->search;
+        if ($validated['search'] ?? null) {
+            $search = $validated['search'];
             $query->whereHas('user', function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")
                   ->orWhere('email', 'like', "%{$search}%");
             });
         }
 
-        $jobs = $query->orderBy('created_at', 'desc')->paginate(20);
+        $jobs = $query->orderBy('created_at', 'desc')->paginate($validated['per_page'] ?? 20);
 
         // Get stats
         $stats = [

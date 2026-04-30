@@ -48,6 +48,13 @@ class VoiceModelController extends Controller
      */
     public function index(Request $request)
     {
+        $validated = $request->validate([
+            'engine' => 'nullable|string|in:rvc,so-vits-svc,diff-svc',
+            'storage_type' => 'nullable|string|in:local,s3,remote',
+            'type' => 'nullable|string|in:system,user',
+            'per_page' => 'nullable|integer|min:1|max:100',
+        ]);
+
         $user = $this->resolveUser($request);
         
         // If public_only is requested, always use public scope regardless of auth
@@ -63,22 +70,22 @@ class VoiceModelController extends Controller
         }
 
         // Filter by type (system vs user-uploaded)
-        if ($request->filled('type')) {
-            if ($request->type === 'system') {
+        if ($validated['type'] ?? null) {
+            if ($validated['type'] === 'system') {
                 $query->system();
-            } elseif ($request->type === 'user') {
+            } elseif ($validated['type'] === 'user') {
                 $query->userUploaded();
             }
         }
 
         // Filter by engine
-        if ($request->filled('engine')) {
-            $query->where('engine', $request->engine);
+        if ($validated['engine'] ?? null) {
+            $query->where('engine', $validated['engine']);
         }
 
         // Filter by storage type
-        if ($request->filled('storage_type')) {
-            $query->where('storage_type', $request->storage_type);
+        if ($validated['storage_type'] ?? null) {
+            $query->where('storage_type', $validated['storage_type']);
         }
 
         // Filter by tags
@@ -126,7 +133,7 @@ class VoiceModelController extends Controller
         }
 
         // Pagination
-        $perPage = min($request->get('per_page', 50), 100);
+        $perPage = $validated['per_page'] ?? 50;
         
         if ($request->boolean('all')) {
             $models = $query->with('user:id,name')->get();
@@ -679,6 +686,7 @@ class VoiceModelController extends Controller
             ->update([
                 'status' => \App\Models\TrainingRun::STATUS_CANCELLED,
                 'error_message' => 'Cancelled by user',
+                'completed_at' => now(),
             ]);
 
         // Update model status

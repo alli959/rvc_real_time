@@ -1037,6 +1037,10 @@ class TrainerController extends Controller
      */
     public function streamAudioFile(string $modelSlug, string $filename)
     {
+        if (str_contains($filename, '..') || str_contains($filename, "\0")) {
+            abort(400, 'Invalid filename');
+        }
+
         $model = VoiceModel::where('slug', $modelSlug)
             ->orWhere('name', $modelSlug)
             ->first();
