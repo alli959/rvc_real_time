@@ -382,6 +382,7 @@ class TTSController extends Controller
             'voice_model_id' => 'nullable|integer|exists:voice_models,id',
             'f0_up_key' => 'nullable|integer|min:-12|max:12',
             'index_rate' => 'nullable|numeric|min:0|max:1',
+            'protect' => 'nullable|numeric|min:0|max:0.5', // Lower = more voice conversion, higher = preserve original
             'apply_effects' => 'nullable|string|max:50', // Audio effect to apply after conversion
             // Bark TTS options (native emotion support)
             'use_bark' => 'nullable|boolean', // Use Bark TTS for native emotions (default: true)
@@ -464,12 +465,23 @@ class TTSController extends Controller
                     'error_details' => ['response' => $ttsResponse->json()],
                     'completed_at' => now(),
                 ]);
+                
+                // Check for training in progress error (503)
+                $detail = $ttsResponse->json('detail');
+                if (is_array($detail) && ($detail['code'] ?? null) === 'TRAINING_IN_PROGRESS') {
+                    return response()->json([
+                        'error' => 'Service unavailable',
+                        'code' => 'TRAINING_IN_PROGRESS',
+                        'message' => $detail['message'] ?? 'Training is in progress. Please wait.',
+                        'job_id' => $job->uuid,
+                    ], 503);
+                }
 
                 return response()->json([
                     'error' => 'TTS generation failed',
-                    'message' => $ttsResponse->json('error') ?? 'Unknown error',
+                    'message' => is_array($detail) ? ($detail['message'] ?? 'Unknown error') : ($ttsResponse->json('error') ?? 'Unknown error'),
                     'job_id' => $job->uuid,
-                ], 500);
+                ], $ttsResponse->status() >= 400 && $ttsResponse->status() < 600 ? $ttsResponse->status() : 500);
             }
 
             $audioBase64 = $ttsResponse->json('audio');
@@ -495,13 +507,16 @@ class TTSController extends Controller
                 }
 
                 // Send to voice engine for conversion
+                // Default protect=0.2 for strong voice conversion (lower = more like target voice)
+                // Default index_rate=0.85 for maximum voice similarity
                 $convertPayload = [
                     'audio' => $audioBase64,
                     'sample_rate' => $sampleRate,
                     'model_path' => $voiceModel->getVoiceEngineModelPath(),
                     'index_path' => $voiceModel->getVoiceEngineIndexPath(),
                     'f0_up_key' => $validated['f0_up_key'] ?? 0,
-                    'index_rate' => $validated['index_rate'] ?? 0.75,
+                    'index_rate' => $validated['index_rate'] ?? 0.85,
+                    'protect' => $validated['protect'] ?? 0.2,
                 ];
                 
                 // Add audio effects if specified (applies after voice conversion)

@@ -53,6 +53,7 @@ $adminRoutes = function () {
 
         // Jobs queue
         Route::get('/jobs', [JobsAdminController::class, 'index'])->name('jobs.index');
+        Route::post('/jobs/{job}/force-cancel', [JobsAdminController::class, 'forceCancel'])->name('jobs.forceCancel');
         
         // System Logs
         Route::get('/logs', [LogsAdminController::class, 'index'])->name('logs.index');

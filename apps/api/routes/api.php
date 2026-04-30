@@ -78,6 +78,7 @@ Route::prefix('trainer')->group(function () {
     Route::get('/model/{modelSlug}/recordings', [TrainerController::class, 'getModelRecordings']);
     Route::get('/model/{modelSlug}/category-status', [TrainerController::class, 'getCategoryStatus']);
     Route::get('/model/{modelSlug}/training-info', [TrainerController::class, 'getModelTrainingInfo']);
+    Route::get('/model/{modelSlug}/checkpoints', [TrainerController::class, 'getModelCheckpoints']);
     
     // Training job status (read-only, for polling progress)
     Route::get('/jobs', [TrainerController::class, 'listTrainingJobs']);
@@ -86,6 +87,15 @@ Route::prefix('trainer')->group(function () {
     // Audio file streaming (proxy to voice-engine)
     Route::get('/model/{modelSlug}/audio/{filename}', [TrainerController::class, 'streamAudioFile'])
         ->where('filename', '.*');  // Allow slashes in filename
+});
+
+// ==========================================================================
+// Internal Routes (Service-to-service communication, token-authenticated)
+// These routes are only accessible from within the Docker network with a shared secret
+// ==========================================================================
+Route::prefix('internal')->middleware('internal.token')->group(function () {
+    // Training completion callback from voice-engine
+    Route::post('/training/callback', [TrainerController::class, 'trainingCallback']);
 });
 
 // ==========================================================================
@@ -119,6 +129,9 @@ Route::middleware('auth:sanctum')->group(function () {
         Route::put('/{voiceModel}', [VoiceModelController::class, 'update']);
         Route::patch('/{voiceModel}', [VoiceModelController::class, 'update']);
         Route::delete('/{voiceModel}', [VoiceModelController::class, 'destroy']);
+        
+        // Cancel active training for a model
+        Route::post('/{voiceModel}/cancel-training', [VoiceModelController::class, 'cancelTraining']);
         
         // Image upload
         Route::post('/{voiceModel}/image', [VoiceModelController::class, 'uploadImage']);

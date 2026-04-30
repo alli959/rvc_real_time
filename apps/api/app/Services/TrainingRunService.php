@@ -155,10 +155,15 @@ class TrainingRunService
     /**
      * Resume training from the latest checkpoint.
      * Uses same dataset and continues where left off.
+     * 
+     * @param TrainingRun $previousRun The run to resume from
+     * @param int|null $targetEpochs The target total epochs (NOT additional epochs).
+     *                               If 400 is passed and checkpoint is at 200, we train 200 more.
+     * @param int|null $userId User starting the training
      */
     public function resumeTraining(
         TrainingRun $previousRun,
-        ?int $additionalEpochs = null,
+        ?int $targetEpochs = null,
         ?int $userId = null
     ): TrainingRun {
         if (!$previousRun->canResume()) {
@@ -171,8 +176,10 @@ class TrainingRunService
         }
         
         $config = $previousRun->config_snapshot;
-        if ($additionalEpochs) {
-            $config['epochs'] = $checkpoint->epoch + $additionalEpochs;
+        if ($targetEpochs) {
+            // User specifies target total epochs, not additional
+            // If checkpoint is at 200 and user wants 400 total, we set epochs to 400
+            $config['epochs'] = max($targetEpochs, $checkpoint->epoch + 1);
         }
         
         return $this->createTrainingRun(
@@ -258,23 +265,46 @@ class TrainingRunService
         
         // Set target epochs
         $targetEpochs = $config['epochs'] ?? 100;
+        $sampleRate = $config['sample_rate'] ?? 48000;
+        $batchSize = $config['batch_size'] ?? 6;
+        $f0Method = $config['f0_method'] ?? 'rmvpe';
+        $version = $config['version'] ?? 'v2';
+        $saveEvery = $config['save_every_epoch'] ?? max(10, intval($targetEpochs / 10));
+        
+        // Advanced training options
+        $gradientAccumulationSteps = $config['gradient_accumulation_steps'] ?? 1;
+        $maxSteps = $config['max_steps'] ?? null;
+        $earlyStopPatience = $config['early_stop_patience'] ?? null;
+        $saveEverySteps = $config['save_every_steps'] ?? null;
         
         return DB::transaction(function () use (
             $model, $mode, $dataset, $config, $parentRun, 
-            $parentCheckpoint, $startEpoch, $targetEpochs, $userId
+            $parentCheckpoint, $startEpoch, $targetEpochs, $userId,
+            $sampleRate, $batchSize, $f0Method, $version, $saveEvery,
+            $gradientAccumulationSteps, $maxSteps, $earlyStopPatience, $saveEverySteps
         ) {
             // Create the training run record
             $run = TrainingRun::create([
                 'voice_model_id' => $model->id,
-                'dataset_version_id' => $dataset?->id,
+                'dataset_version_id' => $dataset?->id ?? 1, // Default if no dataset
                 'parent_run_id' => $parentRun?->id,
                 'parent_checkpoint_id' => $parentCheckpoint?->id,
                 'mode' => $mode,
                 'status' => TrainingRun::STATUS_PENDING,
+                'config_hash' => substr(md5(json_encode($config)), 0, 16),
                 'config_snapshot' => $config,
+                'sample_rate' => $sampleRate,
+                'batch_size' => $batchSize,
+                'f0_method' => $f0Method,
+                'version' => $version,
+                'use_pitch_guidance' => true,
+                'starting_epoch' => $startEpoch,
+                'current_epoch' => $startEpoch,
                 'target_epochs' => $targetEpochs,
-                'completed_epochs' => $startEpoch,
-                'start_epoch' => $startEpoch,
+                'save_every_epoch' => $saveEvery,
+                'dataset_hash' => $dataset ? $dataset->manifest_hash : hash('sha256', $model->slug . '-default'),
+                'training_time_seconds' => 0,
+                'checkpoint_count' => 0,
             ]);
             
             // Update model's current run reference
@@ -331,12 +361,16 @@ class TrainingRunService
             }
             
             // Update with voice-engine job ID
+            $voiceEngineJobId = $result['job_id'] ?? null;
             $run->update([
                 'status' => TrainingRun::STATUS_TRAINING,
                 'started_at' => now(),
-                'metadata' => [
-                    'voice_engine_job_id' => $result['job_id'] ?? null,
-                ],
+                'voice_engine_job_id' => $voiceEngineJobId,
+            ]);
+            
+            Log::info('Training run started with voice-engine job ID', [
+                'run_id' => $run->id,
+                'voice_engine_job_id' => $voiceEngineJobId,
             ]);
             
             $job->update([
@@ -366,9 +400,14 @@ class TrainingRunService
         array $config
     ): ?array {
         try {
+            // Voice-engine expects exp_name inside config as well as at top level
+            $engineConfig = array_merge($config, [
+                'exp_name' => $model->slug,
+            ]);
+            
             $payload = [
                 'exp_name' => $model->slug,
-                'config' => $config,
+                'config' => $engineConfig,
             ];
             
             // Add resume info if branching/resuming from checkpoint

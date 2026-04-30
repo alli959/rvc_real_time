@@ -5,10 +5,20 @@ namespace App\Http\Controllers\Admin;
 use App\Http\Controllers\Controller;
 use App\Models\JobQueue;
 use App\Models\User;
+use App\Models\TrainingRun;
+use App\Services\TrainerService;
 use Illuminate\Http\Request;
+use Illuminate\Http\JsonResponse;
 
 class JobsAdminController extends Controller
 {
+    protected TrainerService $trainerService;
+
+    public function __construct(TrainerService $trainerService)
+    {
+        $this->trainerService = $trainerService;
+    }
+
     /**
      * Display a listing of all jobs.
      */
@@ -69,5 +79,59 @@ class JobsAdminController extends Controller
         $job->load(['user', 'voiceModel']);
 
         return view('admin.jobs.show', compact('job'));
+    }
+
+    /**
+     * Force cancel a stuck job (admin only).
+     */
+    public function forceCancel(Request $request, JobQueue $job): JsonResponse
+    {
+        // For training jobs, try to cancel in voice-engine first
+        if ($job->type === JobQueue::TYPE_TRAINING) {
+            $voiceEngineJobId = $job->parameters['voice_engine_job_id'] ?? null;
+            if ($voiceEngineJobId) {
+                try {
+                    $this->trainerService->cancelTraining($voiceEngineJobId);
+                } catch (\Exception $e) {
+                    // Log but continue - we still want to mark the job as cancelled in DB
+                    \Log::warning('Failed to cancel in voice-engine', [
+                        'job_id' => $job->uuid,
+                        'voice_engine_job_id' => $voiceEngineJobId,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // Also update any stuck TrainingRuns for this model
+            TrainingRun::where('voice_model_id', $job->voice_model_id)
+                ->whereIn('status', [
+                    TrainingRun::STATUS_PENDING, 
+                    TrainingRun::STATUS_PREPARING, 
+                    TrainingRun::STATUS_TRAINING
+                ])
+                ->update([
+                    'status' => TrainingRun::STATUS_FAILED,
+                    'error_message' => 'Force reset by admin',
+                ]);
+        }
+
+        // Update the job status to cancelled/failed
+        if (in_array($job->status, [JobQueue::STATUS_PENDING, JobQueue::STATUS_QUEUED, JobQueue::STATUS_PROCESSING])) {
+            $job->update([
+                'status' => JobQueue::STATUS_CANCELLED,
+                'error_message' => 'Force cancelled by admin',
+                'completed_at' => now(),
+            ]);
+        }
+
+        // Update voice model status if needed - reset to pending so user can retry
+        if ($job->voiceModel && in_array($job->voiceModel->status, ['training', 'failed'])) {
+            $job->voiceModel->update(['status' => 'pending']);
+        }
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Job reset successfully - model can now be retrained',
+        ]);
     }
 }

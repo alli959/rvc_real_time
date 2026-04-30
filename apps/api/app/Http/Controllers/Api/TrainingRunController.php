@@ -45,9 +45,14 @@ class TrainingRunController extends Controller
 
         $runs = $this->runService->getRunsForModel($voiceModel, includeChildren: true);
 
+        // Only return active_run if it's actually active (pending/preparing/training)
+        $activeRun = $voiceModel->currentRun && $voiceModel->currentRun->isActive() 
+            ? $this->formatRun($voiceModel->currentRun) 
+            : null;
+
         return response()->json([
             'runs' => $runs->map(fn($run) => $this->formatRun($run)),
-            'active_run' => $voiceModel->currentRun ? $this->formatRun($voiceModel->currentRun) : null,
+            'active_run' => $activeRun,
         ]);
     }
 

@@ -352,7 +352,29 @@
               $detectedSr = $modelConfig['sample_rate'] ?? null;
               $detectedVersion = $modelConfig['version'] ?? null;
               $configFound = $modelConfig['config_found'] ?? false;
+              $trainingCheckpoints = $checkpointsData['training_checkpoints'] ?? [];
+              $extractedCheckpoints = $checkpointsData['checkpoints'] ?? [];
             @endphp
+
+            {{-- Checkpoint Selection --}}
+            @if(count($trainingCheckpoints) > 0)
+            <div>
+              <label class="text-xs text-gray-500">Checkpoint to Extract</label>
+              <select name="checkpoint_file" class="w-full mt-1 bg-gray-800 border border-gray-700 rounded px-2 py-1.5 text-sm focus:outline-none focus:ring-1 focus:ring-primary-500">
+                <option value="">Latest (highest step)</option>
+                @foreach($trainingCheckpoints as $ckpt)
+                  <option value="{{ $ckpt['filename'] }}">
+                    {{ $ckpt['filename'] }} ({{ $ckpt['size_mb'] }}MB)
+                  </option>
+                @endforeach
+              </select>
+              <p class="text-xs text-gray-600 mt-1">{{ count($trainingCheckpoints) }} training checkpoint(s) available</p>
+            </div>
+            @else
+              <div class="text-xs text-yellow-400">
+                <span>⚠</span> No training checkpoints found in /storage/data/training/{{ $voiceModel->slug }}/
+              </div>
+            @endif
             
             <div class="grid grid-cols-2 gap-2">
               <div>
@@ -436,6 +458,30 @@
               <span class="text-gray-500">Index:</span> {{ $voiceModel->index_path }}
             </div>
           @endif
+        </div>
+        @endif
+
+        <!-- Available Model Versions (Extracted Checkpoints) -->
+        @if(isset($extractedCheckpoints) && count($extractedCheckpoints) > 0)
+        <div class="pt-4 border-t border-gray-800">
+          <p class="text-xs text-gray-500 mb-2">Available Model Versions</p>
+          <div class="space-y-1 max-h-40 overflow-y-auto">
+            @foreach($extractedCheckpoints as $ckpt)
+              <div class="flex items-center justify-between text-xs {{ $ckpt['is_default'] ?? false ? 'text-green-400' : 'text-gray-400' }}">
+                <span class="truncate flex-1">
+                  @if($ckpt['is_default'] ?? false)
+                    <span class="text-green-500">●</span>
+                  @endif
+                  {{ $ckpt['filename'] }}
+                  @if($ckpt['epoch'])
+                    <span class="text-gray-600">(e{{ $ckpt['epoch'] }})</span>
+                  @endif
+                </span>
+                <span class="text-gray-600 ml-2">{{ $ckpt['size_mb'] }}MB</span>
+              </div>
+            @endforeach
+          </div>
+          <p class="text-xs text-gray-600 mt-2">{{ count($extractedCheckpoints) }} model version(s) ready for inference</p>
         </div>
         @endif
       </div>

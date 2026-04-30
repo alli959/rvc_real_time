@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\JobQueue;
 use App\Models\VoiceModel;
 use App\Services\TrainerService;
+use App\Services\TrainingRunService;
 use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 
@@ -18,10 +19,12 @@ use Illuminate\Http\JsonResponse;
 class TrainerController extends Controller
 {
     protected TrainerService $trainer;
+    protected TrainingRunService $runService;
 
-    public function __construct(TrainerService $trainer)
+    public function __construct(TrainerService $trainer, TrainingRunService $runService)
     {
         $this->trainer = $trainer;
+        $this->runService = $runService;
     }
 
     /**
@@ -364,6 +367,11 @@ class TrainerController extends Controller
             'config.f0_method' => ['nullable', 'string', 'in:rmvpe,pm,harvest'],
             'config.epochs' => ['nullable', 'integer', 'min:1', 'max:2000'],
             'config.batch_size' => ['nullable', 'integer', 'min:1', 'max:32'],
+            // Advanced training options
+            'config.gradient_accumulation_steps' => ['nullable', 'integer', 'min:1', 'max:16'],
+            'config.max_steps' => ['nullable', 'integer', 'min:1'],
+            'config.early_stop_patience' => ['nullable', 'integer', 'min:1'],
+            'config.save_every_steps' => ['nullable', 'integer', 'min:1'],
             'audio_paths' => ['nullable', 'array'],
         ]);
 
@@ -444,7 +452,7 @@ class TrainerController extends Controller
     }
     
     /**
-     * Sync voice-engine training status to JobQueue record
+     * Sync voice-engine training status to JobQueue and TrainingRun records
      */
     protected function syncJobQueueProgress(string $voiceEngineJobId, array $status): void
     {
@@ -453,6 +461,45 @@ class TrainerController extends Controller
             ->whereJsonContains('parameters->voice_engine_job_id', $voiceEngineJobId)
             ->first();
             
+        // Also find and sync TrainingRun by voice_engine_job_id in metadata
+        $trainingRun = \App\Models\TrainingRun::whereJsonContains('metadata->voice_engine_job_id', $voiceEngineJobId)->first();
+        
+        $veStatus = $status['status'] ?? '';
+        $currentEpoch = $status['current_epoch'] ?? 0;
+        $totalEpochs = $status['total_epochs'] ?? 0;
+        
+        // Sync TrainingRun status (this is the source of truth for training history)
+        if ($trainingRun) {
+            $runUpdates = [];
+            
+            // Update epoch progress
+            if ($currentEpoch > 0) {
+                $runUpdates['current_epoch'] = $currentEpoch;
+            }
+            
+            // Map voice-engine status to TrainingRun status
+            if ($veStatus === 'completed') {
+                $runUpdates['status'] = \App\Models\TrainingRun::STATUS_COMPLETED;
+                $runUpdates['completed_at'] = now();
+                if ($trainingRun->started_at) {
+                    $runUpdates['training_time_seconds'] = now()->diffInSeconds($trainingRun->started_at);
+                }
+            } elseif ($veStatus === 'failed') {
+                $runUpdates['status'] = \App\Models\TrainingRun::STATUS_FAILED;
+                $runUpdates['completed_at'] = now();
+                $runUpdates['error_message'] = $status['error'] ?? 'Training failed';
+            } elseif ($veStatus === 'cancelled') {
+                $runUpdates['status'] = \App\Models\TrainingRun::STATUS_CANCELLED;
+                $runUpdates['completed_at'] = now();
+            } elseif ($veStatus === 'training' && $trainingRun->status !== \App\Models\TrainingRun::STATUS_TRAINING) {
+                $runUpdates['status'] = \App\Models\TrainingRun::STATUS_TRAINING;
+            }
+            
+            if ($runUpdates) {
+                $trainingRun->update($runUpdates);
+            }
+        }
+        
         if (!$job) {
             return;
         }
@@ -463,7 +510,6 @@ class TrainerController extends Controller
         ];
         
         // Map voice-engine status to JobQueue status
-        $veStatus = $status['status'] ?? '';
         if ($veStatus === 'completed') {
             $updates['status'] = JobQueue::STATUS_COMPLETED;
             $updates['completed_at'] = now();
@@ -492,10 +538,10 @@ class TrainerController extends Controller
         }
         
         // Store current epoch info in parameters
-        if (isset($status['current_epoch']) || isset($status['total_epochs'])) {
+        if ($currentEpoch || $totalEpochs) {
             $params = $job->parameters ?? [];
-            $params['current_epoch'] = $status['current_epoch'] ?? 0;
-            $params['total_epochs'] = $status['total_epochs'] ?? $params['total_epochs'] ?? 0;
+            $params['current_epoch'] = $currentEpoch;
+            $params['total_epochs'] = $totalEpochs ?: ($params['total_epochs'] ?? 0);
             $updates['parameters'] = $params;
         }
         
@@ -513,6 +559,15 @@ class TrainerController extends Controller
         $job = JobQueue::where('type', JobQueue::TYPE_TRAINING)
             ->whereJsonContains('parameters->voice_engine_job_id', $jobId)
             ->first();
+        
+        // Also update TrainingRun status
+        $trainingRun = \App\Models\TrainingRun::whereJsonContains('metadata->voice_engine_job_id', $jobId)->first();
+        if ($trainingRun && $success) {
+            $trainingRun->update([
+                'status' => \App\Models\TrainingRun::STATUS_CANCELLED,
+                'completed_at' => now(),
+            ]);
+        }
         
         if ($job && $success) {
             $job->update([
@@ -827,16 +882,56 @@ class TrainerController extends Controller
             return response()->json(['error' => 'Unauthorized'], 403);
         }
 
-        $expName = $model->slug ?: $model->name;
         $config = $request->input('config', []);
         
-        $result = $this->trainer->trainModel($expName, $config);
-
-        if (!$result) {
-            return response()->json(['error' => 'Failed to start training'], 500);
+        // Check if we should continue from checkpoint or start fresh
+        $continueFromCheckpoint = $config['continue_from_checkpoint'] ?? false;
+        
+        try {
+            if ($continueFromCheckpoint && $model->currentRun) {
+                // Resume from existing run
+                // epochs here is the TARGET total epochs (e.g., 400 to reach epoch 400)
+                $run = $this->runService->resumeTraining(
+                    previousRun: $model->currentRun,
+                    targetEpochs: $config['epochs'] ?? null,
+                    userId: $user->id
+                );
+            } else {
+                // Start new training run (tracks properly in database)
+                $run = $this->runService->startNewTraining(
+                    model: $model,
+                    dataset: $model->currentDatasetVersion,
+                    config: $config,
+                    userId: $user->id
+                );
+            }
+            
+            // Get the voice engine job ID for polling
+            $jobId = $run->metadata['voice_engine_job_id'] ?? $run->uuid;
+            
+            return response()->json([
+                'job_id' => $jobId,
+                'run_id' => $run->id,
+                'run_uuid' => $run->uuid,
+                'status' => 'started',
+                'exp_name' => $model->slug,
+                'config' => [
+                    'epochs' => $run->target_epochs,
+                    'batch_size' => $run->batch_size,
+                    'sample_rate' => $run->sample_rate,
+                ],
+            ]);
+        } catch (\Exception $e) {
+            \Log::error('Training start failed', [
+                'model' => $modelSlug,
+                'error' => $e->getMessage(),
+            ]);
+            
+            return response()->json([
+                'error' => 'Failed to start training',
+                'message' => $e->getMessage(),
+            ], 500);
         }
-
-        return response()->json($result);
     }
 
     /**
@@ -880,6 +975,32 @@ class TrainerController extends Controller
         ];
 
         return response()->json($info);
+    }
+
+    /**
+     * List available checkpoints for a model
+     * 
+     * Returns all extracted model checkpoints that can be used for inference.
+     * These are the {model}_e{epoch}_s{step}.pth files in the model directory.
+     */
+    public function getModelCheckpoints(Request $request, string $modelSlug): JsonResponse
+    {
+        $model = VoiceModel::where('slug', $modelSlug)
+            ->orWhere('name', $modelSlug)
+            ->first();
+
+        if (!$model) {
+            return response()->json(['error' => 'Model not found'], 404);
+        }
+
+        $expName = $model->slug ?: $model->name;
+        $checkpoints = $this->trainer->getModelCheckpoints($expName);
+
+        if (!$checkpoints) {
+            return response()->json(['error' => 'Failed to get checkpoints'], 500);
+        }
+
+        return response()->json($checkpoints);
     }
 
     // =========================================================================
@@ -959,5 +1080,149 @@ class TrainerController extends Controller
                 'detail' => $e->getMessage()
             ], 500);
         }
+    }
+
+    /**
+     * Receive training completion callback from voice-engine
+     * 
+     * This endpoint is called by voice-engine when training completes/fails/cancels.
+     * It updates the TrainingRun and VoiceModel status in the database.
+     */
+    public function trainingCallback(Request $request): JsonResponse
+    {
+        $data = $request->validate([
+            'job_id' => 'required|string',
+            'status' => 'required|string|in:completed,failed,cancelled',
+            'exp_name' => 'nullable|string',
+            'current_epoch' => 'nullable|integer',
+            'total_epochs' => 'nullable|integer',
+            'training_time_seconds' => 'nullable|integer',
+            'result' => 'nullable|array',
+            'error' => 'nullable|string',
+        ]);
+
+        \Illuminate\Support\Facades\Log::info('Training callback received', $data);
+
+        $jobId = $data['job_id'];
+        $status = $data['status'];
+
+        // Find TrainingRun by voice_engine_job_id column first, then fallback to metadata
+        $trainingRun = \App\Models\TrainingRun::where('voice_engine_job_id', $jobId)->first();
+        
+        if (!$trainingRun) {
+            // Fallback: look in metadata JSON for backwards compatibility
+            $trainingRun = \App\Models\TrainingRun::whereJsonContains('metadata->voice_engine_job_id', $jobId)->first();
+        }
+        
+        if (!$trainingRun && !empty($data['exp_name'])) {
+            // Last resort: find by exp_name (model slug) with active training status
+            $model = \App\Models\VoiceModel::where('slug', $data['exp_name'])->first();
+            if ($model) {
+                $trainingRun = \App\Models\TrainingRun::where('voice_model_id', $model->id)
+                    ->whereIn('status', [
+                        \App\Models\TrainingRun::STATUS_TRAINING,
+                        \App\Models\TrainingRun::STATUS_PREPROCESSING,
+                    ])
+                    ->orderBy('created_at', 'desc')
+                    ->first();
+                    
+                if ($trainingRun) {
+                    \Illuminate\Support\Facades\Log::info('Training callback: Found TrainingRun by exp_name fallback', [
+                        'job_id' => $jobId,
+                        'exp_name' => $data['exp_name'],
+                        'training_run_id' => $trainingRun->id,
+                    ]);
+                    // Update the voice_engine_job_id for future callbacks
+                    $trainingRun->update(['voice_engine_job_id' => $jobId]);
+                }
+            }
+        }
+
+        if (!$trainingRun) {
+            \Illuminate\Support\Facades\Log::warning('Training callback: No TrainingRun found', ['job_id' => $jobId]);
+            return response()->json(['error' => 'Training run not found'], 404);
+        }
+
+        // Map voice-engine status to TrainingRun status
+        $runStatus = match ($status) {
+            'completed' => \App\Models\TrainingRun::STATUS_COMPLETED,
+            'failed' => \App\Models\TrainingRun::STATUS_FAILED,
+            'cancelled' => \App\Models\TrainingRun::STATUS_CANCELLED,
+            default => $trainingRun->status,
+        };
+
+        // Update TrainingRun
+        $updates = [
+            'status' => $runStatus,
+            'completed_at' => now(),
+        ];
+
+        if (!empty($data['current_epoch'])) {
+            $updates['current_epoch'] = $data['current_epoch'];
+        }
+        if (!empty($data['training_time_seconds'])) {
+            $updates['training_time_seconds'] = $data['training_time_seconds'];
+        }
+        if (!empty($data['error'])) {
+            $updates['error_message'] = $data['error'];
+        }
+        if (!empty($data['result'])) {
+            $metadata = $trainingRun->metadata ?? [];
+            $metadata['result'] = $data['result'];
+            $updates['metadata'] = $metadata;
+        }
+
+        $trainingRun->update($updates);
+
+        // Update VoiceModel status
+        $voiceModel = $trainingRun->voiceModel;
+        if ($voiceModel) {
+            $modelStatus = match ($status) {
+                'completed' => 'ready',
+                'failed' => 'failed',
+                'cancelled' => 'pending',
+                default => $voiceModel->status,
+            };
+            $voiceModel->update(['status' => $modelStatus]);
+        }
+
+        // Also update JobQueue if exists
+        $job = JobQueue::where('type', JobQueue::TYPE_TRAINING)
+            ->where('training_run_id', $trainingRun->id)
+            ->first();
+        
+        if (!$job) {
+            // Fallback: look in parameters JSON
+            $job = JobQueue::where('type', JobQueue::TYPE_TRAINING)
+                ->whereJsonContains('parameters->voice_engine_job_id', $jobId)
+                ->first();
+        }
+
+        if ($job) {
+            $jobStatus = match ($status) {
+                'completed' => JobQueue::STATUS_COMPLETED,
+                'failed' => JobQueue::STATUS_FAILED,
+                'cancelled' => JobQueue::STATUS_CANCELLED,
+                default => $job->status,
+            };
+            $job->update([
+                'status' => $jobStatus,
+                'completed_at' => now(),
+                'error_message' => $data['error'] ?? null,
+            ]);
+        }
+
+        \Illuminate\Support\Facades\Log::info('Training callback processed', [
+            'job_id' => $jobId,
+            'training_run_id' => $trainingRun->id,
+            'new_status' => $runStatus,
+            'voice_model_status' => $voiceModel?->status,
+        ]);
+
+        return response()->json([
+            'success' => true,
+            'training_run_id' => $trainingRun->id,
+            'status' => $runStatus,
+        ]);
     }
 }

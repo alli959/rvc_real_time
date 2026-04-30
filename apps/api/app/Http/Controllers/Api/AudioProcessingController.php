@@ -37,6 +37,7 @@ class AudioProcessingController extends Controller
             'sample_rate' => 'nullable|integer|min:8000|max:96000',
             'mode' => 'required|in:convert,split,swap',
             'model_id' => 'nullable|integer|exists:voice_models,id',
+            'checkpoint' => 'nullable|string|max:255', // Optional checkpoint filename for model versioning
             'f0_up_key' => 'nullable|integer|min:-24|max:24',
             'index_rate' => 'nullable|numeric|min:0|max:1',
             'pitch_shift_all' => 'nullable|integer|min:-24|max:24',
@@ -158,6 +159,11 @@ class AudioProcessingController extends Controller
                 $payload['index_path'] = $indexPath;
             }
             
+            // Add checkpoint if specified (for model versioning)
+            if (!empty($validated['checkpoint'])) {
+                $payload['checkpoint'] = $validated['checkpoint'];
+            }
+            
             if ($voiceConfigs) {
                 $payload['voice_configs'] = $voiceConfigs;
             }
@@ -171,12 +177,23 @@ class AudioProcessingController extends Controller
                     'error_details' => ['response' => $response->json()],
                     'completed_at' => now(),
                 ]);
+                
+                // Check for training in progress error (503)
+                $detail = $response->json('detail');
+                if (is_array($detail) && ($detail['code'] ?? null) === 'TRAINING_IN_PROGRESS') {
+                    return response()->json([
+                        'error' => 'Service unavailable',
+                        'code' => 'TRAINING_IN_PROGRESS',
+                        'message' => $detail['message'] ?? 'Training is in progress. Please wait.',
+                        'job_id' => $job->uuid,
+                    ], 503);
+                }
 
                 return response()->json([
                     'error' => 'Audio processing failed',
-                    'message' => $response->json('detail') ?? 'Unknown error',
+                    'message' => is_array($detail) ? ($detail['message'] ?? 'Unknown error') : ($detail ?? 'Unknown error'),
                     'job_id' => $job->uuid,
-                ], 500);
+                ], $response->status() >= 400 && $response->status() < 600 ? $response->status() : 500);
             }
 
             $result = $response->json();

@@ -47,9 +47,15 @@ class YouTubeController extends Controller
             ]);
 
             if (!$response->successful()) {
+                $json = $response->json();
+                $errorMessage = $json['error']['message'] 
+                    ?? $json['detail'] 
+                    ?? $json['message'] 
+                    ?? 'Search failed';
+                    
                 return response()->json([
                     'error' => 'YouTube search failed',
-                    'message' => $response->json('detail') ?? 'Unknown error',
+                    'message' => $errorMessage,
                 ], $response->status());
             }
 
@@ -96,9 +102,16 @@ class YouTubeController extends Controller
             ]);
 
             if (!$response->successful()) {
+                $json = $response->json();
+                // Handle nested error structure from voice-engine
+                $errorMessage = $json['error']['message'] 
+                    ?? $json['detail'] 
+                    ?? $json['message'] 
+                    ?? 'Download failed';
+                    
                 return response()->json([
                     'error' => 'YouTube download failed',
-                    'message' => $response->json('detail') ?? 'Unknown error',
+                    'message' => $errorMessage,
                 ], $response->status());
             }
 

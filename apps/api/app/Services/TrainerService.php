@@ -1113,6 +1113,36 @@ class TrainerService
     }
 
     /**
+     * Get available checkpoints for a model.
+     * 
+     * Returns list of extracted model checkpoints that can be used for inference.
+     * 
+     * @param string $expName Model/experiment name
+     * @return array|null Checkpoints list or null on failure
+     */
+    public function getModelCheckpoints(string $expName): ?array
+    {
+        try {
+            $response = Http::timeout($this->timeout)
+                ->get("{$this->scannerUrl}/model/{$expName}/checkpoints");
+
+            if ($response->successful()) {
+                return $response->json();
+            }
+
+            Log::error('Failed to get model checkpoints', [
+                'exp_name' => $expName,
+                'status' => $response->status(),
+                'error' => $response->json('detail'),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Get model checkpoints exception', ['exp_name' => $expName, 'error' => $e->getMessage()]);
+        }
+
+        return null;
+    }
+
+    /**
      * Get model configuration (sample rate, version) from training config.
      * 
      * Auto-detects settings from config.json if present in the model directory.
@@ -1160,6 +1190,7 @@ class TrainerService
      * @param string|null $sampleRate Sample rate: 32k, 40k, or 48k (null = auto-detect)
      * @param string|null $version RVC version: v1 or v2 (null = auto-detect)
      * @param string|null $modelName Custom model name (defaults to directory name)
+     * @param string|null $checkpointFile Specific G_*.pth checkpoint filename to extract from
      * @return array|null Result or null on failure
      */
     public function extractModelAndBuildIndex(
@@ -1168,7 +1199,8 @@ class TrainerService
         bool $buildIndex = true,
         ?string $sampleRate = null,
         ?string $version = null,
-        ?string $modelName = null
+        ?string $modelName = null,
+        ?string $checkpointFile = null
     ): ?array {
         try {
             $payload = [
@@ -1185,6 +1217,9 @@ class TrainerService
             }
             if ($version !== null) {
                 $payload['version'] = $version;
+            }
+            if ($checkpointFile !== null) {
+                $payload['checkpoint_file'] = $checkpointFile;
             }
 
             $response = Http::timeout($this->timeout * 2) // Double timeout for potentially long operations

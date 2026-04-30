@@ -221,7 +221,10 @@ class VoiceModelScanner
 
     /**
      * Find model file in local directory
-     * Supports both exported models and raw training checkpoints (G_*.pth)
+     * Only looks for properly exported inference models, NOT raw checkpoints
+     * 
+     * NOTE: G_*.pth and D_*.pth checkpoints should be in /storage/data/training/<model>/
+     *       NOT in /storage/models/<model>/ - the models directory is for final inference files only
      */
     protected function findLocalModelFile(string $dir): ?string
     {
@@ -232,11 +235,11 @@ class VoiceModelScanner
         }
 
         // Priority 2: Named model files (not G_*.pth or D_*.pth patterns)
-        // These are typically properly exported models from RVC WebUI
+        // These are properly exported models ready for inference
         $pthFiles = glob("$dir/*.pth");
         foreach ($pthFiles as $file) {
             $basename = basename($file);
-            // Skip training checkpoints for now (will check in priority 3)
+            // Skip training checkpoints - these should NOT be in models directory
             if (preg_match('/^[GD]_\d+\.pth$/', $basename)) {
                 continue;
             }
@@ -247,20 +250,12 @@ class VoiceModelScanner
             return $file;
         }
 
-        // Priority 3: G_<number>.pth - find the highest numbered checkpoint
-        // These are raw training checkpoints that can still be used for inference
-        $generatorFiles = glob("$dir/G_*.pth");
-        if (!empty($generatorFiles)) {
-            // Sort by the number in the filename to get the highest
-            usort($generatorFiles, function ($a, $b) {
-                preg_match('/G_(\d+)\.pth$/', $a, $matchA);
-                preg_match('/G_(\d+)\.pth$/', $b, $matchB);
-                $numA = isset($matchA[1]) ? (int)$matchA[1] : 0;
-                $numB = isset($matchB[1]) ? (int)$matchB[1] : 0;
-                return $numB - $numA; // Descending order
-            });
-            return $generatorFiles[0]; // Return highest numbered
-        }
+        // NOTE: We intentionally do NOT fall back to G_*.pth checkpoints
+        // If a model directory only has checkpoints, it means the model extraction
+        // hasn't been completed yet. The proper flow is:
+        // 1. Training writes G_*.pth/D_*.pth to /storage/data/training/<model>/
+        // 2. Model extraction creates <model>.pth in /storage/models/<model>/
+        // 3. Only then is the model usable for inference
 
         return null;
     }

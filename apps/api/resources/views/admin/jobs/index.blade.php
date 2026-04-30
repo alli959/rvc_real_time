@@ -148,6 +148,7 @@
             <th class="px-6 py-4 text-xs font-medium text-gray-400 uppercase tracking-wider">Status</th>
             <th class="px-6 py-4 text-xs font-medium text-gray-400 uppercase tracking-wider">Created</th>
             <th class="px-6 py-4 text-xs font-medium text-gray-400 uppercase tracking-wider">Duration</th>
+            <th class="px-6 py-4 text-xs font-medium text-gray-400 uppercase tracking-wider">Actions</th>
           </tr>
         </thead>
         <tbody class="divide-y divide-gray-800">
@@ -264,10 +265,33 @@
                   <span class="text-gray-500">-</span>
                 @endif
               </td>
+              <td class="px-6 py-4" onclick="event.stopPropagation()">
+                @if(in_array($job->status, ['pending', 'queued', 'processing']))
+                  <button 
+                    onclick="forceCancel('{{ $job->id }}')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-xs font-medium transition-colors"
+                    title="Force cancel this job"
+                  >
+                    <i data-lucide="x-circle" class="w-3.5 h-3.5"></i>
+                    Cancel
+                  </button>
+                @elseif($job->status === 'failed' && $job->type === 'training')
+                  <button 
+                    onclick="forceCancel('{{ $job->id }}')"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 hover:text-yellow-300 rounded-lg text-xs font-medium transition-colors"
+                    title="Reset stuck training - allows user to retry"
+                  >
+                    <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i>
+                    Reset
+                  </button>
+                @else
+                  <span class="text-gray-600">-</span>
+                @endif
+              </td>
             </tr>
             <!-- Expandable Details Row -->
             <tr class="hidden job-details-{{ $job->uuid }} bg-gray-800/30">
-              <td colspan="8" class="px-6 py-4">
+              <td colspan="9" class="px-6 py-4">
                 <div class="space-y-4">
                   <!-- Error Section (if failed) -->
                   @if($job->status === 'failed')
@@ -379,7 +403,7 @@
             </tr>
           @empty
             <tr>
-              <td colspan="8" class="px-6 py-12 text-center">
+              <td colspan="9" class="px-6 py-12 text-center">
                 <i data-lucide="inbox" class="w-12 h-12 text-gray-600 mx-auto mb-4"></i>
                 <p class="text-gray-400">No jobs found</p>
               </td>
@@ -417,6 +441,35 @@
       if (typeof lucide !== 'undefined') {
         lucide.createIcons();
       }
+    }
+  }
+
+  async function forceCancel(jobId) {
+    if (!confirm('Are you sure? This will reset the job and allow the user to retry training.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`/admin/jobs/${jobId}/force-cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '',
+        },
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        alert(data.message || 'Job reset successfully');
+        // Reload the page to show updated status
+        window.location.reload();
+      } else {
+        alert('Failed: ' + (data.message || 'Unknown error'));
+      }
+    } catch (error) {
+      console.error('Error:', error);
+      alert('Failed: ' + error.message);
     }
   }
 

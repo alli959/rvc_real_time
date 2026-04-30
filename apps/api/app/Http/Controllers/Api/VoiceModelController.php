@@ -616,6 +616,81 @@ class VoiceModelController extends Controller
     }
 
     /**
+     * Cancel active training for this model
+     */
+    public function cancelTraining(Request $request, VoiceModel $voiceModel)
+    {
+        $user = $request->user();
+        
+        // Check authorization - must be owner or admin
+        if ($voiceModel->user_id !== $user->id && !$user->hasRole('admin')) {
+            return response()->json(['error' => 'Unauthorized'], 403);
+        }
+
+        // Check if model is actually training
+        if ($voiceModel->status !== 'training') {
+            return response()->json([
+                'success' => false,
+                'message' => 'Model is not currently training',
+            ], 400);
+        }
+
+        // Find active training job
+        $job = \App\Models\JobQueue::where('voice_model_id', $voiceModel->id)
+            ->where('type', \App\Models\JobQueue::TYPE_TRAINING)
+            ->whereIn('status', [
+                \App\Models\JobQueue::STATUS_PENDING,
+                \App\Models\JobQueue::STATUS_QUEUED,
+                \App\Models\JobQueue::STATUS_PROCESSING,
+            ])
+            ->first();
+
+        // Cancel in voice-engine if job has voice_engine_job_id
+        if ($job) {
+            $voiceEngineJobId = $job->parameters['voice_engine_job_id'] ?? null;
+            if ($voiceEngineJobId) {
+                try {
+                    $trainerService = app(\App\Services\TrainerService::class);
+                    $trainerService->cancelTraining($voiceEngineJobId);
+                } catch (\Exception $e) {
+                    \Log::warning('Failed to cancel training in voice-engine', [
+                        'model_id' => $voiceModel->id,
+                        'job_id' => $job->uuid,
+                        'error' => $e->getMessage(),
+                    ]);
+                }
+            }
+
+            // Update job status
+            $job->update([
+                'status' => \App\Models\JobQueue::STATUS_CANCELLED,
+                'error_message' => 'Cancelled by user',
+                'completed_at' => now(),
+            ]);
+        }
+
+        // Update any active training runs
+        \App\Models\TrainingRun::where('voice_model_id', $voiceModel->id)
+            ->whereIn('status', [
+                \App\Models\TrainingRun::STATUS_PENDING,
+                \App\Models\TrainingRun::STATUS_PREPARING,
+                \App\Models\TrainingRun::STATUS_TRAINING,
+            ])
+            ->update([
+                'status' => \App\Models\TrainingRun::STATUS_CANCELLED,
+                'error_message' => 'Cancelled by user',
+            ]);
+
+        // Update model status
+        $voiceModel->update(['status' => 'pending']);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Training cancelled successfully',
+        ]);
+    }
+
+    /**
      * Generate presigned upload URLs
      */
     protected function generateUploadUrls(VoiceModel $model): array

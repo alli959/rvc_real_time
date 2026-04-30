@@ -72,6 +72,7 @@ class VoiceModelAdminController extends Controller
         // Get training info if model has a model_dir
         $trainingInfo = null;
         $modelConfig = null;
+        $checkpointsData = null;
         $trainer = app(TrainerService::class);
         
         // Determine model directory from model_path or slug
@@ -98,12 +99,15 @@ class VoiceModelAdminController extends Controller
             $trainingInfo = $trainer->getModelTrainingInfo($modelDir);
             // Get model config (sample rate, version) for auto-detection
             $modelConfig = $trainer->getModelConfig($modelDir);
+            // Get available checkpoints (both extracted and training)
+            $checkpointsData = $trainer->getModelCheckpoints($modelDir);
         }
 
         return view('admin.models.edit', [
             'voiceModel' => $voiceModel,
             'trainingInfo' => $trainingInfo,
             'modelConfig' => $modelConfig,
+            'checkpointsData' => $checkpointsData,
         ]);
     }
 
@@ -359,6 +363,7 @@ class VoiceModelAdminController extends Controller
                 'build_index' => ['nullable', 'boolean'],
                 'sample_rate' => ['nullable', 'in:,32k,40k,48k'], // Empty string allowed for auto-detect
                 'version' => ['nullable', 'in:,v1,v2'], // Empty string allowed for auto-detect
+                'checkpoint_file' => ['nullable', 'string', 'max:255'], // Specific checkpoint to extract from
             ]);
 
             // Determine model directory from model_path or slug
@@ -386,6 +391,7 @@ class VoiceModelAdminController extends Controller
             // Pass null for empty strings to trigger auto-detection in the API
             $sampleRate = !empty($validated['sample_rate']) ? $validated['sample_rate'] : null;
             $version = !empty($validated['version']) ? $validated['version'] : null;
+            $checkpointFile = !empty($validated['checkpoint_file']) ? $validated['checkpoint_file'] : null;
 
             $result = $trainerService->extractModelAndBuildIndex(
                 $modelDir,
@@ -393,7 +399,8 @@ class VoiceModelAdminController extends Controller
                 $request->boolean('build_index', true),
                 $sampleRate,
                 $version,
-                $voiceModel->slug
+                $voiceModel->slug,
+                $checkpointFile
             );
 
             if ($result && $result['success']) {

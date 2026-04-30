@@ -19,7 +19,7 @@ use Illuminate\Support\Str;
  * @property int|null $dataset_version_id
  * @property int|null $parent_run_id
  * @property int|null $parent_checkpoint_id
- * @property string $run_number
+ * @property int $run_number
  * @property string $mode
  * @property string $status
  * @property array $config_snapshot
@@ -53,18 +53,31 @@ class TrainingRun extends Model
         'parent_run_id',
         'parent_checkpoint_id',
         'run_number',
+        'branch_name',
         'mode',
         'status',
+        'config_hash',
         'config_snapshot',
+        'sample_rate',
+        'batch_size',
+        'f0_method',
+        'version',
+        'use_pitch_guidance',
+        'starting_epoch',
+        'current_epoch',
         'target_epochs',
-        'completed_epochs',
-        'start_epoch',
+        'save_every_epoch',
+        'dataset_hash',
         'best_checkpoint_id',
         'best_loss',
-        'duration_seconds',
+        'training_time_seconds',
+        'checkpoint_count',
+        'voice_engine_job_id',
+        'run_directory',
         'error_message',
         'metadata',
         'started_at',
+        'last_activity_at',
         'completed_at',
     ];
 
@@ -170,12 +183,12 @@ class TrainingRun extends Model
 
     /**
      * Generate a unique run number for a voice model.
-     * Format: run-001, run-002, etc.
+     * Returns the next sequential integer (1, 2, 3, etc.)
      */
-    public static function generateRunNumber(int $voiceModelId): string
+    public static function generateRunNumber(int $voiceModelId): int
     {
         $count = static::where('voice_model_id', $voiceModelId)->count();
-        return sprintf('run-%03d', $count + 1);
+        return $count + 1;
     }
 
     /**
