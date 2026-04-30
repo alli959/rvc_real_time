@@ -78,6 +78,12 @@ RUN if [ "$INSTALL_BARK" = "true" ]; then \
 COPY patch_fairseq.py .
 RUN python3 patch_fairseq.py && rm patch_fairseq.py
 
+# Install deno for yt-dlp JavaScript challenge solving (required for YouTube downloads)
+RUN pip install --no-cache-dir deno
+
+# Upgrade yt-dlp to nightly for latest YouTube bypass fixes
+RUN pip install --no-cache-dir --upgrade --pre yt-dlp
+
 # Copy application code
 COPY app/ ./app/
 COPY main.py .

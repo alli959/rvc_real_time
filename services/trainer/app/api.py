@@ -110,6 +110,11 @@ class StartTrainingRequest(BaseModel):
     gpus: str = Field(default="0", description="GPU device IDs")
     pretrain_g: Optional[str] = Field(default=None, description="Path to pretrained generator")
     pretrain_d: Optional[str] = Field(default=None, description="Path to pretrained discriminator")
+    # Advanced training options
+    gradient_accumulation_steps: int = Field(default=1, ge=1, le=16, description="Accumulate gradients over N steps for larger effective batch size")
+    max_steps: Optional[int] = Field(default=None, ge=1, description="Maximum training steps (overrides epochs if set)")
+    early_stop_patience: Optional[int] = Field(default=None, ge=1, description="Stop training if loss doesn't improve for N epochs")
+    save_every_steps: Optional[int] = Field(default=None, ge=1, description="Save checkpoint every N steps (alternative to save_every_epoch)")
 
 
 class TrainingResponse(BaseModel):
@@ -135,6 +140,12 @@ class JobStatusResponse(BaseModel):
     completed_at: Optional[str] = None
     logs: List[str] = []
     result: Optional[Dict[str, Any]] = None
+    # Advanced training info
+    gradient_accumulation_steps: int = 1
+    max_steps: Optional[int] = None
+    early_stop_patience: Optional[int] = None
+    early_stopped: bool = False
+    best_loss: Optional[float] = None
 
 
 class ExtractModelRequest(BaseModel):

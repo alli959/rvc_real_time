@@ -252,7 +252,7 @@ class TrainingConfigInput(BaseModel):
 class StartTrainingRequest(BaseModel):
     """Start training request"""
     exp_name: str = Field(..., description="Experiment name")
-    config: Optional[TrainingConfigRequest] = None
+    config: Optional[TrainingConfigInput] = None
     audio_paths: Optional[List[str]] = Field(default=None, description="Paths to audio files")
 
 
@@ -388,18 +388,32 @@ async def start_training(
     
     # Build config
     if request.config:
+        # TrainingConfigInput has optional fields - use defaults if not specified
+        sample_rate = request.config.sample_rate or 48000
+        f0_method = request.config.f0_method or "rmvpe"
+        epochs = request.config.epochs or 200
+        batch_size = request.config.batch_size or 8
+        save_every_epoch = request.config.save_every_epoch or 50
+        version = request.config.version or "v2"
+        use_pitch_guidance = request.config.use_pitch_guidance if request.config.use_pitch_guidance is not None else True
+        
         config = TrainingConfig(
             exp_name=request.exp_name,
-            sample_rate=SampleRate(request.config.sample_rate),
-            f0_method=F0Method(request.config.f0_method),
-            epochs=request.config.epochs,
-            batch_size=request.config.batch_size,
-            save_every_epoch=request.config.save_every_epoch,
-            version=RVCVersion(request.config.version),
-            use_pitch_guidance=request.config.use_pitch_guidance
+            sample_rate=SampleRate(sample_rate),
+            f0_method=F0Method(f0_method),
+            epochs=epochs,
+            batch_size=batch_size,
+            save_every_epoch=save_every_epoch,
+            version=RVCVersion(version),
+            use_pitch_guidance=use_pitch_guidance
         )
+        # Extract optional training control flags
+        force_reprocess = request.config.force_reprocess or False
+        continue_from_checkpoint = request.config.continue_from_checkpoint or False
     else:
         config = TrainingConfig(exp_name=request.exp_name)
+        force_reprocess = False
+        continue_from_checkpoint = False
     
     # Get audio paths - check trainset directory (canonical location for all training audio)
     audio_paths = request.audio_paths
@@ -421,17 +435,27 @@ async def start_training(
     if not audio_paths:
         raise HTTPException(status_code=400, detail="No audio files found in trainset or recordings directory")
     
+    # Log training mode for debugging
+    logger.info(f"Starting training for {request.exp_name}: force_reprocess={force_reprocess}, continue_from_checkpoint={continue_from_checkpoint}")
+    
     # Create job
     job_id = pipeline.create_job(config)
     
     # Start training in background
     async def run_training():
         try:
-            await pipeline.train(config, audio_paths, job_id)
+            await pipeline.train(
+                config, 
+                audio_paths, 
+                job_id,
+                force_reprocess=force_reprocess,
+                continue_from_checkpoint=continue_from_checkpoint
+            )
         except Exception as e:
             logger.exception(f"Training error: {e}")
     
-    background_tasks.add_task(asyncio.create_task, run_training())
+    # Use add_task directly with the coroutine, not asyncio.create_task
+    background_tasks.add_task(run_training)
     
     return {
         "job_id": job_id,
@@ -841,6 +865,10 @@ async def get_model_info(exp_name: str):
     - Training status
     - Phoneme coverage (if trained)
     - Category status
+    
+    Storage structure:
+    - MODELS_DIR/{model}/ - Final model files: {model}.pth, {model}.index, metadata.json
+    - PREPROCESS_DIR/{model}/ - Training data: G_*.pth, D_*.pth, preprocessed audio, train.log
     """
     storage = get_storage()
     
@@ -849,21 +877,44 @@ async def get_model_info(exp_name: str):
     
     model_dir = storage.get_model_dir(exp_name)
     
-    # Check for trained model files (exclude checkpoint files G_*, D_*)
+    # Training checkpoints are in TRAINING_DIR, preprocessed data is in PREPROCESS_DIR
+    training_dir = TRAINING_DIR / exp_name
+    preprocess_dir = PREPROCESS_DIR / exp_name
+    
+    # Check for trained model files in MODELS_DIR (exclude checkpoint files G_*, D_*)
     import re
     pth_files = list(model_dir.glob("*.pth"))
     final_model_files = [m for m in pth_files if not re.match(r'^[GD]_\d+\.pth$', m.name)]
     index_files = list(model_dir.glob("*.index"))
     
-    # Check for latest generator checkpoint (sorted by step number)
-    g_files = sorted(model_dir.glob("G_*.pth"), key=lambda x: int(x.stem.split('_')[1]) if x.stem.split('_')[1].isdigit() else 0)
+    # Check for latest generator checkpoint in TRAINING_DIR (sorted by step number)
+    # Also check PREPROCESS_DIR and MODELS_DIR as legacy fallback locations
+    g_files = []
+    for search_dir in [training_dir, preprocess_dir, model_dir]:
+        if search_dir.exists():
+            g_files = sorted(search_dir.glob("G_*.pth"), key=lambda x: int(x.stem.split('_')[1]) if x.stem.split('_')[1].isdigit() else 0)
+            if g_files:
+                break  # Found checkpoints, stop searching
     latest_checkpoint = str(g_files[-1]) if g_files else None
+    
+    # Also look for extracted model checkpoints ({name}_e{epoch}_s{step}.pth) in MODELS_DIR
+    extracted_checkpoints = sorted(
+        [f for f in pth_files if re.match(rf'^{re.escape(exp_name)}_e(\d+)_s\d+\.pth$', f.name)],
+        key=lambda x: int(re.search(r'_e(\d+)_s', x.name).group(1)) if re.search(r'_e(\d+)_s', x.name) else 0
+    )
     
     # Extract actual epochs trained from train.log (checkpoint filenames use step numbers, not epochs)
     epochs_trained = metadata.training_epochs
     target_epochs_from_log = None
-    train_log = model_dir / "train.log"
-    if train_log.exists():
+    # train.log is stored in the training directory (or preprocess/model_dir as fallback)
+    train_log = None
+    for log_dir in [training_dir, preprocess_dir, model_dir]:
+        if log_dir.exists():
+            potential_log = log_dir / "train.log"
+            if potential_log.exists():
+                train_log = potential_log
+                break
+    if train_log and train_log.exists():
         try:
             # Parse train.log to find last completed epoch: "====> Epoch: X"
             # And also extract total_epoch from the config dump
@@ -883,9 +934,27 @@ async def get_model_info(exp_name: str):
         except Exception as e:
             logger.warning(f"Could not parse train.log for epochs: {e}")
     
-    # Check for preprocessed data
-    gt_wavs = model_dir / "0_gt_wavs"
-    preprocessed_count = len(list(gt_wavs.glob("*.wav"))) if gt_wavs.exists() else 0
+    # Fallback: extract epochs from model checkpoint filenames if train.log doesn't exist or epochs is 0
+    # Look for files like {name}_e{epoch}_s{step}.pth
+    if epochs_trained == 0:
+        epoch_model_files = [m for m in pth_files if re.match(rf'^{re.escape(exp_name)}_e(\d+)_s\d+\.pth$', m.name)]
+        if epoch_model_files:
+            try:
+                # Extract epoch numbers from filenames
+                file_epochs = []
+                for f in epoch_model_files:
+                    match = re.match(rf'^{re.escape(exp_name)}_e(\d+)_s\d+\.pth$', f.name)
+                    if match:
+                        file_epochs.append(int(match.group(1)))
+                if file_epochs:
+                    epochs_trained = max(file_epochs)
+                    logger.info(f"Extracted epochs_trained={epochs_trained} from checkpoint filenames for {exp_name}")
+            except Exception as e:
+                logger.warning(f"Could not extract epochs from checkpoint filenames: {e}")
+    
+    # Check for preprocessed data in PREPROCESS_DIR
+    gt_wavs = preprocess_dir / "0_gt_wavs" if preprocess_dir.exists() else None
+    preprocessed_count = len(list(gt_wavs.glob("*.wav"))) if gt_wavs and gt_wavs.exists() else 0
     
     # Get target epochs: prefer train.log value, then metadata, then config default
     target_epochs = 100  # default
@@ -903,6 +972,8 @@ async def get_model_info(exp_name: str):
     return {
         "name": exp_name,
         "model_dir": str(model_dir),
+        "training_dir": str(training_dir) if training_dir.exists() else None,
+        "preprocess_dir": str(preprocess_dir) if preprocess_dir.exists() else None,
         "recordings": {
             "count": metadata.total_recordings,
             "duration_seconds": metadata.total_duration_seconds,
@@ -919,7 +990,18 @@ async def get_model_info(exp_name: str):
             "target_epochs": target_epochs,
             "last_trained": metadata.last_trained_at,
             "latest_checkpoint": latest_checkpoint,
-            "checkpoint_count": len(g_files)
+            "checkpoint_count": len(g_files),
+            # List of extracted model checkpoints available for inference
+            "available_checkpoints": [
+                {
+                    "filename": f.name,
+                    "path": str(f),
+                    "epoch": int(re.search(r'_e(\d+)_s', f.name).group(1)) if re.search(r'_e(\d+)_s', f.name) else 0,
+                    "step": int(re.search(r'_s(\d+)\.pth', f.name).group(1)) if re.search(r'_s(\d+)\.pth', f.name) else 0,
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                }
+                for f in extracted_checkpoints
+            ]
         },
         "coverage": {
             "phoneme_percent": metadata.phoneme_coverage_percent,
@@ -935,6 +1017,92 @@ async def get_model_info(exp_name: str):
             for cat_id, cat in metadata.categories.items()
         },
         "metadata": metadata.to_dict()
+    }
+
+
+@router.get("/model/{exp_name}/checkpoints")
+async def list_model_checkpoints(exp_name: str, include_training: bool = True):
+    """
+    List all available checkpoints for a model.
+    
+    Returns:
+    - Extracted model checkpoints ({name}_e{epoch}_s{step}.pth) from MODELS_DIR for inference
+    - Training checkpoints (G_*.pth) from TRAINING_DIR for extraction (if include_training=True)
+    """
+    import re
+    storage = get_storage()
+    model_dir = storage.get_model_dir(exp_name)
+    training_dir = TRAINING_DIR / exp_name
+    
+    checkpoints = []
+    training_checkpoints = []
+    
+    # Find extracted model checkpoints in MODELS_DIR: {name}_e{epoch}_s{step}.pth
+    if model_dir.exists():
+        checkpoint_pattern = rf'^{re.escape(exp_name)}_e(\d+)_s(\d+)\.pth$'
+        
+        for f in model_dir.glob("*.pth"):
+            match = re.match(checkpoint_pattern, f.name)
+            if match:
+                epoch = int(match.group(1))
+                step = int(match.group(2))
+                checkpoints.append({
+                    "filename": f.name,
+                    "path": str(f),
+                    "epoch": epoch,
+                    "step": step,
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                    "created_at": f.stat().st_mtime,
+                    "type": "extracted",
+                })
+        
+        # Also check for main model file ({name}.pth)
+        main_model = model_dir / f"{exp_name}.pth"
+        if main_model.exists():
+            checkpoints.insert(0, {
+                "filename": main_model.name,
+                "path": str(main_model),
+                "epoch": None,  # Unknown - this is the "latest" extraction
+                "step": None,
+                "size_mb": round(main_model.stat().st_size / (1024 * 1024), 1),
+                "created_at": main_model.stat().st_mtime,
+                "is_default": True,
+                "type": "final",
+            })
+    
+    # Find training checkpoints in TRAINING_DIR: G_*.pth
+    if include_training and training_dir.exists():
+        g_pattern = r'^G_(\d+)\.pth$'
+        
+        for f in training_dir.glob("G_*.pth"):
+            match = re.match(g_pattern, f.name)
+            if match:
+                step = int(match.group(1))
+                training_checkpoints.append({
+                    "filename": f.name,
+                    "path": str(f),
+                    "step": step,
+                    "size_mb": round(f.stat().st_size / (1024 * 1024), 1),
+                    "created_at": f.stat().st_mtime,
+                    "type": "training",
+                })
+        
+        # Sort training checkpoints by step (highest first)
+        training_checkpoints.sort(key=lambda c: -c.get("step", 0))
+    
+    # Sort extracted checkpoints by epoch (highest first), with main model at top
+    checkpoints.sort(key=lambda c: (not c.get("is_default", False), -(c.get("epoch") or 9999)))
+    
+    # Determine default checkpoint
+    default_checkpoint = checkpoints[0]["filename"] if checkpoints else None
+    
+    return {
+        "exp_name": exp_name,
+        "checkpoints": checkpoints,  # Extracted models ready for inference
+        "training_checkpoints": training_checkpoints,  # Raw G_*.pth for extraction
+        "default": default_checkpoint,
+        "model_dir": str(model_dir) if model_dir.exists() else None,
+        "training_dir": str(training_dir) if training_dir.exists() else None,
     }
 
 
@@ -2199,6 +2367,7 @@ class ExtractModelRequest(BaseModel):
     sample_rate: Optional[str] = Field(default=None, description="Sample rate: 32k, 40k, or 48k. If not provided, auto-detected from config.json")
     version: Optional[str] = Field(default=None, description="RVC version: v1 or v2. If not provided, auto-detected from config.json")
     model_name: Optional[str] = Field(default=None, description="Custom model name (defaults to directory name)")
+    checkpoint_file: Optional[str] = Field(default=None, description="Specific G_*.pth checkpoint filename to extract from. If not provided, uses the largest step checkpoint.")
 
 
 class ExtractModelResponse(BaseModel):
@@ -2230,13 +2399,26 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
     import re
     from collections import OrderedDict
     
-    # Resolve model directory
+    # Resolve model directory - check multiple locations
     model_dir = Path(request.model_dir)
     if not model_dir.is_absolute():
         model_dir = MODELS_DIR / request.model_dir
     
-    if not model_dir.exists():
-        raise HTTPException(status_code=404, detail=f"Model directory not found: {model_dir}")
+    # Also resolve training directory (where checkpoints are saved) and preprocess directory
+    training_dir = TRAINING_DIR / request.model_dir
+    preprocess_dir = PREPROCESS_DIR / request.model_dir
+    
+    # Determine which directories exist
+    model_dir_exists = model_dir.exists()
+    training_dir_exists = training_dir.exists()
+    preprocess_dir_exists = preprocess_dir.exists()
+    
+    if not model_dir_exists and not training_dir_exists and not preprocess_dir_exists:
+        raise HTTPException(status_code=404, detail=f"Model directory not found: {model_dir}, {training_dir}, or {preprocess_dir}")
+    
+    # Ensure model output directory exists
+    if not model_dir_exists:
+        model_dir.mkdir(parents=True, exist_ok=True)
     
     model_name = request.model_name or model_dir.name
     results = {"extracted": False, "indexed": False}
@@ -2244,7 +2426,15 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
     final_index_path = None
     
     # Auto-detect sample_rate and version from config.json if not provided
-    config_path = model_dir / "config.json"
+    # Check training_dir first (where train.py saves it), then preprocess_dir and model_dir
+    config_path = None
+    for config_dir in [training_dir, preprocess_dir, model_dir]:
+        if config_dir.exists():
+            potential_config = config_dir / "config.json"
+            if potential_config.exists():
+                config_path = potential_config
+                break
+    
     detected_sr = None
     detected_version = None
     
@@ -2295,30 +2485,59 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
     try:
         # Step 1: Extract model from checkpoint
         if request.extract_model:
-            # Find the largest G_*.pth checkpoint
-            g_checkpoints = list(model_dir.glob("G_*.pth"))
+            best_checkpoint = None
             
-            if not g_checkpoints:
-                # Check if final model already exists
-                existing_models = [f for f in model_dir.glob("*.pth") 
-                                   if not re.match(r'^[GD]_\d+\.pth$', f.name)]
-                if existing_models:
-                    final_model_path = str(existing_models[0])
-                    results["extracted"] = True
-                    results["model_existed"] = True
-                    logger.info(f"Final model already exists: {final_model_path}")
-                else:
+            # If specific checkpoint file is provided, use it
+            if request.checkpoint_file:
+                for search_dir in [training_dir, model_dir, preprocess_dir]:
+                    if search_dir.exists():
+                        potential_checkpoint = search_dir / request.checkpoint_file
+                        if potential_checkpoint.exists():
+                            best_checkpoint = potential_checkpoint
+                            logger.info(f"Using specified checkpoint: {best_checkpoint}")
+                            break
+                
+                if not best_checkpoint:
                     raise HTTPException(
-                        status_code=400, 
-                        detail="No G_*.pth checkpoints found and no existing model"
+                        status_code=404, 
+                        detail=f"Specified checkpoint not found: {request.checkpoint_file}"
                     )
             else:
-                # Find largest step checkpoint
-                def extract_step(path: Path) -> int:
-                    match = re.search(r'G_(\d+)\.pth', path.name)
-                    return int(match.group(1)) if match else 0
+                # Find the largest G_*.pth checkpoint - check training_dir first, then model_dir and preprocess_dir
+                g_checkpoints = []
+                checkpoint_source_dir = None
+                for search_dir in [training_dir, model_dir, preprocess_dir]:
+                    if search_dir.exists():
+                        g_checkpoints = list(search_dir.glob("G_*.pth"))
+                        if g_checkpoints:
+                            checkpoint_source_dir = search_dir
+                            logger.info(f"Found checkpoints in: {search_dir}")
+                            break
                 
-                best_checkpoint = max(g_checkpoints, key=extract_step)
+                if not g_checkpoints:
+                    # Check if final model already exists
+                    existing_models = [f for f in model_dir.glob("*.pth") 
+                                       if not re.match(r'^[GD]_\d+\.pth$', f.name)]
+                    if existing_models:
+                        final_model_path = str(existing_models[0])
+                        results["extracted"] = True
+                        results["model_existed"] = True
+                        logger.info(f"Final model already exists: {final_model_path}")
+                    else:
+                        raise HTTPException(
+                            status_code=400, 
+                            detail="No G_*.pth checkpoints found and no existing model"
+                        )
+                else:
+                    # Find largest step checkpoint
+                    def extract_step(path: Path) -> int:
+                        match = re.search(r'G_(\d+)\.pth', path.name)
+                        return int(match.group(1)) if match else 0
+                    
+                    best_checkpoint = max(g_checkpoints, key=extract_step)
+            
+            # Extract from checkpoint if we have one
+            if best_checkpoint:
                 logger.info(f"Extracting model from checkpoint: {best_checkpoint}")
                 
                 # Load checkpoint
@@ -2384,8 +2603,18 @@ async def extract_model_and_build_index(request: ExtractModelRequest):
             feature_dim = 768 if version == "v2" else 256
             feature_dir = model_dir / f"3_feature{feature_dim}"
             
+            # Also check preprocess directory for features
+            if (not feature_dir.exists() or not any(feature_dir.glob("*.npy"))) and preprocess_dir_exists:
+                preprocess_feature_dir = preprocess_dir / f"3_feature{feature_dim}"
+                if preprocess_feature_dir.exists() and any(preprocess_feature_dir.glob("*.npy")):
+                    feature_dir = preprocess_feature_dir
+                    logger.info(f"Using features from preprocess directory: {feature_dir}")
+            
             # Check if index already exists
             existing_indexes = list(model_dir.glob("added_IVF*_Flat_nprobe_*.index"))
+            # Also check for simple .index files
+            if not existing_indexes:
+                existing_indexes = [f for f in model_dir.glob("*.index") if f.name != "total_fea.npy"]
             
             if not feature_dir.exists() or not any(feature_dir.glob("*.npy")):
                 if existing_indexes:

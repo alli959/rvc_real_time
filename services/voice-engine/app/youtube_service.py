@@ -189,8 +189,9 @@ async def download_youtube_audio(
     logger.info(f"Downloading audio for {video_id}")
     
     ydl_opts = {
-        # Let yt-dlp auto-select the best format
-        'format': 'bestaudio/best',
+        # Prefer m3u8 streaming formats which bypass 403 blocks on https formats
+        # 91/92/93/94/95/96 are m3u8 formats, then fallback to bestaudio
+        'format': '96/95/94/93/92/91/bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
             'preferredcodec': 'wav',  # Convert to WAV for consistency
@@ -200,13 +201,23 @@ async def download_youtube_audio(
         'quiet': True,
         'no_warnings': True,
         'socket_timeout': 30,
-        'retries': 5,
-        'fragment_retries': 5,
-        'file_access_retries': 5,
+        'retries': 10,
+        'fragment_retries': 10,
+        'file_access_retries': 10,
+        'hls_prefer_native': True,  # Use native HLS downloader
         'ignoreerrors': False,
         'geo_bypass': True,
+        'geo_bypass_country': 'US',
         # Use cookies if available
         'cookiefile': os.environ.get('YOUTUBE_COOKIES_FILE'),
+        # Enable remote EJS components for YouTube challenge solving
+        'remote_components': ['ejs:github'],
+        # HTTP headers to look more like a browser
+        'http_headers': {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+            'Accept-Language': 'en-US,en;q=0.5',
+        },
     }
     
     try:

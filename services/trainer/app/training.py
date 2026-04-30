@@ -240,6 +240,12 @@ class TrainingExecutor:
         use_pitch_guidance = config.get("use_pitch_guidance", True)
         gpus = config.get("gpus", "0")
         
+        # Advanced training options
+        gradient_accumulation_steps = config.get("gradient_accumulation_steps", 1)
+        max_steps = config.get("max_steps")
+        early_stop_patience = config.get("early_stop_patience")
+        save_every_steps = config.get("save_every_steps")
+        
         # Resolve pretrained model paths
         pretrain_g = config.get("pretrain_g") or str(
             self.assets_root / "pretrained_v2" / "f0G48k.pth"
@@ -268,6 +274,11 @@ class TrainingExecutor:
             "-f0", "1" if use_pitch_guidance else "0",
             "-l", "0",  # if_latest - keep all checkpoints
             "-c", "0",  # if_cache_data_in_gpu
+            # Advanced training options
+            "-ga", str(gradient_accumulation_steps),
+            "-ms", str(max_steps or 0),
+            "-esp", str(early_stop_patience or 0),
+            "-ses", str(save_every_steps or 0),
         ]
         
         logger.info(f"Training command: {' '.join(train_cmd)}")

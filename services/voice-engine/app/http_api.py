@@ -129,13 +129,49 @@ except ImportError:
 # Training itself is handled by the dedicated trainer service (port 8002)
 # but scanning/analysis endpoints are served here
 try:
-    from app.trainer_api import router as trainer_router
+    from app.trainer_api import router as trainer_router, get_pipeline
     TRAINER_AVAILABLE = True
     logger.info("Trainer API loaded for model scanning")
 except ImportError as e:
     TRAINER_AVAILABLE = False
     trainer_router = None
+    get_pipeline = None
     logger.warning(f"Trainer API not available: {e}")
+
+# =============================================================================
+# Training Guard - Block GPU-heavy operations during training
+# =============================================================================
+
+def check_training_active() -> tuple[bool, str]:
+    """
+    Check if training is currently active.
+    
+    Returns:
+        tuple: (is_active: bool, message: str with training info)
+    """
+    if not TRAINER_AVAILABLE or get_pipeline is None:
+        return False, ""
+    
+    try:
+        pipeline = get_pipeline()
+        active_job = pipeline.get_active_training()
+        
+        if active_job:
+            exp_name = active_job.exp_name or "Unknown model"
+            current_epoch = active_job.current_epoch or 0
+            total_epochs = active_job.total_epochs or 0
+            progress_pct = (current_epoch / total_epochs * 100) if total_epochs > 0 else 0
+            
+            return True, (
+                f"Training is in progress for '{exp_name}' "
+                f"(Epoch {current_epoch}/{total_epochs}, {progress_pct:.0f}% complete). "
+                f"GPU resources are dedicated to training. "
+                f"Please wait for training to complete or stop it first."
+            )
+        return False, ""
+    except Exception as e:
+        logger.warning(f"Error checking training status: {e}")
+        return False, ""
 
 # Import admin APIs (optional)
 try:
@@ -1589,6 +1625,17 @@ async def text_to_speech(request: TTSRequest):
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
     
+    # Check if training is active - GPU resources are limited
+    is_training, training_msg = check_training_active()
+    if is_training:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TRAINING_IN_PROGRESS",
+                "message": training_msg
+            }
+        )
+    
     try:
         # Use the new TTS service if available
         if TTS_SERVICE_AVAILABLE:
@@ -1723,6 +1770,17 @@ async def multi_voice_tts(request: MultiVoiceTTSRequest):
     
     if not request.text.strip():
         raise HTTPException(status_code=400, detail="Text is required")
+    
+    # Check if training is active - GPU resources are limited
+    is_training, training_msg = check_training_active()
+    if is_training:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TRAINING_IN_PROGRESS",
+                "message": training_msg
+            }
+        )
     
     try:
         import edge_tts
@@ -1961,6 +2019,17 @@ async def convert_voice(request: ConvertRequest):
     
     if model_manager is None:
         raise HTTPException(status_code=500, detail="Model manager not initialized")
+    
+    # Check if training is active - GPU resources are limited
+    is_training, training_msg = check_training_active()
+    if is_training:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TRAINING_IN_PROGRESS",
+                "message": training_msg
+            }
+        )
     
     try:
         # Apply quality preset if specified
@@ -2260,6 +2329,7 @@ class AudioProcessRequest(BaseModel):
     mode: str = Field(default="split", description="Processing mode: split, convert, or swap")
     model_path: Optional[str] = Field(default=None, description="Path to voice model for conversion")
     index_path: Optional[str] = Field(default=None, description="Path to index file")
+    checkpoint: Optional[str] = Field(default=None, description="Optional checkpoint filename for model versioning (e.g., 'model_e100_s2900.pth')")
     f0_up_key: int = Field(default=0, description="Pitch shift for vocals")
     index_rate: float = Field(default=0.5, description="Index blend rate (lower=more natural)")
     protect: float = Field(default=0.4, description="Protect consonants (higher=more natural)")
@@ -2292,6 +2362,17 @@ async def process_audio(request: AudioProcessRequest):
     - convert: Apply voice conversion to audio
     - swap: Separate vocals, convert them, and merge back
     """
+    # Check if training is active - GPU resources are limited
+    is_training, training_msg = check_training_active()
+    if is_training:
+        raise HTTPException(
+            status_code=503,
+            detail={
+                "code": "TRAINING_IN_PROGRESS",
+                "message": training_msg
+            }
+        )
+    
     # Log incoming request parameters
     logger.info(f"Audio processing request: mode={request.mode}, pitch_shift_all={request.pitch_shift_all}, f0_up_key={request.f0_up_key}")
     
@@ -2478,8 +2559,22 @@ async def process_audio(request: AudioProcessRequest):
             if sr != 16000:
                 audio = librosa.resample(audio.astype(np.float32), orig_sr=sr, target_sr=16000)
             
+            # Determine model path - use checkpoint if specified
+            model_path_to_load = request.model_path
+            if request.checkpoint:
+                # Extract model slug from model_path (e.g., storage/models/bubbi/bubbi.pth -> bubbi)
+                model_slug = Path(request.model_path).stem
+                # Construct checkpoint path in preprocess directory
+                # Checkpoints are at: storage/data/preprocess/{slug}/{checkpoint}
+                checkpoint_path = Path("storage/data/preprocess") / model_slug / request.checkpoint
+                if checkpoint_path.exists():
+                    model_path_to_load = str(checkpoint_path)
+                    logger.info(f"Using checkpoint: {model_path_to_load}")
+                else:
+                    logger.warning(f"Checkpoint not found: {checkpoint_path}, falling back to model: {request.model_path}")
+            
             # Load model
-            success = model_manager.load_model(request.model_path, request.index_path)
+            success = model_manager.load_model(model_path_to_load, request.index_path)
             if not success:
                 raise HTTPException(status_code=400, detail="Failed to load model")
             

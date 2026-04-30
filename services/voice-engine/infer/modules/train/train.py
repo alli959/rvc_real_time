@@ -114,6 +114,66 @@ class TrainingCollapseWatchdog:
             'abort_reason': self.abort_reason,
         }
 
+
+class EarlyStoppingTracker:
+    """
+    Track training loss and trigger early stopping if no improvement.
+    
+    Uses loss_mel as the primary metric for early stopping decisions.
+    """
+    
+    def __init__(self, patience: int, min_delta: float = 0.1, logger=None):
+        self.patience = patience
+        self.min_delta = min_delta
+        self.logger = logger or logging.getLogger(__name__)
+        
+        self.best_loss = float('inf')
+        self.epochs_without_improvement = 0
+        self.best_epoch = 0
+        self.should_stop = False
+    
+    def update(self, epoch: int, avg_loss_mel: float) -> bool:
+        """
+        Update tracker with epoch's average loss.
+        
+        Returns True if training should STOP (patience exceeded).
+        """
+        if avg_loss_mel < self.best_loss - self.min_delta:
+            # Improvement found
+            self.best_loss = avg_loss_mel
+            self.best_epoch = epoch
+            self.epochs_without_improvement = 0
+            self.logger.info(
+                f"[EARLY STOP] New best loss_mel: {avg_loss_mel:.3f} at epoch {epoch}"
+            )
+        else:
+            # No improvement
+            self.epochs_without_improvement += 1
+            self.logger.info(
+                f"[EARLY STOP] No improvement for {self.epochs_without_improvement}/{self.patience} epochs "
+                f"(best: {self.best_loss:.3f} at epoch {self.best_epoch})"
+            )
+            
+            if self.epochs_without_improvement >= self.patience:
+                self.should_stop = True
+                self.logger.warning(
+                    f"[EARLY STOP] Stopping training: no improvement for {self.patience} epochs. "
+                    f"Best loss_mel: {self.best_loss:.3f} at epoch {self.best_epoch}"
+                )
+                return True
+        
+        return False
+    
+    def get_status(self) -> dict:
+        return {
+            'best_loss': self.best_loss,
+            'best_epoch': self.best_epoch,
+            'epochs_without_improvement': self.epochs_without_improvement,
+            'patience': self.patience,
+            'should_stop': self.should_stop,
+        }
+
+
 import datetime
 
 from infer.lib.train import utils
@@ -294,8 +354,24 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
             logger=logger,
         )
         logger.info("[WATCHDOG] Training collapse detection ENABLED (window=50 steps)")
+        
+        # Initialize early stopping tracker if patience is set
+        early_stopper = None
+        if hasattr(hps, 'early_stop_patience') and hps.early_stop_patience:
+            early_stopper = EarlyStoppingTracker(
+                patience=hps.early_stop_patience,
+                min_delta=0.1,
+                logger=logger,
+            )
+            logger.info(f"[EARLY STOP] Enabled with patience={hps.early_stop_patience} epochs")
     else:
         watchdog = None
+        early_stopper = None
+    
+    # Get advanced training options
+    gradient_accumulation_steps = getattr(hps, 'gradient_accumulation_steps', 1)
+    max_steps = getattr(hps, 'max_steps', None)
+    save_every_steps = getattr(hps, 'save_every_steps', None)
 
     # Only use distributed training for multi-GPU
     use_ddp = n_gpus > 1
@@ -363,6 +439,16 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
             logger.warning("⚠️  Or increase epochs to at least %d", suggested_epochs)
         else:
             logger.info("✓ Step count looks healthy for convergence")
+        
+        # Log advanced training options
+        if gradient_accumulation_steps > 1:
+            effective_batch = batch_size * gradient_accumulation_steps
+            logger.info(f"  Gradient accumulation: {gradient_accumulation_steps} steps")
+            logger.info(f"  Effective batch size:  {effective_batch}")
+        if max_steps:
+            logger.info(f"  Max steps limit:       {max_steps}")
+        if save_every_steps:
+            logger.info(f"  Save every steps:      {save_every_steps}")
         
         logger.info("=" * 60)
         logger.info(f"Dataset size: {dataset_size} samples, using num_workers={num_workers}")
@@ -515,9 +601,17 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
     scaler = GradScaler(enabled=hps.train.fp16_run)
 
     cache = []
+    epoch_losses = []  # Track losses per epoch for early stopping
+    
     for epoch in range(epoch_str, hps.train.epochs + 1):
+        # Check max_steps limit before starting epoch
+        if max_steps and global_step >= max_steps:
+            if rank == 0:
+                logger.info(f"[MAX STEPS] Reached {max_steps} steps limit. Stopping training.")
+            break
+            
         if rank == 0:
-            train_and_evaluate(
+            epoch_loss = train_and_evaluate(
                 rank,
                 epoch,
                 hps,
@@ -530,7 +624,17 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
                 [writer, writer_eval],
                 cache,
                 watchdog,
+                gradient_accumulation_steps,
+                max_steps,
+                save_every_steps,
             )
+            
+            # Check early stopping
+            if early_stopper and epoch_loss is not None:
+                if early_stopper.update(epoch, epoch_loss):
+                    logger.info("[EARLY STOP] Training stopped due to no improvement.")
+                    # Save final checkpoint before stopping
+                    break
         else:
             train_and_evaluate(
                 rank,
@@ -545,14 +649,29 @@ def run(rank, n_gpus, hps, logger: logging.Logger):
                 None,
                 cache,
                 None,  # watchdog only on rank 0
+                gradient_accumulation_steps,
+                max_steps,
+                save_every_steps,
             )
         scheduler_g.step()
         scheduler_d.step()
 
 
 def train_and_evaluate(
-    rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers, cache, watchdog=None
+    rank, epoch, hps, nets, optims, schedulers, scaler, loaders, logger, writers, cache, watchdog=None,
+    gradient_accumulation_steps=1, max_steps=None, save_every_steps=None
 ):
+    """
+    Train for one epoch and return average loss_mel for early stopping.
+    
+    Args:
+        gradient_accumulation_steps: Accumulate gradients over N steps before optimizer step
+        max_steps: Stop training when reaching this many steps (global)
+        save_every_steps: Save checkpoint every N steps (in addition to save_every_epoch)
+    
+    Returns:
+        Average loss_mel for this epoch (for early stopping), or None if not rank 0
+    """
     net_g, net_d = nets
     optim_g, optim_d = optims
     train_loader, eval_loader = loaders
@@ -561,6 +680,9 @@ def train_and_evaluate(
 
     train_loader.batch_sampler.set_epoch(epoch)
     global global_step
+    
+    # Track losses for early stopping
+    epoch_mel_losses = []
 
     net_g.train()
     net_d.train()
@@ -731,11 +853,19 @@ def train_and_evaluate(
                 loss_disc, losses_disc_r, losses_disc_g = discriminator_loss(
                     y_d_hat_r, y_d_hat_g
                 )
-        optim_d.zero_grad()
+                # Scale loss for gradient accumulation
+                if gradient_accumulation_steps > 1:
+                    loss_disc = loss_disc / gradient_accumulation_steps
+                    
+        # Gradient accumulation for discriminator
         scaler.scale(loss_disc).backward()
-        scaler.unscale_(optim_d)
-        grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
-        scaler.step(optim_d)
+        
+        # Only step optimizer every N accumulation steps
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(data_iterator):
+            scaler.unscale_(optim_d)
+            grad_norm_d = commons.clip_grad_value_(net_d.parameters(), None)
+            scaler.step(optim_d)
+            optim_d.zero_grad()
 
         with autocast(enabled=hps.train.fp16_run):
             # Generator
@@ -746,19 +876,37 @@ def train_and_evaluate(
                 loss_fm = feature_loss(fmap_r, fmap_g)
                 loss_gen, losses_gen = generator_loss(y_d_hat_g)
                 loss_gen_all = loss_gen + loss_fm + loss_mel + loss_kl
-        optim_g.zero_grad()
+                # Scale loss for gradient accumulation
+                if gradient_accumulation_steps > 1:
+                    loss_gen_all = loss_gen_all / gradient_accumulation_steps
+                    
+        # Gradient accumulation for generator
         scaler.scale(loss_gen_all).backward()
-        scaler.unscale_(optim_g)
-        grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
-        scaler.step(optim_g)
-        scaler.update()
+        
+        # Only step optimizer every N accumulation steps
+        if (batch_idx + 1) % gradient_accumulation_steps == 0 or (batch_idx + 1) == len(data_iterator):
+            scaler.unscale_(optim_g)
+            grad_norm_g = commons.clip_grad_value_(net_g.parameters(), None)
+            scaler.step(optim_g)
+            optim_g.zero_grad()
+            scaler.update()
+        else:
+            grad_norm_g = 0.0  # Placeholder when not stepping
+            grad_norm_d = 0.0
 
         if rank == 0:
+            # Track loss for early stopping (use unscaled loss)
+            raw_loss_mel = float(loss_mel.item() if hasattr(loss_mel, 'item') else loss_mel)
+            if gradient_accumulation_steps > 1:
+                raw_loss_mel = raw_loss_mel * gradient_accumulation_steps  # Unscale for tracking
+            epoch_mel_losses.append(raw_loss_mel)
+            
             # WATCHDOG: Check for training collapse with RAW loss values
             if watchdog is not None:
                 # Get actual loss values (as float, not tensor)
-                raw_loss_mel = float(loss_mel.item() if hasattr(loss_mel, 'item') else loss_mel)
                 raw_loss_kl = float(loss_kl.item() if hasattr(loss_kl, 'item') else loss_kl)
+                if gradient_accumulation_steps > 1:
+                    raw_loss_kl = raw_loss_kl * gradient_accumulation_steps  # Unscale
                 
                 should_abort = watchdog.update(
                     loss_mel=raw_loss_mel,
@@ -852,6 +1000,36 @@ def train_and_evaluate(
                 )
         global_step += 1
         
+        # === CHECK MAX STEPS LIMIT ===
+        if max_steps and global_step >= max_steps:
+            if rank == 0:
+                logger.info(f"[MAX STEPS] Reached {max_steps} steps. Stopping epoch early.")
+            break
+        
+        # === SAVE EVERY N STEPS ===
+        if save_every_steps and rank == 0 and global_step % save_every_steps == 0:
+            logger.info(f"[SAVE] Step {global_step} checkpoint (save_every_steps={save_every_steps})")
+            utils.save_checkpoint(
+                net_g, optim_g, hps.train.learning_rate, epoch,
+                os.path.join(hps.model_dir, f"G_{global_step}.pth")
+            )
+            utils.save_checkpoint(
+                net_d, optim_d, hps.train.learning_rate, epoch,
+                os.path.join(hps.model_dir, f"D_{global_step}.pth")
+            )
+            # Also save extractable model
+            if hps.save_every_weights == "1":
+                if hasattr(net_g, "module"):
+                    ckpt = net_g.module.state_dict()
+                else:
+                    ckpt = net_g.state_dict()
+                savee(
+                    ckpt, hps.sample_rate, hps.if_f0,
+                    hps.name + "_e%s_s%s" % (epoch, global_step),
+                    epoch, hps.version, hps,
+                    output_dir=hps.model_dir,
+                )
+        
         # === STEP-BASED EARLY SMOKE TEST ===
         # Save an early checkpoint and run smoke test at specific step milestones
         # This catches collapsed training BEFORE spending hours on a bad job
@@ -937,6 +1115,7 @@ def train_and_evaluate(
                         epoch,
                         hps.version,
                         hps,
+                        output_dir=hps.model_dir,  # Save to training dir, not models dir
                     ),
                 )
             )
@@ -972,7 +1151,8 @@ def train_and_evaluate(
                 saved_path = savee(
                     ckpt, hps.sample_rate, hps.if_f0,
                     hps.name + "_e%s_s%s" % (epoch, global_step),
-                    epoch, hps.version, hps
+                    epoch, hps.version, hps,
+                    output_dir=hps.model_dir,  # Save to training dir, not models dir
                 )
                 
                 logger.info(f"Checkpoint saved on request: {saved_path}")
@@ -998,12 +1178,19 @@ def train_and_evaluate(
             "saving final ckpt:%s"
             % (
                 savee(
-                    ckpt, hps.sample_rate, hps.if_f0, hps.name, epoch, hps.version, hps
+                    ckpt, hps.sample_rate, hps.if_f0, hps.name, epoch, hps.version, hps,
+                    output_dir=hps.model_dir,  # Save to training dir, not models dir
                 )
             )
         )
         sleep(1)
         os._exit(2333333)
+    
+    # Return average loss for early stopping (only on rank 0)
+    if rank == 0 and epoch_mel_losses:
+        avg_epoch_loss = sum(epoch_mel_losses) / len(epoch_mel_losses)
+        return avg_epoch_loss
+    return None
 
 
 if __name__ == "__main__":

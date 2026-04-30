@@ -159,6 +159,7 @@ class TrainingProgress:
     logs: List[str] = field(default_factory=list)
     exp_name: Optional[str] = None
     result: Optional[dict] = None  # Final result with model_path, index_path
+    training_time_seconds: float = 0  # Total training time in seconds
     
     def to_dict(self) -> dict:
         return {
@@ -175,6 +176,7 @@ class TrainingProgress:
             "logs": self.logs[-50:],  # Last 50 log entries
             "exp_name": self.exp_name,
             "result": self.result,
+            "training_time_seconds": self.training_time_seconds,
         }
 
 
@@ -415,7 +417,7 @@ class RVCTrainingPipeline:
     def _resolve_pretrained_paths_with_checkpoint(
         self,
         config: TrainingConfig,
-        exp_dir: Path
+        training_dir: Path
     ) -> tuple[str, str]:
         """
         Resolve pretrained model paths, with special handling for checkpoint continuation.
@@ -424,8 +426,12 @@ class RVCTrainingPipeline:
         ensures that checkpoints exist if expected. This prevents the silent fallback
         to base pretrained models that can corrupt existing voice models.
         
+        Args:
+            config: Training configuration
+            training_dir: Directory where checkpoints are stored (/storage/data/training/{exp_name})
+        
         Logic:
-        1. Check if G_*.pth and D_*.pth checkpoints exist in exp_dir
+        1. Check if G_*.pth and D_*.pth checkpoints exist in training_dir
         2. If checkpoints exist: train.py will auto-resume from them (return base pretrain paths)
         3. If no checkpoints but extracted model exists: this is a "continue training" scenario
            - We should NOT silently start from scratch
@@ -440,9 +446,9 @@ class RVCTrainingPipeline:
         # Get base pretrained paths
         base_g, base_d = self._resolve_pretrained_paths(config)
         
-        # Check for existing checkpoints in exp_dir
-        g_checkpoints = list(exp_dir.glob("G_*.pth"))
-        d_checkpoints = list(exp_dir.glob("D_*.pth"))
+        # Check for existing checkpoints in training_dir
+        g_checkpoints = list(training_dir.glob("G_*.pth"))
+        d_checkpoints = list(training_dir.glob("D_*.pth"))
         
         if g_checkpoints and d_checkpoints:
             # Checkpoints exist - train.py will auto-resume from them
@@ -464,10 +470,11 @@ class RVCTrainingPipeline:
             # Return base pretrain paths - train.py will prioritize checkpoints
             return base_g, base_d
         
-        # No checkpoints found - check if this is an existing model (has extracted .pth)
+        # No checkpoints found - check if this is an existing model (has extracted .pth in models dir)
         exp_name = config.exp_name
-        extracted_model = exp_dir / f"{exp_name}.pth"
-        infer_model = exp_dir / f"{exp_name}_infer.pth"
+        models_dir = self.base_dir / exp_name
+        extracted_model = models_dir / f"{exp_name}.pth"
+        infer_model = models_dir / f"{exp_name}_infer.pth"
         
         has_existing_model = extracted_model.exists() or infer_model.exists()
         
@@ -497,13 +504,14 @@ class RVCTrainingPipeline:
             logger.warning("  FALLING BACK TO BASE PRETRAINED MODELS")
             logger.warning("  Training will start fresh from pretrained weights.")
             logger.warning("  To continue from existing training, ensure G_*.pth and D_*.pth")
-            logger.warning("  checkpoint files are preserved in the model directory.")
+            logger.warning("  checkpoint files are preserved in the training directory.")
+            logger.warning(f"  Training directory: {training_dir}")
             logger.warning("=" * 70)
             
             # Fall through to use base pretrained models
         
         # Fresh training - no existing model or checkpoints
-        logger.info(f"[FRESH TRAINING] No existing checkpoints or models found in {exp_dir}")
+        logger.info(f"[FRESH TRAINING] No existing checkpoints in {training_dir}")
         logger.info(f"  Using base pretrained models: G={base_g}, D={base_d}")
         
         return base_g, base_d
@@ -645,6 +653,56 @@ class RVCTrainingPipeline:
         
         return None
     
+    def _notify_completion(self, job_id: str, status: str, result: Optional[dict] = None, error: Optional[str] = None):
+        """
+        Notify the Laravel API when training completes, fails, or is cancelled.
+        
+        This ensures status is synchronized even if the frontend stops polling.
+        """
+        import os
+        import requests
+        
+        callback_url = os.environ.get("TRAINING_CALLBACK_URL")
+        if not callback_url:
+            # Default to Laravel API internal URL
+            callback_url = "http://api/api/internal/training/callback"
+        
+        internal_token = os.environ.get("INTERNAL_SERVICE_TOKEN", "")
+        
+        try:
+            with self._job_lock:
+                job = self._jobs.get(job_id)
+                if not job:
+                    return
+                
+                payload = {
+                    "job_id": job_id,
+                    "status": status,
+                    "exp_name": job.exp_name,
+                    "current_epoch": job.current_epoch,
+                    "total_epochs": job.total_epochs,
+                    "training_time_seconds": 0,
+                }
+                
+                if result:
+                    payload["result"] = result
+                    payload["training_time_seconds"] = result.get("training_time_seconds", 0)
+                
+                if error:
+                    payload["error"] = error
+            
+            headers = {}
+            if internal_token:
+                headers["X-Internal-Token"] = internal_token
+            
+            response = requests.post(callback_url, json=payload, headers=headers, timeout=10)
+            if response.ok:
+                logger.info(f"Training callback sent: {status} for job {job_id}")
+            else:
+                logger.warning(f"Training callback failed: {response.status_code} - {response.text}")
+        except Exception as e:
+            logger.warning(f"Failed to send training callback: {e}")
+    
     def _update_progress(
         self, 
         job_id: str, 
@@ -678,9 +736,19 @@ class RVCTrainingPipeline:
                 job.error = error
             if result is not None:
                 job.result = result
+                # Extract training_time_seconds from result if present
+                if "training_time_seconds" in result:
+                    job.training_time_seconds = result["training_time_seconds"]
             
             if status in [TrainingStatus.COMPLETED, TrainingStatus.FAILED, TrainingStatus.CANCELLED]:
                 job.completed_at = datetime.utcnow().isoformat() + "Z"
+                # Notify Laravel API of training completion
+                self._notify_completion(
+                    job_id=job_id,
+                    status=status.value,
+                    result=result,
+                    error=error
+                )
     
     def _check_cancelled(self, job_id: str) -> bool:
         """Check if job should be cancelled"""
@@ -722,8 +790,8 @@ class RVCTrainingPipeline:
         training_exp_dir = self.training_dir / config.exp_name       # /data/training/{exp_name}
         models_exp_dir = self.base_dir / config.exp_name             # /storage/models/{exp_name}
         
-        # For legacy compatibility, exp_dir points to preprocessing directory for now
-        # TODO: Full refactor to separate all paths
+        # exp_dir is the preprocessing directory (for audio processing artifacts)
+        # training_dir is where checkpoints, TensorBoard logs, etc. go
         exp_dir = preprocess_exp_dir
         
         try:
@@ -797,6 +865,24 @@ class RVCTrainingPipeline:
                 logger.info(f"[SKIP PREPROCESS] All {len(source_files)} files already preprocessed for {config.exp_name}")
                 need_full_reprocess = False
                 new_files = set()  # Nothing to process
+            
+            # If we're not preprocessing, detect the sample rate from existing preprocessed data
+            # This is crucial for checkpoint continuation - we must use the same sample rate
+            if not need_full_reprocess and not new_files and gt_wavs_dir.exists():
+                detected_sr = self._detect_preprocessed_sample_rate(gt_wavs_dir)
+                if detected_sr and detected_sr != config.sample_rate.value:
+                    logger.warning(f"[SAMPLE RATE MISMATCH] Preprocessed data at {detected_sr}Hz, config says {config.sample_rate.value}Hz")
+                    logger.warning(f"  Switching to detected sample rate {detected_sr}Hz to match preprocessed data")
+                    # Update config to match preprocessed data
+                    if detected_sr == 32000:
+                        config.sample_rate = SampleRate.SR_32K
+                    elif detected_sr == 40000:
+                        config.sample_rate = SampleRate.SR_40K
+                    elif detected_sr == 48000:
+                        config.sample_rate = SampleRate.SR_48K
+                    else:
+                        logger.error(f"Unexpected sample rate {detected_sr}Hz - forcing reprocessing")
+                        need_full_reprocess = True
             
             if self._check_cancelled(job_id):
                 self._update_progress(job_id, status=TrainingStatus.CANCELLED)
@@ -915,13 +1001,45 @@ class RVCTrainingPipeline:
                 return TrainingResult(success=False, job_id=job_id, error="Cancelled")
             
             # Handle checkpoint continuation vs fresh start
+            # Checkpoints are stored in training_exp_dir, NOT preprocess or models directories
             if not continue_from_checkpoint:
-                # Fresh training requested - clear any existing checkpoints
+                # Fresh training requested - clear any existing checkpoints from training dir
                 logger.info(f"[FRESH TRAINING] Clearing existing checkpoints for {config.exp_name}")
                 for ckpt_pattern in ["G_*.pth", "D_*.pth"]:
-                    for ckpt in exp_dir.glob(ckpt_pattern):
+                    for ckpt in training_exp_dir.glob(ckpt_pattern):
                         logger.info(f"  Removing checkpoint: {ckpt.name}")
                         ckpt.unlink()
+            else:
+                # Continue from checkpoint - check training_exp_dir first
+                g_checkpoints = list(training_exp_dir.glob("G_*.pth"))
+                d_checkpoints = list(training_exp_dir.glob("D_*.pth"))
+                
+                if not g_checkpoints or not d_checkpoints:
+                    # Fallback: check models directory for checkpoints (legacy location)
+                    logger.info(f"[CHECKPOINT SEARCH] No checkpoints in training dir, checking models dir...")
+                    g_in_models = list(models_exp_dir.glob("G_*.pth"))
+                    d_in_models = list(models_exp_dir.glob("D_*.pth"))
+                    
+                    if g_in_models and d_in_models:
+                        logger.info(f"[CHECKPOINT MIGRATION] Found {len(g_in_models)} G and {len(d_in_models)} D checkpoints in models dir")
+                        logger.info(f"  Moving checkpoints to training directory (correct location)...")
+                        # Move checkpoints to training directory (not copy - to clean up models dir)
+                        for ckpt in g_in_models + d_in_models:
+                            dest = training_exp_dir / ckpt.name
+                            if not dest.exists():
+                                logger.info(f"  Moving {ckpt.name} to training directory")
+                                shutil.move(str(ckpt), str(dest))
+                    else:
+                        # Also check preprocess dir (another legacy location)
+                        g_in_preprocess = list(exp_dir.glob("G_*.pth"))
+                        d_in_preprocess = list(exp_dir.glob("D_*.pth"))
+                        if g_in_preprocess and d_in_preprocess:
+                            logger.info(f"[CHECKPOINT MIGRATION] Found checkpoints in preprocess dir")
+                            for ckpt in g_in_preprocess + d_in_preprocess:
+                                dest = training_exp_dir / ckpt.name
+                                if not dest.exists():
+                                    logger.info(f"  Moving {ckpt.name} to training directory")
+                                    shutil.move(str(ckpt), str(dest))
             
             # Step 5: Train Model
             self._update_progress(
@@ -935,11 +1053,12 @@ class RVCTrainingPipeline:
             # Resolve pretrained paths - use checkpoint if available, otherwise base pretrained
             pretrain_g, pretrain_d = self._resolve_pretrained_paths_with_checkpoint(
                 config=config,
-                exp_dir=exp_dir
+                training_dir=training_exp_dir
             )
             
             await self._run_training(
                 exp_dir=str(exp_dir),
+                training_dir=str(training_exp_dir),
                 sample_rate=config.sample_rate.value,
                 epochs=config.epochs,
                 batch_size=config.batch_size,
@@ -1041,9 +1160,9 @@ class RVCTrainingPipeline:
                     logger.info(f"Selected model (priority 3 - latest extractable): {model_path}")
                     break
             
-            # Fallback: check for G_*.pth checkpoints in preprocess_exp_dir (legacy location)
+            # Fallback: check for G_*.pth checkpoints in training_exp_dir
             if not model_path:
-                g_checkpoints = list(exp_dir.glob("G_*.pth"))
+                g_checkpoints = list(training_exp_dir.glob("G_*.pth"))
                 if g_checkpoints:
                     def get_step(p):
                         match = re.search(r'G_(\d+)\.pth', p.name)
@@ -1213,6 +1332,31 @@ class RVCTrainingPipeline:
         total_chunks = sum(results)
         logger.info(f"Created {total_chunks} audio chunks")
     
+    def _detect_preprocessed_sample_rate(self, gt_wavs_dir: Path) -> Optional[int]:
+        """
+        Detect the sample rate of existing preprocessed audio files.
+        
+        This is important for checkpoint continuation - we must train with 
+        the same sample rate that was used for preprocessing.
+        
+        Returns:
+            Sample rate in Hz (e.g., 40000, 48000), or None if unable to detect
+        """
+        try:
+            # Find a sample file
+            wav_files = list(gt_wavs_dir.glob("*.wav"))
+            if not wav_files:
+                return None
+            
+            # Read the first file to get sample rate
+            sample_file = wav_files[0]
+            audio, sr = sf.read(sample_file)
+            logger.info(f"[SAMPLE RATE DETECTION] Detected {sr}Hz from {sample_file.name}")
+            return sr
+        except Exception as e:
+            logger.warning(f"Failed to detect sample rate from preprocessed data: {e}")
+            return None
+
     def _get_slice_boundaries(
         self,
         audio: np.ndarray,
@@ -1528,6 +1672,7 @@ class RVCTrainingPipeline:
     async def _run_training(
         self,
         exp_dir: str,
+        training_dir: str,
         sample_rate: int,
         epochs: int,
         batch_size: int,
@@ -1545,6 +1690,10 @@ class RVCTrainingPipeline:
         """
         Run the REAL RVC training loop.
         
+        Args:
+            exp_dir: Preprocessing directory with audio features (filelist, config.json)
+            training_dir: Directory where checkpoints and TensorBoard logs will be saved
+        
         STEP-BASED TRAINING:
         - target_steps: The target number of optimizer steps
         - steps_per_epoch: Pre-calculated steps per epoch (num_segments / batch_size)
@@ -1555,6 +1704,7 @@ class RVCTrainingPipeline:
         import asyncio
         
         exp_path = Path(exp_dir)
+        training_path = Path(training_dir)
         exp_name = exp_path.name
         
         # Generate filelist
@@ -1574,7 +1724,8 @@ class RVCTrainingPipeline:
         )
         
         # The train.py script expects experiment data in ./logs/{exp_name}/ relative to its cwd
-        # Create a symlink from ./logs/{exp_name} -> the actual experiment directory
+        # Create a symlink from ./logs/{exp_name} -> the training directory
+        # NOTE: Checkpoints and TensorBoard logs go to training_dir, NOT exp_dir (preprocess)
         voice_engine_root = Path(__file__).parent.parent.parent
         logs_dir = voice_engine_root / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
@@ -1589,8 +1740,22 @@ class RVCTrainingPipeline:
             pass
         
         if not logs_exp_link.exists():
-            logs_exp_link.symlink_to(exp_path.resolve())
-            logger.info(f"Created symlink: {logs_exp_link} -> {exp_path.resolve()}")
+            # Symlink to training directory where checkpoints will be saved
+            logs_exp_link.symlink_to(training_path.resolve())
+            logger.info(f"Created symlink: {logs_exp_link} -> {training_path.resolve()}")
+        
+        # Also need to copy/link filelist.txt and config.json to training dir
+        # (train.py reads these from the symlinked directory)
+        filelist_src = exp_path / "filelist.txt"
+        config_src = exp_path / "config.json"
+        if filelist_src.exists():
+            filelist_dest = training_path / "filelist.txt"
+            if not filelist_dest.exists():
+                shutil.copy2(filelist_src, filelist_dest)
+        if config_src.exists():
+            config_dest = training_path / "config.json"
+            if not config_dest.exists():
+                shutil.copy2(config_src, config_dest)
         
         # Calculate step metrics for logging
         estimated_total_steps = steps_per_epoch * epochs if steps_per_epoch > 0 else 0
@@ -1806,15 +1971,13 @@ class RVCTrainingPipeline:
         sr_str = f"{sample_rate // 1000}k"  # 48000 -> "48k"
         config_template = voice_engine_root / "rvc" / "configs" / version / f"{sr_str}.json"
         
-        if not config_template.exists():
-            # Fallback to 48k config
-            config_template = voice_engine_root / "rvc" / "configs" / version / "48k.json"
-        
         if config_template.exists():
             with open(config_template, 'r') as f:
                 config = json.load(f)
+            logger.info(f"Loaded config template from {config_template}")
         else:
-            # Use default config
+            # No template file - use default config with correct architecture
+            logger.warning(f"No config template found at {config_template}, using default config")
             config = self._get_default_training_config(sample_rate, version)
         
         # Override batch size and log_interval for better progress tracking
@@ -1883,9 +2046,19 @@ class RVCTrainingPipeline:
                 "resblock": "1",
                 "resblock_kernel_sizes": [3, 7, 11],
                 "resblock_dilation_sizes": [[1, 3, 5], [1, 3, 5], [1, 3, 5]],
-                "upsample_rates": [12, 10, 2, 2] if sample_rate == 48000 else [10, 10, 2, 2],
+                # Upsample rates/kernel sizes must match pretrained model architecture:
+                # 32k: [10,8,2,2]/[20,16,4,4], 40k: [8,8,2,2]/[16,16,4,4], 48k: [12,10,2,2]/[24,20,4,4]
+                "upsample_rates": (
+                    [12, 10, 2, 2] if sample_rate == 48000 else
+                    [10, 8, 2, 2] if sample_rate == 32000 else
+                    [8, 8, 2, 2]  # 40000 default
+                ),
                 "upsample_initial_channel": 512,
-                "upsample_kernel_sizes": [24, 20, 4, 4] if sample_rate == 48000 else [20, 20, 4, 4],
+                "upsample_kernel_sizes": (
+                    [24, 20, 4, 4] if sample_rate == 48000 else
+                    [20, 16, 4, 4] if sample_rate == 32000 else
+                    [16, 16, 4, 4]  # 40000 default
+                ),
                 "use_spectral_norm": False,
                 "gin_channels": 256,
                 "spk_embed_dim": 109

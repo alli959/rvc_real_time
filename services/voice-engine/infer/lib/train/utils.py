@@ -377,6 +377,35 @@ def get_hparams(init=True):
         required=True,
         help="if caching the dataset in GPU memory, 1 or 0",
     )
+    # Advanced training options
+    parser.add_argument(
+        "-ga",
+        "--gradient_accumulation_steps",
+        type=int,
+        default=1,
+        help="Accumulate gradients over N steps for larger effective batch size",
+    )
+    parser.add_argument(
+        "-ms",
+        "--max_steps",
+        type=int,
+        default=0,
+        help="Maximum training steps (0 = use epochs instead)",
+    )
+    parser.add_argument(
+        "-esp",
+        "--early_stop_patience",
+        type=int,
+        default=0,
+        help="Stop if loss doesn't improve for N epochs (0 = disabled)",
+    )
+    parser.add_argument(
+        "-ses",
+        "--save_every_steps",
+        type=int,
+        default=0,
+        help="Save checkpoint every N steps (0 = use save_every_epoch instead)",
+    )
 
     args = parser.parse_args()
     name = args.experiment_dir
@@ -402,6 +431,11 @@ def get_hparams(init=True):
     hparams.save_every_weights = args.save_every_weights
     hparams.if_cache_data_in_gpu = args.if_cache_data_in_gpu
     hparams.data.training_files = "%s/filelist.txt" % experiment_dir
+    # Advanced training options
+    hparams.gradient_accumulation_steps = args.gradient_accumulation_steps
+    hparams.max_steps = args.max_steps if args.max_steps > 0 else None
+    hparams.early_stop_patience = args.early_stop_patience if args.early_stop_patience > 0 else None
+    hparams.save_every_steps = args.save_every_steps if args.save_every_steps > 0 else None
     return hparams
 
 
