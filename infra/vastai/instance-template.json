@@ -1,0 +1,12 @@
+{
+  "gpu_name": "RTX 3090",
+  "num_gpus": 1,
+  "min_ram": 32,
+  "min_disk": 100,
+  "cuda_version": "12.2",
+  "driver_version": "535",
+  "docker": true,
+  "reliability": 0.95,
+  "sort_by": "dph_total",
+  "type": "bid"
+}
