@@ -50,6 +50,7 @@ class WebSocketServer:
         
         self.clients: Set[websockets.WebSocketServerProtocol] = set()
         self.server = None
+        self._clients_lock = asyncio.Lock()
         
         # Audio buffer for accumulating chunks (per-client)
         self.client_buffers: Dict[int, list] = {}
@@ -68,13 +69,12 @@ class WebSocketServer:
             websocket: WebSocket connection
             path: Connection path (optional, not provided in websockets >= 10.0)
         """
-        self.clients.add(websocket)
         client_id = id(websocket)
         import datetime
+        async with self._clients_lock:
+            self.clients.add(websocket)
+            self.client_buffers[client_id] = []
         logger.info(f"[{datetime.datetime.utcnow().isoformat()}] Client {client_id} connected from {websocket.remote_address}")
-        
-        # Initialize buffer for this client
-        self.client_buffers[client_id] = []
         
         try:
             async for message in websocket:
@@ -85,14 +85,12 @@ class WebSocketServer:
         except Exception as e:
             logger.error(f"[{datetime.datetime.utcnow().isoformat()}] Error handling client {client_id}: {e}")
         finally:
-            self.clients.remove(websocket)
-            # Clean up client state
-            if client_id in self.client_buffers:
-                del self.client_buffers[client_id]
-            if client_id in self.client_models:
-                del self.client_models[client_id]
-            if client_id in self.client_params:
-                del self.client_params[client_id]
+            async with self._clients_lock:
+                self.clients.discard(websocket)
+                # Clean up client state
+                self.client_buffers.pop(client_id, None)
+                self.client_models.pop(client_id, None)
+                self.client_params.pop(client_id, None)
     
     async def process_message(self, websocket, message, client_id):
         """

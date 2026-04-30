@@ -16,6 +16,7 @@ import base64
 import io
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -63,6 +64,12 @@ from app.model_storage import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _extract_epoch(filename: str) -> int:
+    match = re.search(r'[GD]_(\d+)\.pth', filename)
+    return int(match.group(1)) if match else 0
+
 
 # Create router
 router = APIRouter(prefix="/api/v1/trainer", tags=["trainer"])
@@ -123,12 +130,12 @@ def detect_existing_model(model_dir: Path) -> tuple[Optional[str], int]:
                 with open(metadata_path) as f:
                     metadata = json.load(f)
                 epochs = metadata.get("training_config", {}).get("epochs", 0)
-            except:
+            except Exception:
                 pass
         return str(final_models[0]), epochs
     
     # Check for checkpoints (training in progress or resumable)
-    g_checkpoints = sorted(model_dir.glob("G_*.pth"), key=lambda x: int(re.search(r'G_(\d+)\.pth', x.name).group(1)) if re.search(r'G_(\d+)\.pth', x.name) else 0)
+    g_checkpoints = sorted(model_dir.glob("G_*.pth"), key=lambda x: _extract_epoch(x.name))
     if g_checkpoints:
         # Has checkpoints - estimate epochs from step number
         # Step = epoch * batches_per_epoch, but we don't know batches

@@ -348,13 +348,13 @@ class ConvertRequest(BaseModel):
     sample_rate: int = Field(default=16000, description="Input sample rate")
     model_path: str = Field(..., description="Path to .pth model file")
     index_path: Optional[str] = Field(default=None, description="Path to .index file")
-    f0_up_key: int = Field(default=0, description="Pitch shift (-12 to 12)")
+    f0_up_key: int = Field(default=0, ge=-24, le=24, description="Pitch shift (-24 to 24)")
     f0_method: str = Field(default="rmvpe", description="F0 extraction method")
     # Adjusted defaults for more natural sound
-    index_rate: float = Field(default=0.5, description="Index blend rate (0.0-1.0, lower=more natural, higher=more like target)")
-    filter_radius: int = Field(default=3, description="Filter radius (0-7)")
+    index_rate: float = Field(default=0.5, ge=0.0, le=1.0, description="Index blend rate (0.0-1.0, lower=more natural, higher=more like target)")
+    filter_radius: int = Field(default=3, ge=0, le=7, description="Filter radius (0-7)")
     rms_mix_rate: float = Field(default=0.2, description="RMS mix rate (0.0-1.0, lower=keep original dynamics)")
-    protect: float = Field(default=0.4, description="Protect consonants (0.0-0.5, higher=more natural speech)")
+    protect: float = Field(default=0.4, ge=0.0, le=1.0, description="Protect consonants (0.0-0.5, higher=more natural speech)")
     # Quality preset option
     quality_preset: Optional[str] = Field(default=None, description="Quality preset: 'natural', 'balanced', 'accurate', or None for custom")
     # Post-conversion audio effects
