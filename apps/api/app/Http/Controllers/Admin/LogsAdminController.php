@@ -59,10 +59,8 @@ class LogsAdminController extends Controller
         $containerName = $containerMap[$service] ?? $service;
         $logLines = [];
         
-        // For API/Worker services, try to read local files directly first
-        if (in_array($service, ['api', 'api-worker'])) {
-            $logLines = $this->getLocalServiceLogs($service, $source, $lines);
-        }
+        // Try to read local files directly first (works in native and Docker mode)
+        $logLines = $this->getLocalServiceLogs($service, $source, $lines);
         
         // If we got local logs, return them
         if (!empty($logLines) && !str_starts_with($logLines[0] ?? '', 'No ') && !str_starts_with($logLines[0] ?? '', 'Log source')) {
@@ -100,20 +98,28 @@ class LogsAdminController extends Controller
      */
     private function getLocalServiceLogs(string $service, string $source, int $lines): array
     {
-        // Map source IDs to local file paths (accessible within this container)
+        // Map source IDs to local file paths
         $localFiles = [
             // API service logs
             'api_laravel' => storage_path('logs/laravel.log'),
-            'api_stdout' => null, // stdout not available locally - will fall through to Docker
+            'api_stdout' => '/var/log/supervisor/php-fpm.log',
             'api_dpkg' => '/var/log/dpkg.log',
             'api_alternatives' => '/var/log/alternatives.log',
             'api_bootstrap' => '/var/log/bootstrap.log',
             // Worker service logs (shares the same laravel.log)
             'worker_laravel' => storage_path('logs/laravel.log'),
-            'worker_stdout' => null,
+            'worker_stdout' => '/var/log/supervisor/laravel-worker.log',
             'worker_dpkg' => '/var/log/dpkg.log',
             'worker_alternatives' => '/var/log/alternatives.log',
             'worker_bootstrap' => '/var/log/bootstrap.log',
+            // Native deployment: supervisor log files for all services
+            'voice_stdout' => '/var/log/supervisor/voice-engine.log',
+            'voice-engine_stdout' => '/var/log/supervisor/voice-engine.log',
+            'nginx_stdout' => '/var/log/supervisor/nginx.log',
+            'db_stdout' => '/var/log/supervisor/mariadb.log',
+            'redis_stdout' => '/var/log/supervisor/redis.log',
+            'minio_stdout' => '/var/log/supervisor/minio.log',
+            'web_stdout' => '/var/log/supervisor/nextjs.log',
         ];
         
         $filePath = $localFiles[$source] ?? null;

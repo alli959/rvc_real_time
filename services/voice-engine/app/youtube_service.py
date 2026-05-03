@@ -84,6 +84,8 @@ async def search_youtube(
     
     ydl_opts = {
         'quiet': True,
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         'no_warnings': True,
         'extract_flat': True,
         'default_search': 'ytsearch',
@@ -189,6 +191,8 @@ async def download_youtube_audio(
     logger.info(f"Downloading audio for {video_id}")
     
     ydl_opts = {
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         # Prefer m3u8 streaming formats which bypass 403 blocks on https formats
         # 91/92/93/94/95/96 are m3u8 formats, then fallback to bestaudio
         'format': '96/95/94/93/92/91/bestaudio/best',
@@ -302,6 +306,8 @@ async def get_video_info(video_id: str) -> Dict:
     
     ydl_opts = {
         'quiet': True,
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         'no_warnings': True,
     }
     

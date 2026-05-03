@@ -160,11 +160,11 @@ class VoiceModelController extends Controller
      */
     public function myModels(Request $request)
     {
-        if (!$request->user()) {
+        if (!$this->resolveUser($request)) {
             return response()->json(['error' => 'Unauthorized'], 401);
         }
 
-        $user = $request->user();
+        $user = $this->resolveUser($request);
         $isAdmin = $user->hasRole('admin');
 
         if ($isAdmin) {

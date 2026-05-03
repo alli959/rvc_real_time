@@ -82,7 +82,7 @@ class VoiceEngineProxyController extends Controller
         if ($source) {
             return $this->proxyGet("/api/v1/admin/logs/tail/{$service}/{$source}?lines={$lines}");
         }
-        return $this->proxyGet("/api/v1/admin/logs/{$service}?lines={$lines}");
+        return $this->proxyGet("/api/v1/admin/logs/services/{$service}?lines={$lines}");
     }
 
     /**

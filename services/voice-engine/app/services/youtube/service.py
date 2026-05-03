@@ -51,6 +51,8 @@ async def search_youtube(
     
     ydl_opts = {
         'quiet': True,
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         'no_warnings': True,
         'extract_flat': True,
         'default_search': 'ytsearch',
@@ -161,6 +163,8 @@ async def download_youtube_audio(
     logger.info(f"Downloading audio for {video_id}")
     
     ydl_opts = {
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         'format': 'bestaudio/best',
         'postprocessors': [{
             'key': 'FFmpegExtractAudio',
@@ -250,6 +254,8 @@ async def get_video_info(video_id: str) -> Dict:
     
     ydl_opts = {
         'quiet': True,
+        'js_runtimes': {'node': {}},
+        'remote_components': ['ejs:github'],
         'no_warnings': True,
     }
     
