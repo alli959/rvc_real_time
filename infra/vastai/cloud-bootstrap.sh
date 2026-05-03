@@ -39,12 +39,36 @@ fi
 # Start Docker daemon (Vast.ai containers don't use systemd)
 if ! pgrep -x dockerd > /dev/null; then
   echo "Starting Docker daemon..."
+  # Configure Docker without iptables (not available in Vast.ai containers)
+  mkdir -p /etc/docker
+  cat > /etc/docker/daemon.json << 'DAEMON_EOF'
+{
+  "iptables": false,
+  "ip6tables": false,
+  "bridge": "none",
+  "runtimes": {
+    "nvidia": {
+      "path": "nvidia-container-runtime",
+      "runtimeArgs": []
+    }
+  },
+  "default-runtime": "nvidia"
+}
+DAEMON_EOF
   dockerd &>/var/log/dockerd.log &
   sleep 5
   if ! docker info &>/dev/null; then
-    echo "ERROR: Docker daemon failed to start. Check /var/log/dockerd.log"
-    exit 1
+    echo "Retrying Docker daemon start..."
+    sleep 10
+    if ! docker info &>/dev/null; then
+      echo "ERROR: Docker daemon failed to start. Check /var/log/dockerd.log"
+      tail -20 /var/log/dockerd.log
+      exit 1
+    fi
   fi
+  echo "  Docker daemon started successfully"
+  # Create a user-defined bridge network for compose (works without iptables)
+  docker network create morphvox-net 2>/dev/null || true
 fi
 
 # 2. Create deploy user
