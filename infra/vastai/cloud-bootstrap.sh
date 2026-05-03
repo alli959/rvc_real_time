@@ -11,7 +11,18 @@ echo "GPU: $(nvidia-smi --query-gpu=name --format=csv,noheader 2>/dev/null || ec
 echo ""
 echo "--- Installing dependencies ---"
 apt-get update -qq
-apt-get install -y -qq docker.io docker-compose-plugin curl jq rclone openssl
+apt-get install -y -qq ca-certificates curl jq rclone openssl gnupg
+
+# Add Docker's official repository
+if [ ! -f /etc/apt/sources.list.d/docker.list ]; then
+  install -m 0755 -d /etc/apt/keyrings
+  curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  chmod a+r /etc/apt/keyrings/docker.asc
+  echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu \
+    $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  apt-get update -qq
+fi
+apt-get install -y -qq docker-ce docker-ce-cli containerd.io docker-compose-plugin
 
 # Ensure NVIDIA Container Toolkit is available
 if ! dpkg -l | grep -q nvidia-container-toolkit; then
