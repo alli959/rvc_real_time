@@ -679,7 +679,7 @@ export const roleRequestsApi = {
 export interface VoiceModelConfig {
   model_id: number;
   f0_up_key?: number; // Pitch shift for this voice layer
-  extraction_mode?: 'main' | 'all'; // 'main' = HP5 (main vocal only), 'all' = HP3 (all vocals including harmonies)
+  extraction_mode?: 'main' | 'all'; // Legacy - backend now handles extraction automatically
 }
 
 export interface AudioProcessRequest {

@@ -84,14 +84,13 @@ export default function SongRemixPage() {
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
   const [f0UpKey, setF0UpKey] = useState(0);
   const [indexRate, setIndexRate] = useState(0.75);
-  const [voice1ExtractionMode, setVoice1ExtractionMode] = useState<'main' | 'all'>('main'); // Lead voice extraction mode
   
   // Vocal extraction mode (for split mode) - default to Lead Only
   const [removeAllVocals, setRemoveAllVocals] = useState(false);
   
   // Multi-voice swap settings
   const [voiceCount, setVoiceCount] = useState(1); // Number of voice layers (1-4)
-  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null; extractionMode: 'main' | 'all' }[]>([]);
+  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null }[]>([]);
   const [availableModels, setAvailableModels] = useState<VoiceModel[]>([]);
   
   // Voice detection state
@@ -345,13 +344,12 @@ export default function SongRemixPage() {
       let voiceConfigs: VoiceModelConfig[] | undefined = undefined;
       if (processingMode === 'swap' && voiceCount > 1 && selectedModelId) {
         voiceConfigs = [
-          { model_id: selectedModelId, f0_up_key: f0UpKey, extraction_mode: voice1ExtractionMode },
+          { model_id: selectedModelId, f0_up_key: f0UpKey },
           ...additionalVoices.slice(0, voiceCount - 1)
             .filter(v => v.modelId !== null)
             .map(v => ({
               model_id: v.modelId!,
               f0_up_key: f0UpKey,
-              extraction_mode: v.extractionMode,
             })),
         ];
       }
@@ -813,7 +811,7 @@ export default function SongRemixPage() {
                       // Add a new voice with a default model - default to 'all' for backing vocals
                       const otherModels = availableModels.filter(m => m.id !== selectedModelId);
                       const defaultModel = otherModels[additionalVoices.length % Math.max(1, otherModels.length)] || availableModels[0];
-                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null, extractionMode: 'all' }]);
+                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null }]);
                     }
                   }}
                   disabled={voiceCount >= 4}
@@ -842,20 +840,7 @@ export default function SongRemixPage() {
                       {availableModels.find(m => m.id === selectedModelId)?.name || 'Select above'}
                     </span>
                   </div>
-                  <div className="flex flex-wrap items-center gap-2 sm:ml-20">
-                    <span className="text-xs text-gray-500">Extract:</span>
-                    <select
-                      value={voice1ExtractionMode}
-                      onChange={(e) => setVoice1ExtractionMode(e.target.value as 'main' | 'all')}
-                      className="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white"
-                    >
-                      <option value="main">Lead Only (HP5)</option>
-                      <option value="all">All Vocals (HP3)</option>
-                    </select>
-                    <span className="text-xs text-gray-500">
-                      {voice1ExtractionMode === 'main' ? 'Main/dominant voice' : 'Includes harmonies'}
-                    </span>
-                  </div>
+                  <span className="text-xs text-gray-500 sm:ml-20">Main/lead vocal</span>
                 </div>
                 
                 {/* Additional voices */}
@@ -878,30 +863,13 @@ export default function SongRemixPage() {
                         ))}
                       </select>
                     </div>
-                    <div className="flex flex-wrap items-center gap-2 sm:ml-20">
-                      <span className="text-xs text-gray-500">Extract:</span>
-                      <select
-                        value={voice.extractionMode}
-                        onChange={(e) => {
-                          const newVoices = [...additionalVoices];
-                          newVoices[index] = { ...newVoices[index], extractionMode: e.target.value as 'main' | 'all' };
-                          setAdditionalVoices(newVoices);
-                        }}
-                        className="text-xs bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white"
-                      >
-                        <option value="main">Lead Only (HP5)</option>
-                        <option value="all">All Vocals (HP3)</option>
-                      </select>
-                      <span className="text-xs text-gray-500 ml-2">
-                        {voice.extractionMode === 'main' ? 'Next dominant voice' : 'All remaining vocals'}
-                      </span>
-                    </div>
+                    <span className="text-xs text-gray-500 sm:ml-20">Backing voice {index + 1}</span>
                   </div>
                 ))}
                 
-                <p className="text-xs text-amber-400/70 flex items-center gap-2">
+                <p className="text-xs text-gray-400/70 flex items-center gap-2">
                   <Info className="h-4 w-4" />
-                  Tip: Use &quot;All Vocals&quot; for backing vocals/harmonies that may be quieter
+                  Each voice is extracted iteratively (HP5). Clean instrumental generated separately (HP3).
                 </p>
               </div>
             )}

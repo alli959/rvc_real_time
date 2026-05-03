@@ -2857,17 +2857,19 @@ async def process_audio(request: AudioProcessRequest):
                 else:
                     # Multi-voice cascading extraction:
                     # ============================================================
-                    # MAX-4-VOICE EXTRACTION PIPELINE (HP3 + iterative HP5)
+                    # VOICE LAYERS PIPELINE (iterative HP5 + final HP3 for clean instrumental)
                     # ============================================================
-                    # STEP 1: HP3(original) → instrumental_clean (KEEP) + all_vocals_tmp (DISCARD)
-                    # STEP 2: HP5(original) → inst_minus_1 + vocals_1 → convert with Model_1
-                    # STEP 3: HP5(inst_minus_1) → inst_minus_2 + vocals_2 → convert with Model_2
-                    # STEP 4: HP5(inst_minus_2) → inst_minus_3 + vocals_3 → convert with Model_3 [if 3+ voices]
-                    # STEP 5: HP5(inst_minus_3) → inst_minus_4 + vocals_4 → convert with Model_4 [if 4 voices]
-                    # FINAL: Mix = instrumental_clean + all converted vocals
+                    # All voice extraction steps use HP5 (Remove Main Voice) iteratively:
+                    #   STEP 1: HP5(original) → vocals_1 (main voice) + inst_minus_1 (backing + instrument)
+                    #   STEP 2: HP5(inst_minus_1) → vocals_2 (first backing) + inst_minus_2
+                    #   STEP 3: HP5(inst_minus_2) → vocals_3 (second backing) + inst_minus_3 [if 3+ voices]
+                    #   STEP 4: HP5(inst_minus_3) → vocals_4 (third backing) + inst_minus_4 [if 4 voices]
+                    # Then HP3 on original for a clean instrumental (all voices removed):
+                    #   STEP FINAL: HP3(original) → all_vocals_discard + instrumental_clean
+                    # Mix = instrumental_clean + all converted vocals (with global pitch)
                     # ============================================================
                     
-                    logger.info(f"Max-4-voice extraction pipeline: {voice_count} voices requested")
+                    logger.info(f"Voice Layers pipeline: {voice_count} voices requested")
                     logger.info(f"Target output: sr={uvr_output_sr}, length={target_length_44k} samples, duration={original_duration:.2f}s")
                     
                     # Helper function to clear memory
@@ -2880,146 +2882,112 @@ async def process_audio(request: AudioProcessRequest):
                             torch_mem.cuda.empty_cache()
                             torch_mem.cuda.synchronize()
                     
-                    # Helper to get separator model based on extraction mode
-                    def get_separator_model(voice_num, voice_config):
-                        """Get the UVR model name based on extraction_mode"""
-                        mode = voice_config.get("extraction_mode", "main")
-                        if mode == "all":
-                            model = "HP3_all_vocals"
-                            logger.info(f"Voice {voice_num}: Using HP3 (all vocals including harmonies)")
-                        else:
-                            model = "HP5_only_main_vocal"
-                            logger.info(f"Voice {voice_num}: Using HP5 (main vocal only)")
-                        return model
+                    # Keep a copy of original audio for the HP3 step later
+                    audio_for_hp3 = audio.copy()
                     
                     # ============================================================
-                    # STEP 2: Extract vocals_1 from original → convert with Model_1
-                    # Also capture the INSTRUMENTAL from HP5 (preserves full audio incl. intros!)
+                    # STEP 1: HP5(original) → vocals_1 (main voice) + inst_minus_1
                     # ============================================================
-                    sep_model_1 = get_separator_model(1, voice_configs[0])
-                    logger.info(f"STEP 2: {sep_model_1}(original) → inst_minus_1 + vocals_1")
+                    logger.info(f"STEP 1: HP5(original) → vocals_1 + inst_minus_1")
                     vocals_1, inst_minus_1 = separate_vocals(
-                        audio=audio,  # IMPORTANT: Use ORIGINAL audio
+                        audio=audio,
                         sample_rate=sr,
-                        model_name=sep_model_1,
+                        model_name="HP5_only_main_vocal",
                         agg=10
                     )
-                    # Free original audio - we have what we need
-                    del audio
+                    del audio  # Free original (we have audio_for_hp3)
                     clear_memory()
                     
                     vocals_1 = ensure_length(vocals_1, target_length_44k)
                     inst_minus_1 = ensure_length(inst_minus_1, target_length_44k)
                     v1_rms = np.sqrt(np.mean(vocals_1**2))
-                    
-                    # SAVE inst_minus_1 as our clean instrumental for final mix
-                    # HP5's instrumental output preserves ALL audio including intros!
-                    instrumental_clean = inst_minus_1.copy()
-                    inst_rms = np.sqrt(np.mean(instrumental_clean**2))
-                    logger.info(f"instrumental_clean FROM HP5: length={len(instrumental_clean)}, RMS={inst_rms:.4f} (KEEP FOR FINAL MIX)")
-                    
-                    # Log intro specifically to verify it's not silent
-                    intro_samples = int(5 * uvr_output_sr)  # First 5 seconds
-                    if len(instrumental_clean) > intro_samples:
-                        intro_rms = np.sqrt(np.mean(instrumental_clean[:intro_samples]**2))
-                        intro_max = np.max(np.abs(instrumental_clean[:intro_samples]))
-                        logger.info(f"INSTRUMENTAL INTRO CHECK (first 5s): RMS={intro_rms:.4f}, max={intro_max:.4f}")
-                    
-                    logger.info(f"vocals_1 extracted: RMS={v1_rms:.4f} (KEEP)")
-                    logger.info(f"inst_minus_1: length={len(inst_minus_1)} (input for next step)")
+                    logger.info(f"vocals_1 extracted: RMS={v1_rms:.4f}")
                     
                     # Convert vocals_1 with Model_1
                     converted_vocals_1 = convert_vocal(vocals_1, voice_configs[0], 1)
                     converted_vocals_list.append(converted_vocals_1)
-                    del vocals_1  # No longer needed
+                    del vocals_1
                     clear_memory()
                     
                     # ============================================================
-                    # STEP 3: Extract vocals_2 from inst_minus_1 → convert with Model_2
+                    # STEPS 2-4: Iteratively extract backing voices from inst_minus_N
                     # ============================================================
-                    if voice_count >= 2:
-                        sep_model_2 = get_separator_model(2, voice_configs[1])
-                        logger.info(f"STEP 3: {sep_model_2}(inst_minus_1) → inst_minus_2 + vocals_2")
-                        vocals_2, inst_minus_2 = separate_vocals(
-                            audio=inst_minus_1,  # Use inst_minus_1 as input
-                            sample_rate=uvr_output_sr,  # Already at 44.1kHz from UVR
-                            model_name=sep_model_2,
+                    current_input = inst_minus_1
+                    for voice_idx in range(1, voice_count - 1):
+                        step_num = voice_idx + 1
+                        voice_num = voice_idx + 1
+                        logger.info(f"STEP {step_num}: HP5(inst_minus_{voice_idx}) → vocals_{voice_num} + inst_minus_{voice_num}")
+                        
+                        vocals_n, inst_minus_n = separate_vocals(
+                            audio=current_input,
+                            sample_rate=uvr_output_sr,
+                            model_name="HP5_only_main_vocal",
                             agg=10
                         )
-                        del inst_minus_1  # DISCARD - no longer needed
+                        del current_input
                         clear_memory()
                         
-                        vocals_2 = ensure_length(vocals_2, target_length_44k)
-                        inst_minus_2 = ensure_length(inst_minus_2, target_length_44k)
-                        v2_rms = np.sqrt(np.mean(vocals_2**2))
-                        logger.info(f"vocals_2 extracted: RMS={v2_rms:.4f} (KEEP)")
+                        vocals_n = ensure_length(vocals_n, target_length_44k)
+                        inst_minus_n = ensure_length(inst_minus_n, target_length_44k)
+                        vn_rms = np.sqrt(np.mean(vocals_n**2))
+                        logger.info(f"vocals_{voice_num} extracted: RMS={vn_rms:.4f}")
                         
-                        # Convert vocals_2 with Model_2
-                        converted_vocals_2 = convert_vocal(vocals_2, voice_configs[1], 2)
-                        converted_vocals_list.append(converted_vocals_2)
-                        del vocals_2  # No longer needed
+                        # Convert this vocal with its model
+                        converted_n = convert_vocal(vocals_n, voice_configs[voice_idx], voice_num)
+                        converted_vocals_list.append(converted_n)
+                        del vocals_n
                         clear_memory()
                         
-                        # ============================================================
-                        # STEP 4: Extract vocals_3 from inst_minus_2 → convert with Model_3
-                        # ============================================================
-                        if voice_count >= 3:
-                            sep_model_3 = get_separator_model(3, voice_configs[2])
-                            logger.info(f"STEP 4: {sep_model_3}(inst_minus_2) → inst_minus_3 + vocals_3")
-                            vocals_3, inst_minus_3 = separate_vocals(
-                                audio=inst_minus_2,
-                                sample_rate=uvr_output_sr,
-                                model_name=sep_model_3,
-                                agg=10
-                            )
-                            del inst_minus_2  # DISCARD
-                            clear_memory()
-                            
-                            vocals_3 = ensure_length(vocals_3, target_length_44k)
-                            inst_minus_3 = ensure_length(inst_minus_3, target_length_44k)
-                            v3_rms = np.sqrt(np.mean(vocals_3**2))
-                            logger.info(f"vocals_3 extracted: RMS={v3_rms:.4f} (KEEP)")
-                            
-                            # Convert vocals_3 with Model_3
-                            converted_vocals_3 = convert_vocal(vocals_3, voice_configs[2], 3)
-                            converted_vocals_list.append(converted_vocals_3)
-                            del vocals_3
-                            clear_memory()
-                            
-                            # ============================================================
-                            # STEP 5: Extract vocals_4 from inst_minus_3 → convert with Model_4
-                            # ============================================================
-                            if voice_count >= 4:
-                                sep_model_4 = get_separator_model(4, voice_configs[3])
-                                logger.info(f"STEP 5: {sep_model_4}(inst_minus_3) → inst_minus_4 + vocals_4")
-                                vocals_4, inst_minus_4 = separate_vocals(
-                                    audio=inst_minus_3,
-                                    sample_rate=uvr_output_sr,
-                                    model_name=sep_model_4,
-                                    agg=10
-                                )
-                                del inst_minus_3
-                                del inst_minus_4  # DISCARD - end of chain
-                                clear_memory()
-                                
-                                vocals_4 = ensure_length(vocals_4, target_length_44k)
-                                v4_rms = np.sqrt(np.mean(vocals_4**2))
-                                logger.info(f"vocals_4 extracted: RMS={v4_rms:.4f} (KEEP)")
-                                
-                                # Convert vocals_4 with Model_4
-                                converted_vocals_4 = convert_vocal(vocals_4, voice_configs[3], 4)
-                                converted_vocals_list.append(converted_vocals_4)
-                                del vocals_4
-                                clear_memory()
-                            else:
-                                del inst_minus_3  # DISCARD if not used for step 5
-                                clear_memory()
-                        else:
-                            del inst_minus_2  # DISCARD - end of chain for 2 voices
-                            clear_memory()
-                    else:
-                        del inst_minus_1  # DISCARD - only 1 voice
+                        current_input = inst_minus_n
+                    
+                    # Extract the last backing voice
+                    if voice_count >= 2:
+                        last_voice_idx = voice_count - 1
+                        last_voice_num = voice_count
+                        logger.info(f"STEP {voice_count}: HP5(inst_minus_{last_voice_idx}) → vocals_{last_voice_num}")
+                        
+                        vocals_last, _ = separate_vocals(
+                            audio=current_input,
+                            sample_rate=uvr_output_sr,
+                            model_name="HP5_only_main_vocal",
+                            agg=10
+                        )
+                        del current_input
                         clear_memory()
+                        
+                        vocals_last = ensure_length(vocals_last, target_length_44k)
+                        vl_rms = np.sqrt(np.mean(vocals_last**2))
+                        logger.info(f"vocals_{last_voice_num} extracted: RMS={vl_rms:.4f}")
+                        
+                        # Convert last vocal with its model
+                        converted_last = convert_vocal(vocals_last, voice_configs[last_voice_idx], last_voice_num)
+                        converted_vocals_list.append(converted_last)
+                        del vocals_last
+                        clear_memory()
+                    
+                    # ============================================================
+                    # CLEAN INSTRUMENTAL: HP3(original) → remove ALL voices
+                    # ============================================================
+                    logger.info("FINAL SEPARATION: HP3(original) → clean instrumental (all voices removed)")
+                    _, instrumental_clean = separate_vocals(
+                        audio=audio_for_hp3,
+                        sample_rate=sr,
+                        model_name="HP3_all_vocals",
+                        agg=10
+                    )
+                    del audio_for_hp3
+                    clear_memory()
+                    
+                    instrumental_clean = ensure_length(instrumental_clean, target_length_44k)
+                    inst_rms = np.sqrt(np.mean(instrumental_clean**2))
+                    logger.info(f"instrumental_clean (HP3, all voices removed): RMS={inst_rms:.4f}")
+                    
+                    # Verify intro is not silent
+                    intro_samples = int(5 * uvr_output_sr)
+                    if len(instrumental_clean) > intro_samples:
+                        intro_rms = np.sqrt(np.mean(instrumental_clean[:intro_samples]**2))
+                        intro_max = np.max(np.abs(instrumental_clean[:intro_samples]))
+                        logger.info(f"INSTRUMENTAL INTRO CHECK (first 5s): RMS={intro_rms:.4f}, max={intro_max:.4f}")
                 
                 # ============================================================
                 # FINAL MIX: instrumental_clean + all converted vocals
