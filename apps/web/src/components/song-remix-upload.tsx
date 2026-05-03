@@ -106,7 +106,7 @@ export function SongRemixUpload({ selectedModelId, modelName, availableModels, o
   
   // Multi-voice swap settings
   const [voiceCount, setVoiceCount] = useState(1); // Number of voice layers to extract (1-4)
-  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number; f0UpKey: number }[]>([]); // Voice 2, 3, 4
+  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number }[]>([]); // Voice 2, 3, 4
   
   // Conversion settings
   const [f0UpKey, setF0UpKey] = useState(0);
@@ -316,7 +316,7 @@ export function SongRemixUpload({ selectedModelId, modelName, availableModels, o
           { model_id: selectedModelId, f0_up_key: f0UpKey }, // Voice 1 (main)
           ...additionalVoices.slice(0, voiceCount - 1).map(v => ({
             model_id: v.modelId,
-            f0_up_key: v.f0UpKey,
+            f0_up_key: f0UpKey,
           })),
         ];
       }
@@ -763,7 +763,7 @@ export function SongRemixUpload({ selectedModelId, modelName, availableModels, o
                     // Add a new voice with a default model (not the main one)
                     const otherModels = availableModels.filter(m => m.id !== selectedModelId);
                     const defaultModel = otherModels[additionalVoices.length % otherModels.length] || availableModels[0];
-                    setAdditionalVoices([...additionalVoices, { modelId: defaultModel.id, f0UpKey: 0 }]);
+                    setAdditionalVoices([...additionalVoices, { modelId: defaultModel.id }]);
                   }
                 }}
                 disabled={voiceCount >= 4 || !availableModels || availableModels.length <= 1}
@@ -808,21 +808,7 @@ export function SongRemixUpload({ selectedModelId, modelName, availableModels, o
                       <option key={m.id} value={m.id}>{m.name}</option>
                     ))}
                   </select>
-                  <div className="flex items-center gap-1">
-                    <span className="text-xs text-gray-500">Pitch:</span>
-                    <input
-                      type="number"
-                      min="-12"
-                      max="12"
-                      value={voice.f0UpKey}
-                      onChange={(e) => {
-                        const newVoices = [...additionalVoices];
-                        newVoices[index] = { ...newVoices[index], f0UpKey: parseInt(e.target.value) || 0 };
-                        setAdditionalVoices(newVoices);
-                      }}
-                      className="w-12 text-xs bg-gray-700 border border-gray-600 rounded px-1 py-1 text-white text-center"
-                    />
-                  </div>
+                  <span className="text-xs text-gray-500">Backing voice {index + 1}</span>
                 </div>
               ))}
               
