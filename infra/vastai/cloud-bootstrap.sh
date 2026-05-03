@@ -34,7 +34,17 @@ if ! dpkg -l | grep -q nvidia-container-toolkit; then
   apt-get update -qq
   apt-get install -y -qq nvidia-container-toolkit
   nvidia-ctk runtime configure --runtime=docker
-  systemctl restart docker
+fi
+
+# Start Docker daemon (Vast.ai containers don't use systemd)
+if ! pgrep -x dockerd > /dev/null; then
+  echo "Starting Docker daemon..."
+  dockerd &>/var/log/dockerd.log &
+  sleep 5
+  if ! docker info &>/dev/null; then
+    echo "ERROR: Docker daemon failed to start. Check /var/log/dockerd.log"
+    exit 1
+  fi
 fi
 
 # 2. Create deploy user
