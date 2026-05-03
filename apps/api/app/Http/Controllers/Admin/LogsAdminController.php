@@ -29,11 +29,18 @@ class LogsAdminController extends Controller
      */
     public function services(): JsonResponse
     {
-        $services = $this->dockerLogs->getServicesWithLogSources();
-        
-        return response()->json([
-            'services' => $services,
-        ]);
+        try {
+            $services = $this->dockerLogs->getServicesWithLogSources();
+            
+            return response()->json([
+                'services' => $services,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'services' => [],
+                'error' => 'Failed to load services: ' . $e->getMessage(),
+            ]);
+        }
     }
 
     /**
@@ -41,56 +48,64 @@ class LogsAdminController extends Controller
      */
     public function serviceLogs(Request $request, string $service): JsonResponse
     {
-        $lines = (int) $request->query('lines', 200);
-        $source = $request->query('source', 'stdout');
-        
-        // Map service name to container name
-        $containerMap = [
-            'nginx' => 'morphvox-nginx',
-            'api' => 'morphvox-api',
-            'api-worker' => 'morphvox-api-worker',
-            'web' => 'morphvox-web',
-            'voice-engine' => 'morphvox-voice-engine',
-            'db' => 'morphvox-db',
-            'redis' => 'morphvox-redis',
-            'minio' => 'morphvox-minio',
-        ];
-        
-        $containerName = $containerMap[$service] ?? $service;
-        $logLines = [];
-        
-        // Try to read local files directly first (works in native and Docker mode)
-        $logLines = $this->getLocalServiceLogs($service, $source, $lines);
-        
-        // If we got local logs, return them
-        if (!empty($logLines) && !str_starts_with($logLines[0] ?? '', 'No ') && !str_starts_with($logLines[0] ?? '', 'Log source')) {
+        try {
+            $lines = (int) $request->query('lines', 200);
+            $source = $request->query('source', 'stdout');
+            
+            // Map service name to container name
+            $containerMap = [
+                'nginx' => 'morphvox-nginx',
+                'api' => 'morphvox-api',
+                'api-worker' => 'morphvox-api-worker',
+                'web' => 'morphvox-web',
+                'voice-engine' => 'morphvox-voice-engine',
+                'db' => 'morphvox-db',
+                'redis' => 'morphvox-redis',
+                'minio' => 'morphvox-minio',
+            ];
+            
+            $containerName = $containerMap[$service] ?? $service;
+            $logLines = [];
+            
+            // Try to read local files directly first (works in native and Docker mode)
+            $logLines = $this->getLocalServiceLogs($service, $source, $lines);
+            
+            // If we got local logs, return them
+            if (!empty($logLines) && !str_starts_with($logLines[0] ?? '', 'No ') && !str_starts_with($logLines[0] ?? '', 'Log source')) {
+                return response()->json([
+                    'lines' => $logLines,
+                    'service' => $service,
+                    'source' => $source,
+                ]);
+            }
+            
+            // Fall back to Docker-based log retrieval
+            if (str_contains($source, '_stdout') || $source === 'stdout') {
+                // Container stdout/stderr logs
+                $logLines = $this->dockerLogs->getContainerLogs($containerName, $lines);
+            } else {
+                // File-based log - get the path from the source ID
+                $filePath = $this->getFilePathFromSource($source);
+                
+                if ($filePath) {
+                    $logLines = $this->dockerLogs->getContainerFileLog($containerName, $filePath, $lines);
+                } else {
+                    $logLines = ["Unknown log source: $source"];
+                }
+            }
+            
             return response()->json([
                 'lines' => $logLines,
                 'service' => $service,
                 'source' => $source,
             ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'lines' => ['Error: ' . $e->getMessage()],
+                'service' => $service ?? 'unknown',
+                'source' => $source ?? 'unknown',
+            ]);
         }
-        
-        // Fall back to Docker-based log retrieval
-        if (str_contains($source, '_stdout') || $source === 'stdout') {
-            // Container stdout/stderr logs
-            $logLines = $this->dockerLogs->getContainerLogs($containerName, $lines);
-        } else {
-            // File-based log - get the path from the source ID
-            $filePath = $this->getFilePathFromSource($source);
-            
-            if ($filePath) {
-                $logLines = $this->dockerLogs->getContainerFileLog($containerName, $filePath, $lines);
-            } else {
-                $logLines = ["Unknown log source: $source"];
-            }
-        }
-        
-        return response()->json([
-            'lines' => $logLines,
-            'service' => $service,
-            'source' => $source,
-        ]);
     }
     
     /**

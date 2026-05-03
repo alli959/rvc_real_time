@@ -266,12 +266,22 @@ def _separate_vocals_single(
             if not vocal_files or not instrumental_files:
                 raise RuntimeError("UVR5 separation produced no output")
             
-            # Note: UVR5 vr.py swaps the FILENAME prefix for HP3 models, but NOT the actual content.
-            # - ins_root always contains the instrumental audio (y_spec_m)
-            # - vocal_root always contains the vocal audio (v_spec_m)
-            # So we always read the same way regardless of HP3/HP5.
-            vocals, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
-            instrumental, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
+            # UVR5 HP models: y_spec_m is the model's direct prediction, v_spec_m is the residual.
+            # - HP5 (main vocal): model predicts instrumental → ins_root=instrumental, vocal_root=vocals
+            # - HP2/HP3 (all vocals): model predicts vocals → ins_root=vocals, vocal_root=instrumental
+            # The filename prefix swap in vr.py confirms this: HP3 names ins_root file "vocal_"
+            # because that's what y_spec_m actually IS for vocal-extraction models.
+            raw_vocal_dir, _ = sf.read(os.path.join(vocals_dir, vocal_files[0]), dtype='float32')
+            raw_inst_dir, _ = sf.read(os.path.join(instrumental_dir, instrumental_files[0]), dtype='float32')
+            
+            if is_hp3:
+                # HP2/HP3: model predicts vocals into ins_root, instrumental goes to vocal_root
+                vocals = raw_inst_dir
+                instrumental = raw_vocal_dir
+            else:
+                # HP5: model predicts instrumental into ins_root, vocals go to vocal_root
+                vocals = raw_vocal_dir
+                instrumental = raw_inst_dir
             
             # Convert to mono if stereo
             if vocals.ndim > 1:

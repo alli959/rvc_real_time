@@ -891,24 +891,54 @@ class DockerLogsService
             ],
         ];
         
-        foreach ($containers as $container) {
-            $containerName = $container['name'];
-            $serviceName = $serviceNameMap[$containerName] ?? null;
-            
-            if (!$serviceName) {
-                continue; // Skip unknown containers
+        if (empty($containers)) {
+            // Native deployment (no Docker) - provide services based on supervisor config
+            $nativeServices = [
+                ['name' => 'api', 'container_name' => 'morphvox-api', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'api_laravel', 'name' => 'Laravel.log', 'type' => 'file'],
+                    ['id' => 'api_stdout', 'name' => 'PHP-FPM Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'api-worker', 'container_name' => 'morphvox-api-worker', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'worker_laravel', 'name' => 'Laravel.log', 'type' => 'file'],
+                    ['id' => 'worker_stdout', 'name' => 'Worker Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'voice-engine', 'container_name' => 'morphvox-voice-engine', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'voice-engine_stdout', 'name' => 'Voice Engine Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'web', 'container_name' => 'morphvox-web', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'web_stdout', 'name' => 'Next.js Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'nginx', 'container_name' => 'morphvox-nginx', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'nginx_stdout', 'name' => 'Nginx Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'db', 'container_name' => 'morphvox-db', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'db_stdout', 'name' => 'MariaDB Log', 'type' => 'stdout'],
+                ]],
+                ['name' => 'redis', 'container_name' => 'morphvox-redis', 'status' => 'running', 'log_sources' => [
+                    ['id' => 'redis_stdout', 'name' => 'Redis Log', 'type' => 'stdout'],
+                ]],
+            ];
+            $services = array_merge($services, $nativeServices);
+        } else {
+            foreach ($containers as $container) {
+                $containerName = $container['name'];
+                $serviceName = $serviceNameMap[$containerName] ?? null;
+                
+                if (!$serviceName) {
+                    continue; // Skip unknown containers
+                }
+                
+                $logSources = $logSourceConfigs[$containerName] ?? [
+                    ['id' => "{$serviceName}_stdout", 'name' => 'Container Logs (stdout/stderr)', 'type' => 'stdout'],
+                ];
+                
+                $services[] = [
+                    'name' => $serviceName,
+                    'container_name' => $containerName,
+                    'status' => $container['state'] === 'running' ? 'running' : 'stopped',
+                    'log_sources' => $logSources,
+                ];
             }
-            
-            $logSources = $logSourceConfigs[$containerName] ?? [
-                ['id' => "{$serviceName}_stdout", 'name' => 'Container Logs (stdout/stderr)', 'type' => 'stdout'],
-            ];
-            
-            $services[] = [
-                'name' => $serviceName,
-                'container_name' => $containerName,
-                'status' => $container['state'] === 'running' ? 'running' : 'stopped',
-                'log_sources' => $logSources,
-            ];
         }
         
         // Sort services in a specific order
