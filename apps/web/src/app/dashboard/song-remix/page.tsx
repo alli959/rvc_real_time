@@ -91,7 +91,7 @@ export default function SongRemixPage() {
   
   // Multi-voice swap settings
   const [voiceCount, setVoiceCount] = useState(1); // Number of voice layers (1-4)
-  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null; f0UpKey: number; extractionMode: 'main' | 'all' }[]>([]);
+  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null; extractionMode: 'main' | 'all' }[]>([]);
   const [availableModels, setAvailableModels] = useState<VoiceModel[]>([]);
   
   // Voice detection state
@@ -350,7 +350,7 @@ export default function SongRemixPage() {
             .filter(v => v.modelId !== null)
             .map(v => ({
               model_id: v.modelId!,
-              f0_up_key: v.f0UpKey,
+              f0_up_key: f0UpKey,
               extraction_mode: v.extractionMode,
             })),
         ];
@@ -813,7 +813,7 @@ export default function SongRemixPage() {
                       // Add a new voice with a default model - default to 'all' for backing vocals
                       const otherModels = availableModels.filter(m => m.id !== selectedModelId);
                       const defaultModel = otherModels[additionalVoices.length % Math.max(1, otherModels.length)] || availableModels[0];
-                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null, f0UpKey: 0, extractionMode: 'all' }]);
+                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null, extractionMode: 'all' }]);
                     }
                   }}
                   disabled={voiceCount >= 4}
@@ -877,21 +877,6 @@ export default function SongRemixPage() {
                           <option key={m.id} value={m.id}>{m.name}</option>
                         ))}
                       </select>
-                      <div className="flex items-center gap-2 shrink-0">
-                        <span className="text-xs text-gray-500">Pitch:</span>
-                        <input
-                          type="number"
-                          min="-12"
-                          max="12"
-                          value={voice.f0UpKey}
-                          onChange={(e) => {
-                            const newVoices = [...additionalVoices];
-                            newVoices[index] = { ...newVoices[index], f0UpKey: parseInt(e.target.value) || 0 };
-                            setAdditionalVoices(newVoices);
-                          }}
-                          className="w-14 text-sm bg-gray-700 border border-gray-600 rounded px-2 py-1 text-white text-center"
-                        />
-                      </div>
                     </div>
                     <div className="flex flex-wrap items-center gap-2 sm:ml-20">
                       <span className="text-xs text-gray-500">Extract:</span>
