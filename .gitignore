@@ -262,3 +262,4 @@ storage/data/tsconfig.tsbuildinfo
 services/voice-engine/deno/
 services/voice-engine/yt-dlp/
 .superpowers/
+.playwright-mcp/
