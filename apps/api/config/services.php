@@ -107,4 +107,6 @@ return [
 
     'internal_token' => env('INTERNAL_SERVICE_TOKEN'),
 
+    'internal_base_url' => env('INTERNAL_BASE_URL', 'http://localhost:8000'),
+
 ];

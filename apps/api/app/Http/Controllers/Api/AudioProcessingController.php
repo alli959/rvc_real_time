@@ -154,8 +154,8 @@ class AudioProcessingController extends Controller
             ], 429);
         }
 
-        // Build webhook URLs for voice engine callbacks
-        $baseUrl = config('app.url');
+        // Build webhook URLs for voice engine callbacks (use internal URL to avoid Cloudflare)
+        $baseUrl = config('services.internal_base_url', 'http://localhost:8000');
         $webhookUrls = [
             'progress_url' => "{$baseUrl}/api/internal/jobs/{$job->uuid}/progress",
             'complete_url' => "{$baseUrl}/api/internal/jobs/{$job->uuid}/complete",
