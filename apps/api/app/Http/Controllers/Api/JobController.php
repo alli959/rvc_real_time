@@ -46,13 +46,26 @@ class JobController extends Controller
      */
     public function show(Request $request, JobQueue $job)
     {
-        if ($job->user_id !== $request->user()->id) {
+        if ($job->user_id !== $request->user()->id && !$request->user()->is_admin) {
             abort(403, 'Access denied');
         }
 
-        return response()->json([
-            'job' => $job->load('voiceModel:id,uuid,name,slug'),
-        ]);
+        $data = $job->load('voiceModel:id,uuid,name,slug')->toArray();
+        $data['output_url'] = null;
+        $data['output_urls'] = null;
+
+        if ($job->isCompleted() && $job->output_path) {
+            $data['output_url'] = "/api/jobs/{$job->uuid}/stream";
+
+            if ($job->type === JobQueue::TYPE_AUDIO_SPLIT && !empty($job->parameters['output_paths'])) {
+                $data['output_urls'] = [
+                    'vocals' => "/api/jobs/{$job->uuid}/stream?track=vocals",
+                    'instrumental' => "/api/jobs/{$job->uuid}/stream?track=instrumental",
+                ];
+            }
+        }
+
+        return response()->json($data);
     }
 
     /**
@@ -131,7 +144,8 @@ class JobController extends Controller
     }
 
     /**
-     * Cancel a pending/queued job
+     * Cancel a job. For queued jobs, marks immediately as cancelled.
+     * For in-progress jobs, marks cancelled — voice engine checks status and stops.
      */
     public function cancel(Request $request, JobQueue $job)
     {
@@ -139,9 +153,11 @@ class JobController extends Controller
             abort(403, 'Access denied');
         }
 
-        if ($job->isFinished()) {
+        if (in_array($job->status, [JobQueue::STATUS_COMPLETED, JobQueue::STATUS_FAILED, JobQueue::STATUS_CANCELLED])) {
             abort(422, 'Cannot cancel a finished job');
         }
+
+        $wasProcessing = $job->status === JobQueue::STATUS_PROCESSING;
 
         $job->update([
             'status' => JobQueue::STATUS_CANCELLED,
@@ -149,8 +165,10 @@ class JobController extends Controller
         ]);
 
         return response()->json([
-            'job' => $job->fresh(),
-            'message' => 'Job cancelled',
+            'status' => 'cancelled',
+            'message' => $wasProcessing
+                ? 'Cancellation requested. May take up to 60 seconds to stop.'
+                : 'Job cancelled',
         ]);
     }
 
@@ -196,6 +214,105 @@ class JobController extends Controller
         return response()->json([
             'upload_url' => $uploadUrl,
         ]);
+    }
+
+    /**
+     * Stream job output file from MinIO.
+     */
+    public function stream(Request $request, JobQueue $job)
+    {
+        if ($job->user_id !== $request->user()->id && !$request->user()->is_admin) {
+            abort(403, 'Access denied');
+        }
+
+        if (!$job->isCompleted()) {
+            abort(422, 'Job is not completed');
+        }
+
+        $track = $request->query('track');
+        $path = $job->output_path;
+
+        if ($track && $job->type === JobQueue::TYPE_AUDIO_SPLIT) {
+            $outputPaths = $job->parameters['output_paths'] ?? [];
+            $pathMap = [];
+            foreach ($outputPaths as $p) {
+                if (str_contains($p, '_vocals.')) $pathMap['vocals'] = $p;
+                if (str_contains($p, '_instrumental.')) $pathMap['instrumental'] = $p;
+            }
+            $path = $pathMap[$track] ?? $path;
+        }
+
+        if (!$path || !Storage::disk('s3')->exists($path)) {
+            abort(404, 'Output file not found');
+        }
+
+        $size = Storage::disk('s3')->size($path);
+        $download = $request->query('download') === '1';
+        $filename = basename($path);
+        $disposition = $download ? "attachment; filename=\"{$filename}\"" : "inline; filename=\"{$filename}\"";
+
+        $headers = [
+            'Content-Type' => 'audio/wav',
+            'Content-Length' => $size,
+            'Content-Disposition' => $disposition,
+            'Accept-Ranges' => 'bytes',
+        ];
+
+        $range = $request->header('Range');
+        if ($range && preg_match('/bytes=(\d+)-(\d*)/', $range, $matches)) {
+            $start = (int) $matches[1];
+            $end = $matches[2] !== '' ? (int) $matches[2] : $size - 1;
+            $length = $end - $start + 1;
+
+            return response()->stream(function () use ($path, $start, $length) {
+                $stream = Storage::disk('s3')->readStream($path);
+                fseek($stream, $start);
+                $remaining = $length;
+                while ($remaining > 0 && !feof($stream)) {
+                    $chunk = fread($stream, min(8192, $remaining));
+                    echo $chunk;
+                    $remaining -= strlen($chunk);
+                    flush();
+                }
+                fclose($stream);
+            }, 206, array_merge($headers, [
+                'Content-Length' => $length,
+                'Content-Range' => "bytes {$start}-{$end}/{$size}",
+            ]));
+        }
+
+        return response()->stream(function () use ($path) {
+            $stream = Storage::disk('s3')->readStream($path);
+            while (!feof($stream)) {
+                echo fread($stream, 8192);
+                flush();
+            }
+            fclose($stream);
+        }, 200, $headers);
+    }
+
+    /**
+     * Save job output (prevents auto-deletion).
+     */
+    public function save(Request $request, JobQueue $job)
+    {
+        if ($job->user_id !== $request->user()->id) {
+            abort(403, 'Access denied');
+        }
+        $job->update(['saved' => true]);
+        return response()->json(['status' => 'saved']);
+    }
+
+    /**
+     * Unsave job output (subject to 24h cleanup).
+     */
+    public function unsave(Request $request, JobQueue $job)
+    {
+        if ($job->user_id !== $request->user()->id) {
+            abort(403, 'Access denied');
+        }
+        $job->update(['saved' => false]);
+        return response()->json(['status' => 'unsaved']);
     }
 
     /**

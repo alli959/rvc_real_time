@@ -204,6 +204,13 @@ Route::middleware('auth:sanctum')->group(function () {
         
         // Get output download URL
         Route::get('/{job}/output', [JobController::class, 'getOutput']);
+
+        // Stream output audio from MinIO
+        Route::get('/{job}/stream', [JobController::class, 'stream']);
+
+        // Save/unsave job output
+        Route::post('/{job}/save', [JobController::class, 'save']);
+        Route::post('/{job}/unsave', [JobController::class, 'unsave']);
     });
 
     // ------------------------------------------------------------------
