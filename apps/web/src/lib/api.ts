@@ -1686,3 +1686,56 @@ export const trainingRunsApi = {
   },
 };
 
+// =============================================================================
+// Job Queue API (Background Generation)
+// =============================================================================
+
+export interface JobResponse {
+  id: number;
+  uuid: string;
+  type: 'audio_swap' | 'audio_split' | 'audio_convert' | 'tts';
+  status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
+  progress: number;
+  progress_message: string | null;
+  step_number: number;
+  total_steps: number;
+  output_url: string | null;
+  output_urls: Record<string, string> | null;
+  saved: boolean;
+  error_message: string | null;
+  created_at: string;
+  completed_at: string | null;
+  voice_model?: { id: number; uuid: string; name: string; slug: string } | null;
+}
+
+export const jobsApi = {
+  list: async (params?: { status?: string }): Promise<JobResponse[]> => {
+    const queryStr = params?.status ? `?status=${params.status}` : '';
+    const response = await api.get(`/jobs${queryStr}`);
+    return response.data.data || response.data;
+  },
+
+  get: async (uuid: string): Promise<JobResponse> => {
+    const response = await api.get(`/jobs/${uuid}`);
+    return response.data;
+  },
+
+  cancel: async (uuid: string): Promise<{ status: string; message: string }> => {
+    const response = await api.post(`/jobs/${uuid}/cancel`);
+    return response.data;
+  },
+
+  save: async (uuid: string): Promise<void> => {
+    await api.post(`/jobs/${uuid}/save`);
+  },
+
+  unsave: async (uuid: string): Promise<void> => {
+    await api.post(`/jobs/${uuid}/unsave`);
+  },
+
+  getStreamUrl: (uuid: string, track?: string): string => {
+    const base = `${API_URL}/jobs/${uuid}/stream`;
+    return track ? `${base}?track=${track}` : base;
+  },
+};
+
