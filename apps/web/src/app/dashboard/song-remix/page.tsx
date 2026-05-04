@@ -2,7 +2,7 @@
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { audioProcessingApi, youtubeApi, voiceDetectionApi, voiceModelsApi, VoiceModel, YouTubeSearchResult, VoiceModelConfig } from '@/lib/api';
+import { audioProcessingApi, youtubeApi, voiceDetectionApi, voiceModelsApi, VoiceModel, YouTubeSearchResult, VoiceModelConfig, api } from '@/lib/api';
 import { useAudioJobs } from '@/contexts/audio-job-context';
 import { ModelSelector } from '@/components/model-selector';
 import { AudioPlayer } from '@/components/audio-player';
@@ -303,20 +303,29 @@ export default function SongRemixPage() {
     if (foregroundJob.status === 'completed') {
       setIsProcessing(false);
       setForegroundJobId(null);
-      // Build results from stream URL
-      const newResults: ProcessedResult[] = [];
-      if (foregroundJob.outputUrls) {
-        if (foregroundJob.outputUrls.vocals) {
-          newResults.push({ type: 'vocals', url: foregroundJob.outputUrls.vocals, name: 'vocals.wav' });
+      // Fetch audio as blobs (Bearer token required, can't use raw URLs)
+      (async () => {
+        const newResults: ProcessedResult[] = [];
+        try {
+          if (foregroundJob.outputUrls) {
+            if (foregroundJob.outputUrls.vocals) {
+              const resp = await api.get(foregroundJob.outputUrls.vocals, { responseType: 'blob' });
+              newResults.push({ type: 'vocals', url: URL.createObjectURL(resp.data), name: 'vocals.wav' });
+            }
+            if (foregroundJob.outputUrls.instrumental) {
+              const resp = await api.get(foregroundJob.outputUrls.instrumental, { responseType: 'blob' });
+              newResults.push({ type: 'instrumental', url: URL.createObjectURL(resp.data), name: 'instrumental.wav' });
+            }
+          } else if (foregroundJob.outputUrl) {
+            const resp = await api.get(foregroundJob.outputUrl, { responseType: 'blob' });
+            newResults.push({ type: 'swapped', url: URL.createObjectURL(resp.data), name: 'output.wav' });
+          }
+        } catch (e) {
+          console.error('Failed to fetch audio output:', e);
         }
-        if (foregroundJob.outputUrls.instrumental) {
-          newResults.push({ type: 'instrumental', url: foregroundJob.outputUrls.instrumental, name: 'instrumental.wav' });
-        }
-      } else if (foregroundJob.outputUrl) {
-        newResults.push({ type: 'swapped', url: foregroundJob.outputUrl, name: 'output.wav' });
-      }
-      setResults(newResults);
-      setProcessingStep('Complete!');
+        setResults(newResults);
+        setProcessingStep('Complete!');
+      })();
     } else if (foregroundJob.status === 'failed') {
       setIsProcessing(false);
       setForegroundJobId(null);

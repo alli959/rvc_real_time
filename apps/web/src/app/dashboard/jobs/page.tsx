@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { useRouter } from 'next/navigation';
 import { DashboardLayout } from '@/components/dashboard-layout';
-import { jobsApi, trainerApi } from '@/lib/api';
+import { jobsApi, trainerApi, api } from '@/lib/api';
 import {
   ListMusic,
   Play,
@@ -102,9 +102,19 @@ export default function JobsPage() {
     }
   };
 
-  const handleDownload = (jobId: string) => {
-    const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
-    window.open(`${apiUrl}/jobs/${jobId}/stream`, '_blank');
+  const handleDownload = async (jobId: string) => {
+    try {
+      const response = await api.get(`/jobs/${jobId}/stream`, { responseType: 'blob' });
+      const blob = new Blob([response.data], { type: 'audio/wav' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${jobId}.wav`;
+      a.click();
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      console.error('Failed to download:', err);
+    }
   };
 
   const getStatusIcon = (status: string) => {
