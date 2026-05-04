@@ -23,6 +23,7 @@ import {
 import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { useAuthContext } from './providers';
+import { useAudioJobs } from '@/contexts/audio-job-context';
 import { Footer } from './footer';
 import { FloatingJobsWidget } from './floating-jobs-widget';
 
@@ -35,8 +36,11 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
   const pathname = usePathname();
   const { isAuthenticated, user, clearAuth, isHydrated, canUploadModels } = useAuthStore();
   const { isLoading, isReady } = useAuthContext();
+  const { activeJobs } = useAudioJobs();
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
   const [modelsDropdownOpen, setModelsDropdownOpen] = useState(false);
+
+  const activeJobCount = activeJobs.filter(j => j.status === 'queued' || j.status === 'processing').length;
 
   // Redirect if not authenticated (only after hydration is complete)
   useEffect(() => {
@@ -206,6 +210,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
               icon={icon} 
               active={pathname === href}
               onClick={() => setMobileMenuOpen(false)}
+              badge={href === '/dashboard/jobs' ? activeJobCount : undefined}
             >
               {label}
             </NavItem>
@@ -250,13 +255,20 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
             <Link
               key={href}
               href={href}
-              className={`flex flex-col items-center p-2 rounded-lg transition-colors ${
+              className={`flex flex-col items-center p-2 rounded-lg transition-colors relative ${
                 pathname === href
                   ? 'text-primary-400'
                   : 'text-gray-400 hover:text-white'
               }`}
             >
-              <Icon className="h-5 w-5" />
+              <div className="relative">
+                <Icon className="h-5 w-5" />
+                {href === '/dashboard/jobs' && activeJobCount > 0 && (
+                  <span className="absolute -top-1 -right-1.5 bg-purple-500 text-white text-[8px] font-bold rounded-full w-3 h-3 flex items-center justify-center animate-pulse">
+                    {activeJobCount}
+                  </span>
+                )}
+              </div>
               <span className="text-xs mt-1 hidden sm:block">{label.split(' ')[0]}</span>
             </Link>
           ))}
@@ -276,12 +288,14 @@ function NavItem({
   children,
   active = false,
   onClick,
+  badge,
 }: {
   href: string;
   icon: any;
   children: React.ReactNode;
   active?: boolean;
   onClick?: () => void;
+  badge?: number;
 }) {
   return (
     <Link
@@ -293,8 +307,18 @@ function NavItem({
           : 'text-gray-400 hover:text-white hover:bg-gray-800/50'
       }`}
     >
-      <Icon className="h-5 w-5" />
-      {children}
+      <div className="relative">
+        <Icon className="h-5 w-5" />
+        {badge && badge > 0 ? (
+          <span className="absolute -top-1.5 -right-1.5 bg-purple-500 text-white text-[9px] font-bold rounded-full w-3.5 h-3.5 flex items-center justify-center animate-pulse">
+            {badge}
+          </span>
+        ) : null}
+      </div>
+      <span className="flex-1">{children}</span>
+      {badge && badge > 0 ? (
+        <Loader2 className="h-3.5 w-3.5 animate-spin text-purple-400" />
+      ) : null}
     </Link>
   );
 }
