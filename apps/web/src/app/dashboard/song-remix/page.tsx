@@ -93,7 +93,7 @@ export default function SongRemixPage() {
   
   // Multi-voice swap settings
   const [voiceCount, setVoiceCount] = useState(1); // Number of voice layers (1-4)
-  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null }[]>([]);
+  const [additionalVoices, setAdditionalVoices] = useState<{ modelId: number | null; f0UpKey: number }[]>([]);
   const [availableModels, setAvailableModels] = useState<VoiceModel[]>([]);
   
   // Voice detection state
@@ -382,7 +382,7 @@ export default function SongRemixPage() {
             .filter(v => v.modelId !== null)
             .map(v => ({
               model_id: v.modelId!,
-              f0_up_key: f0UpKey,
+              f0_up_key: v.f0UpKey,
             })),
         ];
       }
@@ -394,8 +394,6 @@ export default function SongRemixPage() {
           model_id: selectedModelId || undefined,
           f0_up_key: f0UpKey,
           index_rate: indexRate,
-          pitch_shift_all: f0UpKey,
-          instrumental_pitch: f0UpKey,
           extract_all_vocals: processingMode === 'split' ? removeAllVocals : undefined,
           voice_count: processingMode === 'swap' ? voiceCount : undefined,
           voice_configs: voiceConfigs,
@@ -806,7 +804,7 @@ export default function SongRemixPage() {
                       // Add a new voice with a default model - default to 'all' for backing vocals
                       const otherModels = availableModels.filter(m => m.id !== selectedModelId);
                       const defaultModel = otherModels[additionalVoices.length % Math.max(1, otherModels.length)] || availableModels[0];
-                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null }]);
+                      setAdditionalVoices([...additionalVoices, { modelId: defaultModel?.id || null, f0UpKey: 0 }]);
                     }
                   }}
                   disabled={voiceCount >= 4}
@@ -836,6 +834,16 @@ export default function SongRemixPage() {
                     </span>
                   </div>
                   <span className="text-xs text-gray-500 sm:ml-20">Main/lead vocal</span>
+                  <div className="sm:ml-20">
+                    <label className="block text-xs text-gray-400 mb-1">
+                      Pitch: {f0UpKey > 0 ? `+${f0UpKey}` : f0UpKey}
+                    </label>
+                    <input
+                      type="range" min="-12" max="12" value={f0UpKey}
+                      onChange={(e) => setF0UpKey(parseInt(e.target.value))}
+                      className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
+                    />
+                  </div>
                 </div>
                 
                 {/* Additional voices */}
@@ -859,6 +867,20 @@ export default function SongRemixPage() {
                       </select>
                     </div>
                     <span className="text-xs text-gray-500 sm:ml-20">Backing voice {index + 1}</span>
+                    <div className="sm:ml-20">
+                      <label className="block text-xs text-gray-400 mb-1">
+                        Pitch: {voice.f0UpKey > 0 ? `+${voice.f0UpKey}` : voice.f0UpKey}
+                      </label>
+                      <input
+                        type="range" min="-12" max="12" value={voice.f0UpKey}
+                        onChange={(e) => {
+                          const newVoices = [...additionalVoices];
+                          newVoices[index] = { ...newVoices[index], f0UpKey: parseInt(e.target.value) };
+                          setAdditionalVoices(newVoices);
+                        }}
+                        className="w-full h-1.5 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-accent-500"
+                      />
+                    </div>
                   </div>
                 ))}
                 
