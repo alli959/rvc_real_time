@@ -96,6 +96,11 @@ Route::prefix('trainer')->group(function () {
 Route::prefix('internal')->middleware('internal.token')->group(function () {
     // Training completion callback from voice-engine
     Route::post('/training/callback', [TrainerController::class, 'trainingCallback']);
+
+    // Job webhooks (voice engine → Laravel)
+    Route::post('/jobs/{job}/progress', [\App\Http\Controllers\Internal\JobWebhookController::class, 'progress']);
+    Route::post('/jobs/{job}/complete', [\App\Http\Controllers\Internal\JobWebhookController::class, 'complete']);
+    Route::get('/jobs/{job}/status', [\App\Http\Controllers\Internal\JobWebhookController::class, 'status']);
 });
 
 // ==========================================================================
