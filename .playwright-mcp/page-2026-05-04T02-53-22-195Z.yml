@@ -1,0 +1,285 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e8]:
+      - link "MorphVox" [ref=e9] [cursor=pointer]:
+        - /url: /
+        - img [ref=e10]
+        - generic [ref=e14]: MorphVox
+      - button [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+    - complementary [ref=e17]:
+      - button [ref=e19] [cursor=pointer]:
+        - img [ref=e20]
+      - navigation [ref=e23]:
+        - link "Dashboard" [ref=e24] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e25]
+          - text: Dashboard
+        - button "Models" [ref=e31] [cursor=pointer]:
+          - generic [ref=e32]:
+            - img [ref=e33]
+            - generic [ref=e36]: Models
+          - img [ref=e37]
+        - link "Text to Speech" [ref=e39] [cursor=pointer]:
+          - /url: /dashboard/tts
+          - img [ref=e40]
+          - text: Text to Speech
+        - link "Audio Processing" [ref=e44] [cursor=pointer]:
+          - /url: /dashboard/audio
+          - img [ref=e45]
+          - text: Audio Processing
+        - link "Song Remix" [ref=e49] [cursor=pointer]:
+          - /url: /dashboard/song-remix
+          - img [ref=e50]
+          - text: Song Remix
+        - link "My Jobs" [ref=e54] [cursor=pointer]:
+          - /url: /dashboard/jobs
+          - img [ref=e55]
+          - text: My Jobs
+        - link "Settings" [ref=e57] [cursor=pointer]:
+          - /url: /dashboard/settings
+          - img [ref=e58]
+          - text: Settings
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - generic [ref=e64]: A
+          - generic [ref=e65]:
+            - paragraph [ref=e66]: Admin
+            - paragraph [ref=e67]: alexandergudmundsson@gmail.com
+        - button "Sign out" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - text: Sign out
+    - main [ref=e72]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - img [ref=e77]
+          - generic [ref=e81]:
+            - heading "Song Remix" [level=1] [ref=e82]
+            - paragraph [ref=e83]: Split vocals from instrumentals or swap vocals with AI voice models
+        - generic [ref=e84]:
+          - generic [ref=e85]: Remix Mode
+          - generic [ref=e86]:
+            - button "Vocal Splitter Separate vocals & instrumentals with UVR5" [ref=e87] [cursor=pointer]:
+              - img [ref=e88]
+              - generic [ref=e93]: Vocal Splitter
+              - paragraph [ref=e94]: Separate vocals & instrumentals with UVR5
+            - button "Voice Swap Replace vocals with converted AI voice" [ref=e95] [cursor=pointer]:
+              - img [ref=e96]
+              - generic [ref=e100]: Voice Swap
+              - paragraph [ref=e101]: Replace vocals with converted AI voice
+        - generic [ref=e102]:
+          - generic [ref=e103]:
+            - button "Upload File" [ref=e104] [cursor=pointer]:
+              - img [ref=e105]
+              - text: Upload File
+            - button "Search Songs" [ref=e108] [cursor=pointer]:
+              - img [ref=e109]
+              - text: Search Songs
+          - generic [ref=e113] [cursor=pointer]:
+            - button "Choose File" [ref=e114]
+            - generic [ref=e115]:
+              - img [ref=e116]
+              - paragraph [ref=e119]: Drag & drop an audio file here
+              - paragraph [ref=e120]: or click to select (MP3, WAV, FLAC, up to 100MB)
+        - generic [ref=e160]:
+          - heading "Voice Model" [level=3] [ref=e161]:
+            - img [ref=e162]
+            - text: Voice Model
+          - generic [ref=e164]:
+            - button "Select a voice model..." [ref=e165] [cursor=pointer]:
+              - generic [ref=e166]: Select a voice model...
+              - img [ref=e167]
+            - generic [ref=e196]:
+              - generic [ref=e198]:
+                - img [ref=e199]
+                - textbox "Search models..." [active] [ref=e202]
+              - generic [ref=e203]:
+                - generic [ref=e204]:
+                  - generic [ref=e206]:
+                    - img [ref=e207]
+                    - text: My Models
+                    - generic [ref=e210]: (6)
+                  - generic [ref=e211]:
+                    - button "Erla Erla" [ref=e212] [cursor=pointer]:
+                      - img "Erla" [ref=e214]
+                      - generic [ref=e215]: Erla
+                    - button "Bubbi Bubbi" [ref=e216] [cursor=pointer]:
+                      - img "Bubbi" [ref=e218]
+                      - generic [ref=e219]: Bubbi
+                    - button "Liam Gallagher Liam Gallagher" [ref=e220] [cursor=pointer]:
+                      - img "Liam Gallagher" [ref=e222]
+                      - generic [ref=e223]: Liam Gallagher
+                    - button "Laddi Laddi" [ref=e224] [cursor=pointer]:
+                      - img "Laddi" [ref=e226]
+                      - generic [ref=e227]: Laddi
+                    - button "Lexi Lexi" [ref=e228] [cursor=pointer]:
+                      - img "Lexi" [ref=e230]
+                      - generic [ref=e231]: Lexi
+                    - button "Bjarni Ben Bjarni Ben" [ref=e232] [cursor=pointer]:
+                      - img "Bjarni Ben" [ref=e234]
+                      - generic [ref=e235]: Bjarni Ben
+                - generic [ref=e236]:
+                  - generic [ref=e238]:
+                    - img [ref=e239]
+                    - text: Shared with Me
+                    - generic [ref=e244]: (38)
+                  - generic [ref=e245]:
+                    - button "Sigga Sigga" [ref=e246] [cursor=pointer]:
+                      - img "Sigga" [ref=e248]
+                      - generic [ref=e249]: Sigga
+                    - button "David Gilmour David Gilmour" [ref=e250] [cursor=pointer]:
+                      - img "David Gilmour" [ref=e252]
+                      - generic [ref=e253]: David Gilmour
+                    - button "Charlie Dompler Charlie Dompler" [ref=e254] [cursor=pointer]:
+                      - img "Charlie Dompler" [ref=e256]
+                      - generic [ref=e257]: Charlie Dompler
+                    - button "Chef Chef" [ref=e258] [cursor=pointer]:
+                      - img "Chef" [ref=e260]
+                      - generic [ref=e261]: Chef
+                    - button "Daron Malakian Daron Malakian" [ref=e262] [cursor=pointer]:
+                      - img "Daron Malakian" [ref=e264]
+                      - generic [ref=e265]: Daron Malakian
+                    - button "David Attenborough David Attenborough" [ref=e266] [cursor=pointer]:
+                      - img "David Attenborough" [ref=e268]
+                      - generic [ref=e269]: David Attenborough
+                    - button "Francine Smith Francine Smith" [ref=e270] [cursor=pointer]:
+                      - img "Francine Smith" [ref=e272]
+                      - generic [ref=e273]: Francine Smith
+                    - button "Hayley Smith Hayley Smith" [ref=e274] [cursor=pointer]:
+                      - img "Hayley Smith" [ref=e276]
+                      - generic [ref=e277]: Hayley Smith
+                    - button "Kyle Broflovski Kyle Broflovski" [ref=e278] [cursor=pointer]:
+                      - img "Kyle Broflovski" [ref=e280]
+                      - generic [ref=e281]: Kyle Broflovski
+                    - button "Mr. Frog Mr. Frog" [ref=e282] [cursor=pointer]:
+                      - img "Mr. Frog" [ref=e284]
+                      - generic [ref=e285]: Mr. Frog
+                    - button "Pim Pim" [ref=e286] [cursor=pointer]:
+                      - img "Pim" [ref=e288]
+                      - generic [ref=e289]: Pim
+                    - button "Stan Marsh Stan Marsh" [ref=e290] [cursor=pointer]:
+                      - img "Stan Marsh" [ref=e292]
+                      - generic [ref=e293]: Stan Marsh
+                    - button "Stan Smith Stan Smith" [ref=e294] [cursor=pointer]:
+                      - img "Stan Smith" [ref=e296]
+                      - generic [ref=e297]: Stan Smith
+                    - button "Whitney Houston Whitney Houston" [ref=e298] [cursor=pointer]:
+                      - img "Whitney Houston" [ref=e300]
+                      - generic [ref=e301]: Whitney Houston
+                    - button "James Hetfield 1991 Blackalbum James Hetfield 1991 Blackalbum" [ref=e302] [cursor=pointer]:
+                      - img "James Hetfield 1991 Blackalbum" [ref=e304]
+                      - generic [ref=e305]: James Hetfield 1991 Blackalbum
+                    - button "Biden Biden" [ref=e306] [cursor=pointer]:
+                      - img "Biden" [ref=e308]
+                      - generic [ref=e309]: Biden
+                    - button "Billie Eilish Billie Eilish" [ref=e310] [cursor=pointer]:
+                      - img "Billie Eilish" [ref=e312]
+                      - generic [ref=e313]: Billie Eilish
+                    - button "Frank Sinatra Frank Sinatra" [ref=e314] [cursor=pointer]:
+                      - img "Frank Sinatra" [ref=e316]
+                      - generic [ref=e317]: Frank Sinatra
+                    - button "Freddie Mercury Freddie Mercury" [ref=e318] [cursor=pointer]:
+                      - img "Freddie Mercury" [ref=e320]
+                      - generic [ref=e321]: Freddie Mercury
+                    - button "Jokull 0.4 Jokull 0.4" [ref=e322] [cursor=pointer]:
+                      - img "Jokull 0.4" [ref=e324]
+                      - generic [ref=e325]: Jokull 0.4
+                    - button "Darth Vader Darth Vader" [ref=e326] [cursor=pointer]:
+                      - img "Darth Vader" [ref=e328]
+                      - generic [ref=e329]: Darth Vader
+                    - button "Jabba The Hutt Jabba The Hutt" [ref=e330] [cursor=pointer]:
+                      - img "Jabba The Hutt" [ref=e332]
+                      - generic [ref=e333]: Jabba The Hutt
+                    - button "C3PO C3PO" [ref=e334] [cursor=pointer]:
+                      - img "C3PO" [ref=e336]
+                      - generic [ref=e337]: C3PO
+                    - button "Serj Tankain Serj Tankain" [ref=e338] [cursor=pointer]:
+                      - img "Serj Tankain" [ref=e340]
+                      - generic [ref=e341]: Serj Tankain
+                    - button "Yoda Yoda" [ref=e342] [cursor=pointer]:
+                      - img "Yoda" [ref=e344]
+                      - generic [ref=e345]: Yoda
+                    - button "General Grievous General Grievous" [ref=e346] [cursor=pointer]:
+                      - img "General Grievous" [ref=e348]
+                      - generic [ref=e349]: General Grievous
+                    - button "Micheal Jackson Micheal Jackson" [ref=e350] [cursor=pointer]:
+                      - img "Micheal Jackson" [ref=e352]
+                      - generic [ref=e353]: Micheal Jackson
+                    - button "Obama Obama" [ref=e354] [cursor=pointer]:
+                      - img "Obama" [ref=e356]
+                      - generic [ref=e357]: Obama
+                    - button "Pennywise Pennywise" [ref=e358] [cursor=pointer]:
+                      - img "Pennywise" [ref=e360]
+                      - generic [ref=e361]: Pennywise
+                    - button "Ben Stiller Ben Stiller" [ref=e362] [cursor=pointer]:
+                      - img "Ben Stiller" [ref=e364]
+                      - generic [ref=e365]: Ben Stiller
+                    - button "Bill Cipher Bill Cipher" [ref=e366] [cursor=pointer]:
+                      - img "Bill Cipher" [ref=e368]
+                      - generic [ref=e369]: Bill Cipher
+                    - button "Eminem Eminem" [ref=e370] [cursor=pointer]:
+                      - img "Eminem" [ref=e372]
+                      - generic [ref=e373]: Eminem
+                    - button "Female Female" [ref=e374] [cursor=pointer]:
+                      - img "Female" [ref=e376]
+                      - generic [ref=e377]: Female
+                    - button "Homer Simpson Homer Simpson" [ref=e378] [cursor=pointer]:
+                      - img "Homer Simpson" [ref=e380]
+                      - generic [ref=e381]: Homer Simpson
+                    - button "Lois Griffin Lois Griffin" [ref=e382] [cursor=pointer]:
+                      - img "Lois Griffin" [ref=e384]
+                      - generic [ref=e385]: Lois Griffin
+                    - button "Spongebob Spongebob" [ref=e386] [cursor=pointer]:
+                      - img "Spongebob" [ref=e388]
+                      - generic [ref=e389]: Spongebob
+                    - button "Egirl Egirl" [ref=e390] [cursor=pointer]:
+                      - img "Egirl" [ref=e392]
+                      - generic [ref=e393]: Egirl
+                    - button "Gusti" [ref=e394] [cursor=pointer]:
+                      - img [ref=e397]
+                      - generic [ref=e400]: Gusti
+          - generic [ref=e169]:
+            - generic [ref=e170]:
+              - generic [ref=e171]: "Pitch Shift: 0"
+              - slider [ref=e172] [cursor=pointer]: "0"
+            - generic [ref=e173]:
+              - generic [ref=e174]: "Index Rate: 0.75"
+              - slider [ref=e175] [cursor=pointer]: "0.75"
+        - generic [ref=e176]:
+          - generic [ref=e177]:
+            - heading "Voice Layers" [level=3] [ref=e178]:
+              - img [ref=e179]
+              - text: Voice Layers
+            - generic [ref=e184]:
+              - button [disabled] [ref=e185]:
+                - img [ref=e186]
+              - generic [ref=e187]: "1"
+              - button [ref=e188] [cursor=pointer]:
+                - img [ref=e189]
+          - paragraph [ref=e190]: "Single voice mode: Main vocal → Convert to selected model → Mix with instrumental"
+        - button "Swap Vocals" [disabled] [ref=e191]:
+          - img [ref=e192]
+          - text: Swap Vocals
+    - navigation [ref=e128]:
+      - generic [ref=e129]:
+        - link "Dashboard" [ref=e130] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e131]
+          - generic [ref=e136]: Dashboard
+        - link "Text" [ref=e137] [cursor=pointer]:
+          - /url: /dashboard/tts
+          - img [ref=e138]
+          - generic [ref=e142]: Text
+        - link "Audio" [ref=e143] [cursor=pointer]:
+          - /url: /dashboard/audio
+          - img [ref=e144]
+          - generic [ref=e148]: Audio
+        - link "Song" [ref=e149] [cursor=pointer]:
+          - /url: /dashboard/song-remix
+          - img [ref=e150]
+          - generic [ref=e154]: Song
+        - link "My" [ref=e155] [cursor=pointer]:
+          - /url: /dashboard/jobs
+          - img [ref=e156]
+          - generic [ref=e158]: My
+  - alert [ref=e7]

@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react';
 import { useAuthStore } from '@/lib/store';
 import { ModelSelector } from '@/components/model-selector';
-import { VoiceModel } from '@/lib/api';
+import { VoiceModel, api } from '@/lib/api';
 import { 
   Loader2, 
   Download, 
@@ -875,32 +875,8 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
         payload.apply_effects = convertEffect;
       }
 
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/tts/generate`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${token}`,
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (!response.ok) {
-        // Try to parse as JSON, but handle HTML error pages
-        const contentType = response.headers.get('content-type');
-        if (contentType && contentType.includes('application/json')) {
-          const data = await response.json();
-          // Check for training in progress error (503)
-          if (data.detail?.code === 'TRAINING_IN_PROGRESS') {
-            throw new Error(`🎓 ${data.detail.message}`);
-          }
-          throw new Error(data.detail?.message || data.message || 'Generation failed');
-        } else {
-          throw new Error(`Server error: ${response.status} ${response.statusText}`);
-        }
-      }
-
-      // Parse JSON response with base64 audio
-      const data = await response.json();
+      const response = await api.post('/tts/generate', payload);
+      const data = response.data;
       
       if (!data.audio) {
         throw new Error('No audio data received');
@@ -916,7 +892,12 @@ export function TTSGenerator({ preSelectedModelId, hideModelSelector = false, on
       const url = URL.createObjectURL(blob);
       setAudioUrl(url);
     } catch (err: any) {
-      setError(err.message || 'An error occurred');
+      const errData = err.response?.data;
+      if (errData?.detail?.code === 'TRAINING_IN_PROGRESS') {
+        setError(`🎓 ${errData.detail.message}`);
+      } else {
+        setError(errData?.detail?.message || errData?.message || err.message || 'An error occurred');
+      }
     } finally {
       setLoading(false);
     }

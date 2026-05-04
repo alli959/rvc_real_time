@@ -102,13 +102,9 @@ export default function JobsPage() {
     }
   };
 
-  const handleDownload = async (jobId: string) => {
-    try {
-      const { download_url } = await jobsApi.getOutput(jobId);
-      window.open(download_url, '_blank');
-    } catch (err) {
-      console.error('Failed to get download URL:', err);
-    }
+  const handleDownload = (jobId: string) => {
+    const apiUrl = process.env.NEXT_PUBLIC_API_URL || '/api';
+    window.open(`${apiUrl}/jobs/${jobId}/stream`, '_blank');
   };
 
   const getStatusIcon = (status: string) => {
@@ -354,7 +350,7 @@ export default function JobsPage() {
                       <button
                         onClick={(e) => {
                           e.stopPropagation();
-                          handleDownload(job.id);
+                          handleDownload(job.uuid);
                         }}
                         className="p-2 text-gray-400 hover:text-green-400 hover:bg-gray-800 rounded-lg transition-colors"
                         title="Download"

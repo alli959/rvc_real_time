@@ -1,0 +1,135 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - banner [ref=e8]:
+      - link "MorphVox" [ref=e9] [cursor=pointer]:
+        - /url: /
+        - img [ref=e10]
+        - generic [ref=e14]: MorphVox
+      - button [ref=e15] [cursor=pointer]:
+        - img [ref=e16]
+    - complementary [ref=e17]:
+      - button [ref=e19] [cursor=pointer]:
+        - img [ref=e20]
+      - navigation [ref=e23]:
+        - link "Dashboard" [ref=e24] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e25]
+          - text: Dashboard
+        - button "Models" [ref=e31] [cursor=pointer]:
+          - generic [ref=e32]:
+            - img [ref=e33]
+            - generic [ref=e36]: Models
+          - img [ref=e37]
+        - link "Text to Speech" [ref=e39] [cursor=pointer]:
+          - /url: /dashboard/tts
+          - img [ref=e40]
+          - text: Text to Speech
+        - link "Audio Processing" [ref=e44] [cursor=pointer]:
+          - /url: /dashboard/audio
+          - img [ref=e45]
+          - text: Audio Processing
+        - link "Song Remix" [ref=e49] [cursor=pointer]:
+          - /url: /dashboard/song-remix
+          - img [ref=e50]
+          - text: Song Remix
+        - link "My Jobs" [ref=e54] [cursor=pointer]:
+          - /url: /dashboard/jobs
+          - img [ref=e55]
+          - text: My Jobs
+        - link "Settings" [ref=e57] [cursor=pointer]:
+          - /url: /dashboard/settings
+          - img [ref=e58]
+          - text: Settings
+      - generic [ref=e61]:
+        - generic [ref=e62]:
+          - generic [ref=e64]: A
+          - generic [ref=e65]:
+            - paragraph [ref=e66]: Admin
+            - paragraph [ref=e67]: alexandergudmundsson@gmail.com
+        - button "Sign out" [ref=e68] [cursor=pointer]:
+          - img [ref=e69]
+          - text: Sign out
+    - main [ref=e72]:
+      - generic [ref=e74]:
+        - generic [ref=e75]:
+          - img [ref=e77]
+          - generic [ref=e81]:
+            - heading "Song Remix" [level=1] [ref=e82]
+            - paragraph [ref=e83]: Split vocals from instrumentals or swap vocals with AI voice models
+        - generic [ref=e84]:
+          - generic [ref=e85]: Remix Mode
+          - generic [ref=e86]:
+            - button "Vocal Splitter Separate vocals & instrumentals with UVR5" [ref=e87] [cursor=pointer]:
+              - img [ref=e88]
+              - generic [ref=e93]: Vocal Splitter
+              - paragraph [ref=e94]: Separate vocals & instrumentals with UVR5
+            - button "Voice Swap Replace vocals with converted AI voice" [ref=e95] [cursor=pointer]:
+              - img [ref=e96]
+              - generic [ref=e100]: Voice Swap
+              - paragraph [ref=e101]: Replace vocals with converted AI voice
+        - generic [ref=e102]:
+          - generic [ref=e103]:
+            - button "Upload File" [ref=e104] [cursor=pointer]:
+              - img [ref=e105]
+              - text: Upload File
+            - button "Search Songs" [ref=e108] [cursor=pointer]:
+              - img [ref=e109]
+              - text: Search Songs
+          - generic [ref=e113] [cursor=pointer]:
+            - button "Choose File" [ref=e114]
+            - generic [ref=e115]:
+              - img [ref=e116]
+              - paragraph [ref=e119]: Drag & drop an audio file here
+              - paragraph [ref=e120]: or click to select (MP3, WAV, FLAC, up to 100MB)
+        - generic [ref=e160]:
+          - heading "Voice Model" [level=3] [ref=e161]:
+            - img [ref=e162]
+            - text: Voice Model
+          - button "Select a voice model..." [ref=e165] [cursor=pointer]:
+            - generic [ref=e166]: Select a voice model...
+            - img [ref=e167]
+          - generic [ref=e169]:
+            - generic [ref=e170]:
+              - generic [ref=e171]: "Pitch Shift: 0"
+              - slider [ref=e172] [cursor=pointer]: "0"
+            - generic [ref=e173]:
+              - generic [ref=e174]: "Index Rate: 0.75"
+              - slider [ref=e175] [cursor=pointer]: "0.75"
+        - generic [ref=e176]:
+          - generic [ref=e177]:
+            - heading "Voice Layers" [level=3] [ref=e178]:
+              - img [ref=e179]
+              - text: Voice Layers
+            - generic [ref=e184]:
+              - button [disabled] [ref=e185]:
+                - img [ref=e186]
+              - generic [ref=e187]: "1"
+              - button [ref=e188] [cursor=pointer]:
+                - img [ref=e189]
+          - paragraph [ref=e190]: "Single voice mode: Main vocal → Convert to selected model → Mix with instrumental"
+        - button "Swap Vocals" [disabled] [ref=e191]:
+          - img [ref=e192]
+          - text: Swap Vocals
+    - navigation [ref=e128]:
+      - generic [ref=e129]:
+        - link "Dashboard" [ref=e130] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e131]
+          - generic [ref=e136]: Dashboard
+        - link "Text" [ref=e137] [cursor=pointer]:
+          - /url: /dashboard/tts
+          - img [ref=e138]
+          - generic [ref=e142]: Text
+        - link "Audio" [ref=e143] [cursor=pointer]:
+          - /url: /dashboard/audio
+          - img [ref=e144]
+          - generic [ref=e148]: Audio
+        - link "Song" [ref=e149] [cursor=pointer]:
+          - /url: /dashboard/song-remix
+          - img [ref=e150]
+          - generic [ref=e154]: Song
+        - link "My" [ref=e155] [cursor=pointer]:
+          - /url: /dashboard/jobs
+          - img [ref=e156]
+          - generic [ref=e158]: My
+  - alert [ref=e7]
