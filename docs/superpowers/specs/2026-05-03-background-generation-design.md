@@ -24,7 +24,7 @@ Convert audio processing to an async job-based system with real-time progress po
 
 1. **Submit**: Frontend POST `/api/audio/process` — always async. Laravel returns job UUID immediately (202 Accepted).
 2. **Dispatch**: Laravel creates `JobQueue` record (status=`queued`), fires async HTTP POST to voice engine with `callback_url` and `job_uuid`.
-3. **Process**: Voice engine receives job, processes in a background thread.
+3. **Process**: Voice engine receives job, submits to ThreadPoolExecutor, returns 202 immediately.
 4. **Progress**: Voice engine POST `{callback_url}/internal/jobs/{uuid}/progress` back to Laravel at each step (updates `progress`, `progress_message`).
 5. **Complete**: Voice engine uploads output WAV to MinIO via S3 API at `user-generations/{user_id}/{job_uuid}.wav`, then POST `{callback_url}/internal/jobs/{uuid}/complete` with the S3 key.
 6. **Poll**: Frontend polls `GET /api/jobs/{uuid}` every 2-3 seconds, updates UI with real progress.
@@ -45,11 +45,19 @@ Both modes use the same backend (always async). The difference is purely fronten
 
 Modify `AudioProcessingController::process()` to **always** be async:
 - Create `JobQueue` record with status `queued`
-- Fire-and-forget HTTP POST to voice engine with `callback_url` (Laravel's internal URL) and `job_uuid`
-- Return `202 Accepted` with `{ job_id: uuid, status: "queued" }` immediately
-- The voice engine processes in a background thread and reports back via webhooks
+- POST to voice engine with `callback_url` (Laravel's internal URL) and `job_uuid`
+- **Check response**: if voice engine returns non-2xx (down, 500, timeout), immediately mark job as `failed` with error "Voice engine unavailable" and return 503 to frontend
+- If voice engine returns 202, return `202 Accepted` with `{ job_id: uuid, status: "queued" }` to frontend
+- Use a short HTTP timeout (5s) for the dispatch call — we're only waiting for the 202 acknowledgment, not processing
 
 The old synchronous path is removed. All processing is async.
+
+#### Concurrency Guard
+
+Before creating a new job, check if user already has an active job (status in `queued`, `processing`):
+- If yes: return `429 Too Many Requests` with `{ error: "You have an active job in progress", active_job_id: uuid }`
+- Frontend shows this to user and offers to cancel the existing job or wait
+- Admin users bypass this limit
 
 #### New Endpoint: Progress Webhook (internal)
 
@@ -69,6 +77,8 @@ Protected by shared secret header: voice engine sends `X-Internal-Token: {VOICE_
 ```
 
 Updates `JobQueue` record: `progress`, `progress_message`, `step_number`, `total_steps`.
+
+**Ordering guard**: Only update if incoming `step_number >= current step_number` on the record. Prevents stale/reordered updates from overwriting newer state.
 
 #### New Endpoint: Completion Webhook (internal)
 
@@ -93,6 +103,8 @@ Same `X-Internal-Token` auth as progress webhook.
 ```
 
 Updates `JobQueue`: status, output_path, completed_at, error_message. Duration and sample_rate stored in the existing `parameters` JSON field.
+
+**Idempotency**: If job is already `completed` or `failed`, ignore duplicate webhook calls (return 200 OK but don't update). This handles network retries safely.
 
 #### Modified: GET /api/jobs/{uuid}
 
@@ -159,26 +171,39 @@ Voice engine polls this before each major pipeline step. If `cancelled`, it stop
 
 ### 2. Voice Engine Changes
 
+#### Execution Model
+
+Processing runs in a **`concurrent.futures.ThreadPoolExecutor`** with `max_workers=1`. This is acceptable because:
+- ML inference is GPU-bound (releases GIL during CUDA operations)
+- UVR5 separation and RVC inference both use PyTorch which releases GIL for GPU ops
+- FastAPI's async event loop remains responsive for health checks and new request handling
+- Single worker ensures one GPU job at a time (matches concurrency guard in Laravel)
+
+The main event loop stays free to serve health checks, status endpoints, and accept the next job dispatch.
+
 #### Async Processing Endpoint
 
 Modify `/audio/process` to accept `callback_url`, `job_uuid`, and `user_id` parameters:
 
-- If `callback_url` present: process in background thread, return `{ status: "accepted", job_uuid }` immediately (202)
+- If `callback_url` present: submit to ThreadPoolExecutor, return `{ status: "accepted", job_uuid }` immediately (202)
 - If no `callback_url`: behave synchronously as before (for manual testing/debugging only — Laravel always sends callback_url in production)
 
 #### Progress Callback System
 
-At each pipeline step, POST progress to Laravel:
+At each pipeline step, POST progress to Laravel. Failures are non-fatal (logged but don't stop processing):
 
 ```python
 def report_progress(callback_url, job_uuid, progress, message, step, step_number, total_steps):
-    requests.post(f"{callback_url}/internal/jobs/{job_uuid}/progress", json={
-        "progress": progress,
-        "message": message,
-        "step": step,
-        "step_number": step_number,
-        "total_steps": total_steps,
-    }, timeout=5)
+    try:
+        requests.post(f"{callback_url}/internal/jobs/{job_uuid}/progress", json={
+            "progress": progress,
+            "message": message,
+            "step": step,
+            "step_number": step_number,
+            "total_steps": total_steps,
+        }, headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=5)
+    except Exception:
+        logger.warning(f"Failed to report progress for {job_uuid}, continuing")
 ```
 
 Progress steps for Voice Swap (multi-voice, 2 voices):
@@ -226,11 +251,23 @@ On completion, voice engine uploads output to MinIO via `boto3` S3 client:
 - Bucket: `morphvox`
 - Key: `user-generations/{user_id}/{job_uuid}.wav`
 - Uses same AWS credentials configured in voice engine environment
+- **Retry**: Up to 3 attempts with 2s backoff on upload failure
+- **If upload still fails**: report `failed` status to Laravel with error "Failed to save output file"
 - Reports completion to Laravel with the S3 key as `output_path`
+
+#### Completion Webhook Delivery
+
+Voice engine POSTs completion to Laravel with retry:
+- Up to 3 attempts with exponential backoff (2s, 4s, 8s)
+- If all retries fail: log error. File exists in MinIO but job stays `processing` — stale reaper will mark it failed after 10 min. This is acceptable for MVP; the file can be recovered manually by admin if needed.
 
 #### Cancellation
 
-Voice engine calls `GET {callback_url}/internal/jobs/{uuid}/status` before each major pipeline step (separation, conversion, mixing). If response returns `status: "cancelled"`, processing stops immediately, temp files are cleaned, and no completion webhook is sent.
+Voice engine calls `GET {callback_url}/internal/jobs/{uuid}/status` before each major pipeline step (separation, conversion, mixing). If response returns `status: "cancelled"`, processing stops immediately and temp files are cleaned.
+
+**If status check fails** (network error): assume NOT cancelled and continue processing. Better to complete a cancelled job than abort a running one due to transient network issue.
+
+**Cancellation latency**: Cancellation takes effect at the next step boundary. A single step (e.g., voice conversion) can take 30-60s. The UI should document this: "Cancellation may take up to 60 seconds to take effect."
 
 ### 3. Frontend Changes
 
@@ -278,8 +315,11 @@ interface AudioJobContextValue {
 }
 ```
 
-- On mount: fetches recent jobs (last 24h) from `GET /api/jobs?status=processing,completed`
-- Polls active (non-complete) jobs every 2-3 seconds
+- On mount: fetches active jobs (`status=queued,processing`) + last 5 completed jobs
+- **Polling strategy**: 
+  - First poll at 1s after submission (catches fast TTS/convert jobs)
+  - Then every 3s while `queued` or `processing`
+  - Stops polling when status reaches terminal state
 - Stops polling for each job when status reaches terminal state
 
 #### New: FloatingJobsWidget (Component)
@@ -309,6 +349,8 @@ Each page (Song Remix, Voice Convert, etc.) gets:
   - Submit job the same way but stay on page showing real progress
   - Progress bar uses actual polling data instead of fake percentages
   - On complete: show result inline (same as today)
+- **Quick-job optimization (TTS, Voice Convert)**: First poll fires at 1s. If job completes on first poll, user experience is nearly identical to the old synchronous flow — no jarring "submitted!" → "complete!" flicker.
+- If `429 Too Many Requests` returned: show inline error "You already have a generation in progress. Wait for it to finish or cancel it." with link to the active job in the floating widget.
 
 ### 4. Storage
 
@@ -320,7 +362,8 @@ Key: user-generations/{user_id}/{job_uuid}.wav
 ```
 
 - Voice engine uploads via `boto3` S3 client (same credentials in voice engine `.env`)
-- Laravel serves via `Storage::disk('s3')->temporaryUrl()` (signed URLs, 1-hour expiry)
+- Laravel serves via `Storage::disk('s3')->temporaryUrl()` (signed URLs, 1-hour expiry, re-generated on each request)
+- If user requests a download/play URL after expiry, frontend calls `GET /api/jobs/{id}` again which generates a fresh URL
 - No direct nginx exposure of user files — all access through signed URLs
 
 ### 5. Security
@@ -358,9 +401,17 @@ This handles voice engine crashes or network failures where no completion webhoo
 
 The completion webhook handler records a `UsageEvent` (same as the current sync controller does on success). This ensures usage tracking isn't lost in the async flow.
 
-### 8. Admin Visibility
+### 9. Admin Visibility
 
 The existing admin Jobs page already displays all jobs. No additional admin work is needed for MVP — admins can already view status, and the signed URL generation gives them download access to any output.
+
+### 10. Database Indexes
+
+Add composite index for the cleanup and stale-reaper queries:
+```sql
+CREATE INDEX idx_jobs_status_updated ON jobs_queue (status, updated_at);
+CREATE INDEX idx_jobs_user_status ON jobs_queue (user_id, status);
+```
 
 ## Success Criteria
 
