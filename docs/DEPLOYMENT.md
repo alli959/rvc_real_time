@@ -211,11 +211,19 @@ ssh -p 36770 root@ssh1.vast.ai 'supervisorctl restart voice-engine'
 
 For **PHP/Laravel changes**: Just rsync the files — PHP reloads on each request.  
 For **Voice Engine changes**: Restart `voice-engine` after syncing.  
-For **Frontend changes**: Must rebuild Next.js:
+For **Frontend changes**: Must rebuild Next.js (including copy steps):
 ```bash
 cd /workspace/rvc_real_time/apps/web
 npm run build
+cp -r .next/static .next/standalone/.next/static
+cp -r public .next/standalone/public
 supervisorctl restart nextjs
+```
+
+For **Database migrations**:
+```bash
+cd /workspace/rvc_real_time/apps/api
+php artisan migrate
 ```
 
 ### Database access
@@ -229,8 +237,15 @@ mysql -u morphvox -pMorphV0x2026Prod morphvox
 ```bash
 cd /workspace/rvc_real_time/apps/web
 NEXT_PUBLIC_API_URL=https://morphvox.net/api npm run build
+
+# CRITICAL: Next.js standalone mode requires copying static assets
+cp -r .next/static .next/standalone/.next/static
+cp -r public .next/standalone/public
+
 supervisorctl restart nextjs
 ```
+
+> ⚠️ **Without the `cp` steps**, the frontend will serve pages without CSS/JS/images. The standalone build only contains server code — static assets must be copied manually.
 
 ---
 
@@ -362,6 +377,73 @@ The scripts in `scripts/` and the Docker configs in `infra/` can guide what pack
 | Frontend | `npm run dev` (port 3000) | Standalone build (port 3000) |
 | HTTPS | No (localhost) | Cloudflare Tunnel |
 | Domain | localhost | morphvox.net |
+
+---
+
+## Agent Workflow Guide
+
+> **For new agents:** Read this section first to understand the development → deployment workflow.
+
+### Development Flow
+
+1. **Code lives at:** `/home/alexanderg/rvc_real_time` (local dev machine, WSL Ubuntu)
+2. **Git repo:** `alli959/rvc_real_time` on GitHub (main branch)
+3. **Production runs on:** Vast.ai RTX 3090 instance (`ssh -p <PORT> root@ssh1.vast.ai`)
+4. **Domain:** `morphvox.net` (frontend), `admin.morphvox.net` (admin panel)
+
+### Making Changes
+
+```
+Local dev → Git commit → Push to GitHub → SSH to Vast.ai → git pull → restart affected service
+```
+
+**Step-by-step:**
+```bash
+# 1. Make changes locally in the repo
+# 2. Commit and push
+git add . && git commit -m "feat: ..." && git push origin main
+
+# 3. On the Vast.ai server
+ssh -p <PORT> root@ssh1.vast.ai
+cd /workspace/rvc_real_time
+git pull origin main
+
+# 4. Restart affected services
+# For Laravel API changes (no restart needed, PHP reloads per-request)
+# For voice engine:
+supervisorctl restart voice-engine
+# For frontend:
+cd apps/web && npm run build && cp -r .next/static .next/standalone/.next/static && cp -r public .next/standalone/public && supervisorctl restart nextjs
+# For database changes:
+cd apps/api && php artisan migrate
+```
+
+### Key Gotchas
+
+| Issue | Cause | Fix |
+|-------|-------|-----|
+| Frontend shows no CSS/images | Forgot `cp` after `npm run build` | Copy .next/static and public to standalone |
+| 503 Gateway timeout | Cloudflare 100s free-tier limit | Use background jobs (async) for long tasks |
+| Nginx returns 404 on API | PHP-FPM socket missing | `mkdir -p /run/php && supervisorctl restart php-fpm` |
+| Voice engine CUDA OOM | GPU memory leak | `supervisorctl restart voice-engine` |
+| `NEXT_PUBLIC_` var change not working | Vars baked at build time | Must rebuild frontend |
+| YouTube "video not available" | yt-dlp needs JS runtime | Verify `js_runtimes: {'node': {}}` in ydl_opts |
+
+### Architecture TL;DR
+
+- **All services run on ONE machine** (no microservices, no k8s)
+- **No Docker in production** — everything is native processes managed by supervisord
+- **Cloudflare Tunnel** handles HTTPS + domain routing (no SSL certs on server)
+- **MinIO** on localhost:9000 — only accessible from the server (use Laravel proxy for client downloads)
+- **One GPU** = one voice conversion at a time (concurrency handled by job queue)
+
+### Relevant Documentation
+
+- `docs/DEPLOYMENT.md` — This file (full deployment reference)
+- `docs/superpowers/specs/` — Feature design specifications
+- `docs/superpowers/plans/` — Implementation plans for features
+- `MODELS.md` — Voice model management
+- `PROJECT_SUMMARY.md` — High-level project overview
 
 ---
 
