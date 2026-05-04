@@ -2640,6 +2640,14 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         
         if voice_count <= 1:
             # Single voice swap
+            
+            # Pitch-shift entire source BEFORE separation so voice and
+            # instrumental are guaranteed to be at the same pitch
+            if pitch_shift_all != 0:
+                step += 1
+                report_progress(progress_url, 15, f"Transposing audio ({pitch_shift_all:+d} semitones)...", "pitch_shift", step, total_steps)
+                audio = librosa.effects.pitch_shift(audio.astype(np.float32), sr=sr, n_steps=pitch_shift_all)
+            
             step += 1
             report_progress(progress_url, 25, "Separating vocals...", "separate", step, total_steps)
             if check_cancelled(status_url):
@@ -2649,14 +2657,6 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             vocals = ensure_length(vocals, target_length_44k)
             instrumental = ensure_length(instrumental, target_length_44k)
             clear_memory()
-            
-            # Pitch-shift vocals and instrumental BEFORE voice conversion
-            # so RVC receives audio at the target pitch and converts naturally
-            if pitch_shift_all != 0:
-                step += 1
-                report_progress(progress_url, 35, f"Transposing audio ({pitch_shift_all:+d} semitones)...", "pitch_shift", step, total_steps)
-                vocals = librosa.effects.pitch_shift(vocals.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
-                instrumental = librosa.effects.pitch_shift(instrumental.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
             
             step += 1
             report_progress(progress_url, 50, "Converting voice...", "convert", step, total_steps)
