@@ -2662,6 +2662,11 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             del vocals
             clear_memory()
             
+            # Shift instrumental to match voice pitch so they stay in the same key
+            voice_pitch = vc_config.get('f0_up_key', 0)
+            if voice_pitch != 0:
+                instrumental = librosa.effects.pitch_shift(instrumental.astype(np.float32), sr=uvr_output_sr, n_steps=voice_pitch)
+            
             step += 1
             report_progress(progress_url, 80, "Mixing audio...", "mix", step, total_steps)
             output = instrumental + converted
@@ -2713,6 +2718,12 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             # Mix all voices
             step += 1
             report_progress(progress_url, 90, "Mixing all voices...", "mix", step, total_steps)
+            
+            # Shift instrumental to match lead voice pitch so they stay in the same key
+            lead_pitch = voice_configs[0].get('f0_up_key', 0) if voice_configs else 0
+            if lead_pitch != 0:
+                instrumental_clean = librosa.effects.pitch_shift(instrumental_clean.astype(np.float32), sr=uvr_output_sr, n_steps=lead_pitch)
+            
             output = instrumental_clean
             for cv in converted_vocals_list:
                 cv = ensure_length(cv, target_length_44k)
