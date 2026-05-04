@@ -55,6 +55,7 @@ The old synchronous path is removed. All processing is async.
 #### Concurrency Guard
 
 Before creating a new job, check if user already has an active job (status in `queued`, `processing`):
+- Use `SELECT ... FOR UPDATE` to lock the user's active jobs row, preventing race conditions from double-clicks or frontend retries
 - If yes: return `429 Too Many Requests` with `{ error: "You have an active job in progress", active_job_id: uuid }`
 - Frontend shows this to user and offers to cancel the existing job or wait
 - Admin users bypass this limit
@@ -72,13 +73,15 @@ Protected by shared secret header: voice engine sends `X-Internal-Token: {VOICE_
   "message": "Converting voice 1 (Lexi)...",
   "step": "convert_voice", // machine-readable step ID
   "step_number": 3,        // current step
-  "total_steps": 6         // total steps
+  "total_steps": 8         // total steps (varies by job type)
 }
 ```
 
 Updates `JobQueue` record: `progress`, `progress_message`, `step_number`, `total_steps`.
 
 **Ordering guard**: Only update if incoming `step_number >= current step_number` on the record. Prevents stale/reordered updates from overwriting newer state.
+
+**Terminal state guard**: If job is in a terminal state (`completed`, `failed`, `cancelled`), return 200 OK but do not update. If UUID doesn't exist, return 404. Only accept progress updates when status is `queued` or `processing`.
 
 #### New Endpoint: Completion Webhook (internal)
 
@@ -106,6 +109,8 @@ Updates `JobQueue`: status, output_path, completed_at, error_message. Duration a
 
 **Idempotency**: If job is already `completed` or `failed`, ignore duplicate webhook calls (return 200 OK but don't update). This handles network retries safely.
 
+**Cancel race**: If a completion webhook arrives for a `cancelled` job (voice engine finished before checking cancellation status), accept the completion — override status to `completed`. The user gets their result; cancellation was "too late" and that's fine. Better to give the user a completed file than to discard work already done.
+
 #### Modified: GET /api/jobs/{uuid}
 
 Already exists. Returns job with progress info. `output_url` is a **signed temporary URL** computed at read time (not stored in DB), generated from `output_path` via `Storage::disk('s3')->temporaryUrl()`:
@@ -131,7 +136,7 @@ When completed:
   "status": "completed",
   "progress": 100,
   "progress_message": "Complete",
-  "output_url": "http://localhost:9000/morphvox/user-generations/1/abc-123.wav?X-Amz-Expires=3600&...",
+  "output_url": "/api/jobs/abc-123/stream",
   "duration": 245.3,
   "sample_rate": 44100,
   "saved": false,
@@ -139,6 +144,8 @@ When completed:
   "completed_at": "2026-05-03T23:01:30Z"
 }
 ```
+
+Note: `output_url` is a **Laravel proxy endpoint** (not a direct MinIO presigned URL). MinIO runs on localhost:9000 which is inaccessible to remote users. Laravel streams the file through `GET /api/jobs/{uuid}/stream` which internally fetches from MinIO and pipes to the response. This avoids exposing MinIO to the internet while working through Cloudflare.
 
 #### New Endpoint: Save/Unsave Job Output
 
@@ -167,6 +174,7 @@ Voice engine polls this before each major pipeline step. If `cancelled`, it stop
 
 `php artisan jobs:cleanup` (runs hourly via cron/scheduler)
 - Delete files for jobs where `saved=false` AND `completed_at < now() - 24 hours`
+- Delete files for jobs where `status='failed'` AND `output_path IS NOT NULL` AND `updated_at < now() - 24 hours` (handles orphaned files from failed webhook delivery)
 - Update job status to indicate file removed (keep record for history)
 
 ### 2. Voice Engine Changes
@@ -326,7 +334,7 @@ interface AudioJobContextValue {
 
 Rendered in the dashboard layout, always visible:
 
-- **Collapsed state**: Small badge in bottom-right corner showing count of active jobs (e.g., "2 ⚡")
+- **Collapsed state**: Small badge in bottom-right corner showing count of non-dismissed jobs (active + recently completed, e.g., "1 ⚡" for an in-progress job, "1 ✓" for a just-completed one)
 - **Expanded state** (on click): Shows list of jobs with:
   - Progress bar + current step message
   - Model name + type icon
@@ -357,21 +365,23 @@ Each page (Song Remix, Voice Convert, etc.) gets:
 Output files are stored in MinIO (S3-compatible, running locally on the Vast.ai instance):
 
 ```
-Bucket: morphvox
+Bucket: morphvox  (set via AWS_BUCKET env var; code default is 'voiceforge' but production .env overrides to 'morphvox')
 Key: user-generations/{user_id}/{job_uuid}.wav
 ```
 
 - Voice engine uploads via `boto3` S3 client (same credentials in voice engine `.env`)
-- Laravel serves via `Storage::disk('s3')->temporaryUrl()` (signed URLs, 1-hour expiry, re-generated on each request)
-- If user requests a download/play URL after expiry, frontend calls `GET /api/jobs/{id}` again which generates a fresh URL
-- No direct nginx exposure of user files — all access through signed URLs
+- Laravel proxies downloads via `GET /api/jobs/{uuid}/stream` — streams directly from MinIO through PHP (avoids exposing MinIO to the internet)
+- For large files (>100MB), consider adding `Content-Length` and `Accept-Ranges` headers to support resumable downloads
+- No direct nginx/internet exposure of MinIO — all access through Laravel proxy
 
 ### 5. Security
 
-- **Webhook auth**: Voice engine sends `X-Internal-Token` header with a shared secret (set in both Laravel `.env` and voice engine `.env`). Laravel middleware validates token on all `/internal/*` routes.
-- **File access**: Users never access MinIO directly. Laravel generates signed temporary URLs (1-hour expiry) at read time.
+- **Webhook auth**: Voice engine sends `X-Internal-Token` header with a shared secret (≥32 random bytes, set in both Laravel `.env` and voice engine `.env`). Laravel middleware validates token on all `/internal/*` routes.
+- **Internal route isolation**: The nginx config blocks `/internal/*` routes from external access. Only requests from `127.0.0.1` (voice engine on same host) are allowed. Cloudflare tunnel never sees these routes.
+- **XSS prevention**: `progress_message` from webhooks is stored as plain text. Frontend renders it with React's default escaping (no `dangerouslySetInnerHTML`).
+- **File access**: Users never access MinIO directly. Laravel proxies file downloads through `GET /api/jobs/{uuid}/stream`.
 - **Job access**: Users can only poll/cancel their own jobs (existing `user_id` check).
-- **Admin**: Can see all jobs and generate download URLs for any user's files via admin panel.
+- **Admin**: Can see all jobs and download any user's files via admin panel.
 
 ### 6. Database Changes
 
@@ -392,10 +402,12 @@ Notes:
 ### 7. Stale Job Reaper
 
 A scheduled command (`php artisan jobs:reap-stale`, runs every 5 minutes) marks jobs as `failed` if:
-- Status is `processing` AND `updated_at < now() - 10 minutes` (no progress update in 10 min)
+- Status is `processing` AND `updated_at < now() - 15 minutes` (no progress update in 15 min)
 - Status is `queued` AND `created_at < now() - 5 minutes` (never started)
 
 This handles voice engine crashes or network failures where no completion webhook fires.
+
+The 15-minute threshold is safe because the voice engine sends progress updates at each step boundary (typically every 10-60s for a step). For very long audio files where a single step might approach 10+ minutes, the voice engine sends a periodic heartbeat (progress update with same step_number) every 5 minutes within long-running steps.
 
 ### 8. Usage Tracking
 
@@ -407,11 +419,12 @@ The existing admin Jobs page already displays all jobs. No additional admin work
 
 ### 10. Database Indexes
 
-Add composite index for the cleanup and stale-reaper queries:
+Add composite index for the stale-reaper query:
 ```sql
 CREATE INDEX idx_jobs_status_updated ON jobs_queue (status, updated_at);
-CREATE INDEX idx_jobs_user_status ON jobs_queue (user_id, status);
 ```
+
+Note: `(user_id, status)` index already exists in the original migration.
 
 ## Success Criteria
 
