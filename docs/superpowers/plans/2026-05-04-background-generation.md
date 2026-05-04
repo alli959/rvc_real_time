@@ -346,6 +346,7 @@ $job = \DB::transaction(function () use ($user, $validated, $voiceModel, $voiceC
         'swap' => JobQueue::TYPE_AUDIO_SWAP,
         'split' => JobQueue::TYPE_AUDIO_SPLIT,
         'convert' => JobQueue::TYPE_AUDIO_CONVERT,
+        'tts' => JobQueue::TYPE_TTS,
     ];
 
     return JobQueue::create([
@@ -536,6 +537,8 @@ public function cancel(Request $request, JobQueue $job)
         abort(422, 'Cannot cancel a finished job');
     }
 
+    $wasProcessing = $job->status === JobQueue::STATUS_PROCESSING;
+
     $job->update([
         'status' => JobQueue::STATUS_CANCELLED,
         'completed_at' => now(),
@@ -543,7 +546,7 @@ public function cancel(Request $request, JobQueue $job)
 
     return response()->json([
         'status' => 'cancelled',
-        'message' => $job->status === JobQueue::STATUS_PROCESSING
+        'message' => $wasProcessing
             ? 'Cancellation requested. May take up to 60 seconds to stop.'
             : 'Job cancelled',
     ]);
@@ -578,7 +581,7 @@ public function unsave(Request $request, JobQueue $job)
 }
 ```
 
-- [ ] **Step 3: Update show() to include new fields and output_url**
+- [ ] **Step 4: Update show() to include new fields and output_url**
 
 Modify the `show()` response to include:
 ```php
@@ -600,7 +603,7 @@ if ($job->isCompleted() && $job->output_path) {
 return response()->json($data);
 ```
 
-- [ ] **Step 4: Register new routes**
+- [ ] **Step 5: Register new routes**
 
 Add to `routes/api.php` inside the authenticated jobs prefix group:
 ```php
@@ -609,12 +612,12 @@ Route::post('/{job}/save', [JobController::class, 'save']);
 Route::post('/{job}/unsave', [JobController::class, 'unsave']);
 ```
 
-- [ ] **Step 5: Verify routes**
+- [ ] **Step 6: Verify routes**
 
 Run: `cd apps/api && php artisan route:list --path=jobs`
 Expected: Shows stream, save, unsave routes.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add apps/api/app/Http/Controllers/Api/JobController.php apps/api/routes/api.php
@@ -1105,6 +1108,8 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
                        status_url: str, job_uuid: str, user_id: int):
     """Background job processing with progress reporting."""
     try:
+        import base64
+        import io
         import librosa
         import tempfile
         import soundfile as sf
@@ -1360,8 +1365,9 @@ export const jobsApi = {
     return response.data;
   },
 
-  cancel: async (uuid: string): Promise<void> => {
-    await api.post(`/jobs/${uuid}/cancel`);
+  cancel: async (uuid: string): Promise<{ status: string; message: string }> => {
+    const response = await api.post(`/jobs/${uuid}/cancel`);
+    return response.data;
   },
 
   save: async (uuid: string): Promise<void> => {
@@ -1398,6 +1404,7 @@ git commit -m "feat: add job queue API functions"
 
 import { createContext, useContext, useState, useEffect, useRef, useCallback } from 'react';
 import { jobsApi, JobResponse } from '@/lib/api';
+import { toast } from 'sonner';
 
 export interface ActiveJob {
   id: string;
@@ -1827,20 +1834,31 @@ Next to the existing submit button, add:
 </button>
 ```
 
-The `handleBackgroundSubmit` function submits the job but doesn't poll inline — instead shows a toast and resets the form:
+The `handleBackgroundSubmit` function submits the job but doesn't poll inline — instead shows a toast and resets the form. Uses `submitJob` from AudioJobProvider (same as foreground mode):
 
 ```tsx
 const handleBackgroundSubmit = async () => {
   try {
     setIsProcessing(true);
-    const formData = buildFormData(); // same payload as handleSubmit
-    const response = await submitAudioJob(formData);
+    
+    // Same payload construction as foreground handler
+    const payload = {
+      mode: selectedMode,
+      audio: audioBase64,
+      model_id: selectedModel?.id,
+      voice_configs: voiceConfigs,
+      pitch_shift_all: pitchShift,
+      youtube_url: youtubeUrl || undefined,
+    };
+
+    await submitJob(async () => {
+      const response = await api.post('/audio/process', payload);
+      return { job_id: response.data.job_id };
+    });
     
     // Don't poll here — the AudioJobProvider's global polling handles it
-    // Just show a toast notification and reset
     toast.success('Job submitted! Check the floating widget for progress.');
     setIsProcessing(false);
-    // Form stays as-is so user can tweak and submit again
   } catch (err: any) {
     if (err.response?.status === 429) {
       setError('You already have a generation in progress. Wait for it to finish or cancel it.');
@@ -1998,9 +2016,5 @@ git commit -m "feat: complete background generation integration"
 - **Deploy order matters**: Database migration must run before code that uses new columns
 - **Next.js standalone**: After every build, copy `.next/static` → `.next/standalone/.next/static` and `public` → `.next/standalone/public`
 - **Supervisor restart**: After voice engine changes, restart via `supervisorctl restart voice-engine`
-- **The voice engine `_process_job_async` function** (Task 11 Step 3) needs detailed implementation that integrates with the existing ~200-line pipeline. The skeleton is provided; the implementer should:
-  1. Extract the existing sync processing into a helper function
-  2. Insert `report_progress()` calls at each step boundary
-  3. Insert `check_cancelled()` calls before each major step
-  4. Add S3 upload at the end
-  5. Wrap in try/except with `report_failure()` on error
+- **The voice engine `_process_job_async` function** (Task 11 Step 3) contains the full implementation for all modes (split, convert, swap single-voice, swap multi-voice). The implementer should verify it integrates correctly with the existing `separate_vocals()`, `convert_vocal()`, and `ensure_length()` functions already defined in `http_api.py`
+- **TTS mode**: Not included in the initial implementation — add as follow-up once the core pipeline is stable. The type constant `TYPE_TTS` exists but the async pipeline for TTS can be added later.
