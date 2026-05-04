@@ -67,8 +67,10 @@ export function AudioJobProvider({ children }: { children: React.ReactNode }) {
   useEffect(() => {
     const fetchInitial = async () => {
       try {
-        const active = await jobsApi.list({ status: 'processing' });
-        const queued = await jobsApi.list({ status: 'queued' });
+        const activeResp = await jobsApi.list({ status: 'processing' });
+        const queuedResp = await jobsApi.list({ status: 'queued' });
+        const active = activeResp?.data || activeResp || [];
+        const queued = queuedResp?.data || queuedResp || [];
         const all = [...active, ...queued];
         setJobs(all.map(mapJob));
       } catch (e) {

@@ -1673,11 +1673,11 @@ export interface JobResponse {
 }
 
 export const jobsApi = {
-  list: async (params?: { status?: string; page?: number }): Promise<JobResponse[]> => {
+  list: async (params?: { status?: string; page?: number }): Promise<any> => {
     const queryStr = params?.status ? `?status=${params.status}` : '';
     const pageStr = params?.page ? `${queryStr ? '&' : '?'}page=${params.page}` : '';
     const response = await api.get(`/jobs${queryStr}${pageStr}`);
-    return response.data.data || response.data;
+    return response.data;
   },
 
   get: async (uuid: string): Promise<JobResponse> => {
