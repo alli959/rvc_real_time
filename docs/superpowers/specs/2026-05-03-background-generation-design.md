@@ -23,12 +23,12 @@ Convert audio processing to an async job-based system with real-time progress po
 ### Request Flow
 
 1. **Submit**: Frontend POST `/api/audio/process` — always async. Laravel returns job UUID immediately (202 Accepted).
-2. **Dispatch**: Laravel creates `JobQueue` record (status=`queued`), fires async HTTP POST to voice engine with `callback_url` and `job_uuid`.
+2. **Dispatch**: Laravel creates `JobQueue` record (status=`queued`), fires async HTTP POST to voice engine with three webhook URLs (`progress_url`, `complete_url`, `status_url`) and `job_uuid`.
 3. **Process**: Voice engine receives job, submits to ThreadPoolExecutor, returns 202 immediately.
-4. **Progress**: Voice engine POST `{callback_url}/internal/jobs/{uuid}/progress` back to Laravel at each step (updates `progress`, `progress_message`).
-5. **Complete**: Voice engine uploads output WAV to MinIO via S3 API at `user-generations/{user_id}/{job_uuid}.wav`, then POST `{callback_url}/internal/jobs/{uuid}/complete` with the S3 key.
+4. **Progress**: Voice engine POSTs to `progress_url` at each step (updates `progress`, `progress_message`).
+5. **Complete**: Voice engine uploads output to MinIO via S3 API at `user-generations/{user_id}/{job_uuid}.wav`, then POSTs to `complete_url` with the S3 key.
 6. **Poll**: Frontend polls `GET /api/jobs/{uuid}` every 2-3 seconds, updates UI with real progress.
-7. **Retrieve**: Frontend gets signed download URL from completed job response, plays/downloads.
+7. **Retrieve**: Frontend streams audio via `/api/jobs/{uuid}/stream`.
 
 ### Foreground vs Background Mode
 
@@ -141,7 +141,7 @@ Already exists. Returns job with progress info. `output_url` is a **Laravel prox
 }
 ```
 
-When completed:
+When completed (single-output):
 ```json
 {
   "id": "abc-123",
@@ -157,6 +157,24 @@ When completed:
 }
 ```
 
+When completed (audio_split — multi-output):
+```json
+{
+  "id": "abc-123",
+  "status": "completed",
+  "progress": 100,
+  "progress_message": "Complete",
+  "output_url": "/api/jobs/abc-123/stream?track=vocals",
+  "output_urls": {
+    "vocals": "/api/jobs/abc-123/stream?track=vocals",
+    "instrumental": "/api/jobs/abc-123/stream?track=instrumental"
+  },
+  "saved": false,
+  "created_at": "2026-05-03T23:00:00Z",
+  "completed_at": "2026-05-03T23:01:30Z"
+}
+```
+
 Note: `output_url` is a **Laravel proxy endpoint** (not a direct MinIO presigned URL). MinIO runs on localhost:9000 which is inaccessible to remote users. Laravel streams the file through `GET /api/jobs/{uuid}/stream` which internally fetches from MinIO and pipes to the response. This avoids exposing MinIO to the internet while working through Cloudflare.
 
 #### New Endpoint: Stream Job Output
@@ -165,11 +183,13 @@ Note: `output_url` is a **Laravel proxy endpoint** (not a direct MinIO presigned
 
 Auth: Job owner or admin. Returns the audio file streamed from MinIO.
 
-- Uses `Storage::disk('s3')->readStream($job->output_path)` piped to `response()->stream()`
+- **Single-output jobs**: streams the single file
+- **Multi-output jobs** (audio_split): accepts `?track=vocals` or `?track=instrumental` query param (defaults to `vocals`)
+- Uses `Storage::disk('s3')->readStream($path)` piped to `response()->stream()`
 - Response headers:
   - `Content-Type: audio/wav`
   - `Content-Length: {file_size_bytes}`
-  - `Content-Disposition: inline; filename="{job_uuid}.wav"` (or `attachment` if `?download=1` query param)
+  - `Content-Disposition: inline; filename="{job_uuid}_{track}.wav"` (or `attachment` if `?download=1` query param)
   - `Accept-Ranges: bytes` (enables browser seeking in audio player)
 - Supports HTTP Range requests for partial content (206) — required for `<audio>` element seeking
 - Memory-safe: streams in chunks (8KB), never loads full file into PHP memory
@@ -224,10 +244,10 @@ Implementation: Track with a simple `AtomicInteger` or `threading.Lock` counter.
 
 #### Async Processing Endpoint
 
-Modify `/audio/process` to accept `callback_url`, `job_uuid`, and `user_id` parameters:
+Modify `/audio/process` to accept `progress_url`, `complete_url`, `status_url`, `job_uuid`, and `user_id` parameters:
 
-- If `callback_url` present: submit to ThreadPoolExecutor, return `{ status: "accepted", job_uuid }` immediately (202)
-- If no `callback_url`: behave synchronously as before (for manual testing/debugging only — Laravel always sends callback_url in production)
+- If `progress_url` present: submit to ThreadPoolExecutor, return `{ status: "accepted", job_uuid }` immediately (202)
+- If no `progress_url`: behave synchronously as before (for manual testing/debugging only — Laravel always sends URLs in production)
 
 #### Progress Callback System
 
@@ -319,11 +339,15 @@ Usage: Start heartbeat before each long step, stop it after. The callback re-cal
 
 On completion, voice engine uploads output to MinIO via `boto3` S3 client (new dependency — add to `requirements.txt`):
 - Bucket: `morphvox`
-- Key: `user-generations/{user_id}/{job_uuid}.wav`
+- **Single-output jobs** (audio_swap, audio_convert, tts): Key = `user-generations/{user_id}/{job_uuid}.wav`
+- **Multi-output jobs** (audio_split): Uploads two files:
+  - `user-generations/{user_id}/{job_uuid}_vocals.wav`
+  - `user-generations/{user_id}/{job_uuid}_instrumental.wav`
+  - `output_path` stored as comma-separated: `"user-generations/1/abc_vocals.wav,user-generations/1/abc_instrumental.wav"`
 - Uses same AWS credentials configured in voice engine environment
 - **Retry**: Up to 3 attempts with 2s backoff on upload failure
 - **If upload still fails**: report `failed` status to Laravel with error "Failed to save output file"
-- Reports completion to Laravel with the S3 key as `output_path`
+- Reports completion to Laravel with the S3 key(s) as `output_path`
 
 #### Completion Webhook Delivery
 
@@ -469,7 +493,7 @@ A scheduled command (`php artisan jobs:reap-stale`, runs every 5 minutes) marks 
 
 This handles voice engine crashes or network failures where no completion webhook fires.
 
-The 15-minute threshold is safe because the voice engine sends progress updates at each step boundary (typically every 10-60s for a step). For very long audio files where a single step might approach 10+ minutes, the voice engine sends a periodic heartbeat (progress update with same step_number) every 5 minutes within long-running steps.
+The 15-minute threshold is safe because the voice engine sends progress updates at each step boundary (typically every 10-60s for a step). For very long audio files where a single step might approach 10+ minutes, the voice engine sends a periodic heartbeat (progress update with same step_number) every 3 minutes within long-running steps.
 
 ### 8. Usage Tracking
 
