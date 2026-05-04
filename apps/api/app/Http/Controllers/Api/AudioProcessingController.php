@@ -112,131 +112,119 @@ class AudioProcessingController extends Controller
             }
         }
 
-        // Determine job type based on mode
-        $jobType = match($mode) {
-            'convert' => 'audio_convert',
-            'split' => 'audio_split',
-            'swap' => 'audio_swap',
-            default => 'audio_process',
-        };
+        // Concurrency guard: one active job per user (admins exempt)
+        $activeJob = null;
+        $job = \DB::transaction(function () use ($user, $validated, $voiceModel, $voiceCount, $mode, $sampleRate, $voiceConfigs, &$activeJob) {
+            $activeJob = JobQueue::forUser($user->id)
+                ->active()
+                ->lockForUpdate()
+                ->first();
 
-        // Create job record
-        $job = JobQueue::create([
-            'user_id' => $user->id,
-            'voice_model_id' => $voiceModel?->id,
-            'type' => $jobType,
-            'status' => JobQueue::STATUS_PROCESSING,
-            'parameters' => [
-                'mode' => $mode,
-                'sample_rate' => $sampleRate,
-                'f0_up_key' => $validated['f0_up_key'] ?? 0,
-                'index_rate' => $validated['index_rate'] ?? 0.75,
-                'pitch_shift_all' => $validated['pitch_shift_all'] ?? 0,
-                'model_name' => $voiceModel?->name,
-                'voice_count' => $voiceCount,
-            ],
-            'started_at' => now(),
-        ]);
+            if ($activeJob && !$user->is_admin) {
+                return null;
+            }
 
-        try {
-            // Call voice engine
-            $voiceEngineUrl = config('services.voice_engine.base_url', 'http://localhost:8001');
-            
-            $payload = [
-                'audio' => $validated['audio'],
-                'sample_rate' => $sampleRate,
-                'mode' => $mode,
-                'f0_up_key' => $validated['f0_up_key'] ?? 0,
-                'index_rate' => $validated['index_rate'] ?? 0.75,
-                'pitch_shift_all' => $validated['pitch_shift_all'] ?? 0,
-                'instrumental_pitch' => $validated['instrumental_pitch'] ?? null,
-                'extract_all_vocals' => $validated['extract_all_vocals'] ?? false, // Default to main vocal only
-                'voice_count' => $voiceCount,
+            $typeMap = [
+                'swap' => JobQueue::TYPE_AUDIO_SWAP,
+                'split' => JobQueue::TYPE_AUDIO_SPLIT,
+                'convert' => JobQueue::TYPE_AUDIO_CONVERT,
             ];
 
-            if ($modelPath) {
-                $payload['model_path'] = $modelPath;
-                $payload['index_path'] = $indexPath;
-            }
-            
-            // Add checkpoint if specified (for model versioning)
-            if (!empty($validated['checkpoint'])) {
-                $payload['checkpoint'] = $validated['checkpoint'];
-            }
-            
-            if ($voiceConfigs) {
-                $payload['voice_configs'] = $voiceConfigs;
-            }
-
-            $response = Http::timeout(300)->post("{$voiceEngineUrl}/audio/process", $payload);
-
-            if (!$response->successful()) {
-                $job->update([
-                    'status' => JobQueue::STATUS_FAILED,
-                    'error_message' => 'Audio processing failed',
-                    'error_details' => ['response' => $response->json()],
-                    'completed_at' => now(),
-                ]);
-                
-                // Check for training in progress error (503)
-                $detail = $response->json('detail');
-                if (is_array($detail) && ($detail['code'] ?? null) === 'TRAINING_IN_PROGRESS') {
-                    return response()->json([
-                        'error' => 'Service unavailable',
-                        'code' => 'TRAINING_IN_PROGRESS',
-                        'message' => $detail['message'] ?? 'Training is in progress. Please wait.',
-                        'job_id' => $job->uuid,
-                    ], 503);
-                }
-
-                return response()->json([
-                    'error' => 'Audio processing failed',
-                    'message' => is_array($detail) ? ($detail['message'] ?? 'Unknown error') : ($detail ?? 'Unknown error'),
-                    'job_id' => $job->uuid,
-                ], $response->status() >= 400 && $response->status() < 600 ? $response->status() : 500);
-            }
-
-            $result = $response->json();
-
-            // Record usage if model was used
-            if ($voiceModel && in_array($mode, ['convert', 'swap'])) {
-                UsageEvent::create([
-                    'user_id' => $user->id,
-                    'event_type' => 'audio_conversion',
-                    'voice_model_id' => $voiceModel->id,
-                    'metadata' => [
-                        'mode' => $mode,
-                        'f0_up_key' => $validated['f0_up_key'] ?? 0,
-                    ],
-                ]);
-                $voiceModel->incrementUsage();
-            }
-
-            // Mark job as completed
-            $job->update([
-                'status' => JobQueue::STATUS_COMPLETED,
-                'completed_at' => now(),
-                'progress' => 100,
+            return JobQueue::create([
+                'user_id' => $user->id,
+                'voice_model_id' => $voiceModel?->id,
+                'type' => $typeMap[$mode] ?? JobQueue::TYPE_AUDIO_SWAP,
+                'status' => JobQueue::STATUS_QUEUED,
+                'parameters' => [
+                    'mode' => $mode,
+                    'sample_rate' => $sampleRate,
+                    'f0_up_key' => $validated['f0_up_key'] ?? 0,
+                    'index_rate' => $validated['index_rate'] ?? 0.75,
+                    'pitch_shift_all' => $validated['pitch_shift_all'] ?? 0,
+                    'model_name' => $voiceModel?->name,
+                    'voice_count' => $voiceCount,
+                ],
             ]);
+        });
 
+        if (!$job) {
             return response()->json([
-                ...$result,
-                'job_id' => $job->uuid,
-            ]);
+                'error' => 'You have an active job in progress',
+                'active_job_id' => $activeJob->uuid,
+            ], 429);
+        }
 
+        // Build webhook URLs for voice engine callbacks
+        $baseUrl = config('app.url');
+        $webhookUrls = [
+            'progress_url' => "{$baseUrl}/api/internal/jobs/{$job->uuid}/progress",
+            'complete_url' => "{$baseUrl}/api/internal/jobs/{$job->uuid}/complete",
+            'status_url' => "{$baseUrl}/api/internal/jobs/{$job->uuid}/status",
+        ];
+
+        // Build voice engine payload
+        $voiceEngineUrl = config('services.voice_engine.base_url', 'http://localhost:8001');
+        $payload = [
+            'job_uuid' => $job->uuid,
+            'user_id' => $user->id,
+            ...$webhookUrls,
+            'audio' => $validated['audio'],
+            'sample_rate' => $sampleRate,
+            'mode' => $mode,
+            'f0_up_key' => $validated['f0_up_key'] ?? 0,
+            'index_rate' => $validated['index_rate'] ?? 0.75,
+            'pitch_shift_all' => $validated['pitch_shift_all'] ?? 0,
+            'instrumental_pitch' => $validated['instrumental_pitch'] ?? null,
+            'extract_all_vocals' => $validated['extract_all_vocals'] ?? false,
+            'voice_count' => $voiceCount,
+        ];
+
+        if ($modelPath) {
+            $payload['model_path'] = $modelPath;
+            $payload['index_path'] = $indexPath;
+        }
+
+        if (!empty($validated['checkpoint'])) {
+            $payload['checkpoint'] = $validated['checkpoint'];
+        }
+
+        if ($voiceConfigs) {
+            $payload['voice_configs'] = $voiceConfigs;
+        }
+
+        // Dispatch to voice engine (5s timeout — only waiting for 202 ack)
+        try {
+            $response = Http::timeout(5)->post("{$voiceEngineUrl}/audio/process", $payload);
         } catch (\Exception $e) {
             $job->update([
                 'status' => JobQueue::STATUS_FAILED,
-                'error_message' => $e->getMessage(),
+                'error_message' => 'Voice engine unavailable',
                 'completed_at' => now(),
             ]);
-
             return response()->json([
-                'error' => 'Audio processing failed',
-                'message' => $e->getMessage(),
+                'error' => 'Voice engine unavailable',
                 'job_id' => $job->uuid,
-            ], 500);
+            ], 503);
         }
+
+        if (!$response->successful()) {
+            $detail = $response->json('error') ?? $response->json('detail') ?? 'Unknown error';
+            $job->update([
+                'status' => JobQueue::STATUS_FAILED,
+                'error_message' => is_string($detail) ? $detail : json_encode($detail),
+                'completed_at' => now(),
+            ]);
+            return response()->json([
+                'error' => 'Voice engine rejected job',
+                'message' => $detail,
+                'job_id' => $job->uuid,
+            ], $response->status());
+        }
+
+        return response()->json([
+            'job_id' => $job->uuid,
+            'status' => 'queued',
+        ], 202);
     }
 
     /**
