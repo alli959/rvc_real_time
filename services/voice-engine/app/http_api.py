@@ -2650,6 +2650,14 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             instrumental = ensure_length(instrumental, target_length_44k)
             clear_memory()
             
+            # Pitch-shift vocals and instrumental BEFORE voice conversion
+            # so RVC receives audio at the target pitch and converts naturally
+            if pitch_shift_all != 0:
+                step += 1
+                report_progress(progress_url, 35, f"Transposing audio ({pitch_shift_all:+d} semitones)...", "pitch_shift", step, total_steps)
+                vocals = librosa.effects.pitch_shift(vocals.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
+                instrumental = librosa.effects.pitch_shift(instrumental.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
+            
             step += 1
             report_progress(progress_url, 50, "Converting voice...", "convert", step, total_steps)
             if check_cancelled(status_url):
@@ -2669,6 +2677,13 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         else:
             # Multi-voice Voice Layers pipeline
             converted_vocals_list = []
+            
+            # Pitch-shift source audio BEFORE separation and voice conversion
+            if pitch_shift_all != 0:
+                step += 1
+                report_progress(progress_url, 10, f"Transposing audio ({pitch_shift_all:+d} semitones)...", "pitch_shift", step, total_steps)
+                audio = librosa.effects.pitch_shift(audio.astype(np.float32), sr=sr, n_steps=pitch_shift_all)
+            
             audio_for_hp3 = audio.copy()
             
             # Extract and convert main voice
@@ -2717,10 +2732,6 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             for cv in converted_vocals_list:
                 cv = ensure_length(cv, target_length_44k)
                 output = output + cv
-        
-        # Apply global pitch shift if needed
-        if pitch_shift_all != 0:
-            output = librosa.effects.pitch_shift(output.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
         
         # Peak limit final output
         peak = np.max(np.abs(output))
