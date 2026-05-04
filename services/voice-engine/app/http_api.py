@@ -42,6 +42,12 @@ except ImportError:
     TTS_SERVICE_AVAILABLE = False
     BARK_AVAILABLE = False
 
+# Import async job processing support
+from app.webhook_client import report_progress, report_completion, report_failure, check_cancelled
+from app.webhook_client import init as init_webhook
+from app.s3_client import init as init_s3, upload_file
+from app.job_runner import runner, HeartbeatTimer
+
 logger = logging.getLogger(__name__)
 
 # =============================================================================
@@ -110,6 +116,10 @@ app = FastAPI(
     description="Voice conversion and TTS API",
     version="1.0.0"
 )
+
+# Initialize async job support
+init_webhook(os.environ.get('INTERNAL_TOKEN', ''))
+init_s3()
 
 # Import YouTube service (optional)
 try:
@@ -2342,6 +2352,13 @@ class AudioProcessRequest(BaseModel):
     # Multi-voice swap configuration
     voice_count: int = Field(default=1, ge=1, le=4, description="Number of voice layers to extract and convert (1-4)")
     voice_configs: Optional[List[VoiceModelConfig]] = Field(default=None, description="List of voice model configurations for multi-voice swap. If voice_count > 1, provide config for each voice.")
+    
+    # Async job dispatch fields (sent by Laravel)
+    progress_url: Optional[str] = Field(default=None, description="Webhook URL for progress updates")
+    complete_url: Optional[str] = Field(default=None, description="Webhook URL for completion/failure")
+    status_url: Optional[str] = Field(default=None, description="URL to check cancellation status")
+    job_uuid: Optional[str] = Field(default=None, description="Job UUID for tracking")
+    user_id: Optional[int] = Field(default=None, description="User ID for file organization")
 
 
 class AudioProcessResponse(BaseModel):
@@ -2354,14 +2371,421 @@ class AudioProcessResponse(BaseModel):
     format: str = Field(default="wav")
 
 
-@app.post("/audio/process", response_model=AudioProcessResponse)
+def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
+                       status_url: str, job_uuid: str, user_id: int):
+    """Background job processing with progress reporting and S3 upload."""
+    import shutil
+    tmp_dir = f"/tmp/job_{job_uuid}"
+    
+    try:
+        import gc
+        import librosa
+        import tempfile
+        import subprocess
+        import torch
+        
+        os.makedirs(tmp_dir, exist_ok=True)
+        
+        # Guard: reject if GPU is busy with training
+        is_training, training_msg = check_training_active()
+        if is_training:
+            report_failure(complete_url, f"GPU busy with training: {training_msg}")
+            return
+        
+        # Extract params
+        mode = request_data.get('mode', 'swap')
+        audio_data = request_data.get('audio', '')
+        voice_configs = request_data.get('voice_configs') or []
+        pitch_shift_all = request_data.get('pitch_shift_all', 0)
+        instrumental_pitch = request_data.get('instrumental_pitch')
+        f0_up_key = request_data.get('f0_up_key', 0)
+        index_rate = request_data.get('index_rate', 0.5)
+        protect = request_data.get('protect', 0.4)
+        rms_mix_rate = request_data.get('rms_mix_rate', 0.2)
+        model_path = request_data.get('model_path')
+        index_path = request_data.get('index_path')
+        checkpoint = request_data.get('checkpoint')
+        extract_all_vocals = request_data.get('extract_all_vocals', False)
+        voice_count = request_data.get('voice_count', 1)
+        quality_preset = request_data.get('quality_preset', 'natural')
+        
+        # Apply quality preset
+        if quality_preset and quality_preset in QUALITY_PRESETS:
+            preset = QUALITY_PRESETS[quality_preset]
+            index_rate = preset['index_rate']
+            protect = preset['protect']
+            rms_mix_rate = preset['rms_mix_rate']
+        
+        # Build voice_configs if not provided but single model specified
+        if not voice_configs and model_path and mode == 'swap':
+            voice_configs = [{
+                'model_path': model_path,
+                'index_path': index_path,
+                'f0_up_key': f0_up_key,
+                'extraction_mode': 'main',
+            }]
+        
+        voice_count = max(voice_count, len(voice_configs)) if voice_configs else voice_count
+        
+        # Calculate total_steps
+        if mode == 'split':
+            total_steps = 2
+        elif mode == 'convert':
+            total_steps = 2
+        elif voice_count <= 1:
+            total_steps = 4
+        else:
+            total_steps = 2 + voice_count + 2
+        
+        step = 0
+        
+        # --- STEP: Decode audio ---
+        step += 1
+        report_progress(progress_url, 5, "Loading audio...", "decode", step, total_steps)
+        if check_cancelled(status_url):
+            return
+        
+        # Decode base64 audio
+        if ',' in audio_data and audio_data.startswith('data:'):
+            audio_data = audio_data.split(',')[1]
+        
+        audio_bytes = base64.b64decode(audio_data)
+        audio_buffer = io.BytesIO(audio_bytes)
+        
+        # Try multiple methods to load
+        audio = None
+        sr = None
+        try:
+            audio, sr = sf.read(audio_buffer, dtype='float32')
+        except Exception:
+            audio_buffer.seek(0)
+            try:
+                audio, sr = librosa.load(audio_buffer, sr=None, mono=False)
+            except Exception:
+                audio_buffer.seek(0)
+                # ffmpeg fallback
+                tmp_in = f"{tmp_dir}/input.webm"
+                tmp_out = f"{tmp_dir}/input.wav"
+                with open(tmp_in, 'wb') as f:
+                    f.write(audio_buffer.read())
+                result = subprocess.run(
+                    ['ffmpeg', '-y', '-i', tmp_in, '-acodec', 'pcm_s16le', '-ar', '44100', tmp_out],
+                    capture_output=True, text=True
+                )
+                if result.returncode == 0:
+                    audio, sr = sf.read(tmp_out, dtype='float32')
+                else:
+                    report_failure(complete_url, f"Could not decode audio: {result.stderr[:200]}")
+                    return
+        
+        if audio is None:
+            report_failure(complete_url, "Failed to decode audio")
+            return
+        
+        # Ensure mono for processing
+        if audio.ndim > 1:
+            audio = np.mean(audio, axis=0) if audio.shape[0] == 2 else np.mean(audio, axis=1)
+        
+        logger.info(f"[Job {job_uuid}] Audio loaded: sr={sr}, length={len(audio)}, duration={len(audio)/sr:.2f}s")
+        
+        def clear_memory():
+            gc.collect()
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        
+        # --- MODE: split ---
+        if mode == 'split':
+            step += 1
+            report_progress(progress_url, 50, "Separating vocals...", "separate", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            
+            from app.vocal_separator import separate_vocals as sep_vocals
+            
+            uvr_model = "HP3_all_vocals" if extract_all_vocals else "HP5_only_main_vocal"
+            vocals, instrumental = sep_vocals(audio=audio, sample_rate=sr, model_name=uvr_model, agg=10)
+            
+            # Apply pitch shift if needed
+            if pitch_shift_all != 0:
+                vocals = librosa.effects.pitch_shift(vocals.astype(np.float32), sr=44100, n_steps=pitch_shift_all)
+            inst_pitch = instrumental_pitch if instrumental_pitch is not None else pitch_shift_all
+            if inst_pitch != 0:
+                instrumental = librosa.effects.pitch_shift(instrumental.astype(np.float32), sr=44100, n_steps=inst_pitch)
+            
+            # Upload both
+            vocals_key = f"user-generations/{user_id}/{job_uuid}_vocals.wav"
+            inst_key = f"user-generations/{user_id}/{job_uuid}_instrumental.wav"
+            
+            vocals_path = f"{tmp_dir}/vocals.wav"
+            inst_path = f"{tmp_dir}/instrumental.wav"
+            sf.write(vocals_path, np.clip(vocals, -1.0, 1.0).astype(np.float32), 44100)
+            sf.write(inst_path, np.clip(instrumental, -1.0, 1.0).astype(np.float32), 44100)
+            
+            if not upload_file(vocals_path, vocals_key) or not upload_file(inst_path, inst_key):
+                report_failure(complete_url, "Failed to upload output files")
+                return
+            
+            report_completion(complete_url, vocals_key,
+                            output_paths=[vocals_key, inst_key],
+                            sample_rate=44100, duration=len(vocals)/44100)
+            return
+        
+        # --- MODE: convert ---
+        if mode == 'convert':
+            step += 1
+            report_progress(progress_url, 50, "Converting voice...", "convert", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            
+            if not model_path:
+                report_failure(complete_url, "Model path required for conversion")
+                return
+            
+            # Resample to 16kHz for RVC
+            audio_16k = librosa.resample(audio.astype(np.float32), orig_sr=sr, target_sr=16000)
+            
+            from app.model_manager import RVCInferParams
+            success = model_manager.load_model(model_path, index_path)
+            if not success:
+                report_failure(complete_url, "Failed to load voice model")
+                return
+            
+            params = RVCInferParams(
+                f0_up_key=f0_up_key,
+                index_rate=index_rate,
+                protect=protect,
+                rms_mix_rate=rms_mix_rate,
+            )
+            converted = model_manager.infer(audio_16k, params=params)
+            if converted is None or len(converted) == 0:
+                report_failure(complete_url, "Voice conversion failed")
+                return
+            
+            # Get RVC output sample rate
+            rvc_out_sr = int(getattr(params, "resample_sr", 0) or 0)
+            if rvc_out_sr <= 0:
+                rvc_out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+            
+            # Resample back to original sr
+            if rvc_out_sr != sr:
+                converted = librosa.resample(converted.astype(np.float32), orig_sr=rvc_out_sr, target_sr=sr)
+            
+            output_key = f"user-generations/{user_id}/{job_uuid}.wav"
+            out_path = f"{tmp_dir}/output.wav"
+            sf.write(out_path, np.clip(converted, -1.0, 1.0).astype(np.float32), sr)
+            
+            if not upload_file(out_path, output_key):
+                report_failure(complete_url, "Failed to upload output file")
+                return
+            
+            report_completion(complete_url, output_key, sample_rate=sr, duration=len(converted)/sr)
+            return
+        
+        # --- MODE: swap ---
+        from app.vocal_separator import separate_vocals as sep_vocals
+        from app.model_manager import RVCInferParams
+        
+        uvr_output_sr = 44100
+        original_duration = len(audio) / sr
+        target_length_44k = int(original_duration * uvr_output_sr)
+        
+        def ensure_length(arr, target_len):
+            if len(arr) < target_len:
+                return np.pad(arr, (0, target_len - len(arr)), mode='constant')
+            return arr[:target_len]
+        
+        def convert_vocal_fn(vocal_audio, voice_config, voice_num):
+            """Convert a vocal track with RVC model."""
+            vc = voice_config
+            original_rms = np.sqrt(np.mean(vocal_audio**2))
+            vocal_16k = librosa.resample(vocal_audio, orig_sr=uvr_output_sr, target_sr=16000)
+            
+            success = model_manager.load_model(vc["model_path"], vc.get("index_path"))
+            if not success:
+                raise Exception(f"Failed to load model for voice {voice_num}")
+            
+            params = RVCInferParams(
+                f0_up_key=vc.get("f0_up_key", 0),
+                index_rate=index_rate,
+                protect=protect,
+                rms_mix_rate=rms_mix_rate,
+            )
+            
+            converted = model_manager.infer(vocal_16k, params=params)
+            if converted is None or len(converted) == 0:
+                raise Exception(f"Voice {voice_num} conversion failed")
+            
+            rvc_out_sr = int(getattr(params, "resample_sr", 0) or 0)
+            if rvc_out_sr <= 0:
+                rvc_out_sr = int(getattr(getattr(model_manager, "vc", None), "tgt_sr", 16000) or 16000)
+            
+            converted_44k = librosa.resample(converted.astype(np.float32), orig_sr=rvc_out_sr, target_sr=uvr_output_sr)
+            converted_44k = ensure_length(converted_44k, target_length_44k)
+            
+            # RMS normalization
+            converted_rms = np.sqrt(np.mean(converted_44k**2))
+            if converted_rms > 0.0001 and original_rms > 0.0001:
+                rms_ratio = original_rms / converted_rms
+                if 1.2 < rms_ratio <= 2.0:
+                    converted_44k = converted_44k * rms_ratio
+                elif rms_ratio > 2.0:
+                    converted_44k = converted_44k * 2.0
+            
+            # Peak limiting
+            peak = np.max(np.abs(converted_44k))
+            if peak > 0.95:
+                converted_44k = converted_44k * (0.95 / peak)
+            
+            return converted_44k
+        
+        if voice_count <= 1:
+            # Single voice swap
+            step += 1
+            report_progress(progress_url, 25, "Separating vocals...", "separate", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            
+            vocals, instrumental = sep_vocals(audio=audio, sample_rate=sr, model_name="HP5_only_main_vocal", agg=10)
+            vocals = ensure_length(vocals, target_length_44k)
+            instrumental = ensure_length(instrumental, target_length_44k)
+            clear_memory()
+            
+            step += 1
+            report_progress(progress_url, 50, "Converting voice...", "convert", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            
+            vc_config = voice_configs[0] if voice_configs else {
+                'model_path': model_path, 'index_path': index_path, 'f0_up_key': f0_up_key
+            }
+            converted = convert_vocal_fn(vocals, vc_config, 1)
+            del vocals
+            clear_memory()
+            
+            step += 1
+            report_progress(progress_url, 80, "Mixing audio...", "mix", step, total_steps)
+            output = instrumental + converted
+            
+        else:
+            # Multi-voice Voice Layers pipeline
+            converted_vocals_list = []
+            audio_for_hp3 = audio.copy()
+            
+            # Extract and convert main voice
+            step += 1
+            report_progress(progress_url, 15, "Extracting main voice...", "separate_v1", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            
+            vocals_1, inst_minus_1 = sep_vocals(audio=audio, sample_rate=sr, model_name="HP5_only_main_vocal", agg=10)
+            vocals_1 = ensure_length(vocals_1, target_length_44k)
+            converted_1 = convert_vocal_fn(vocals_1, voice_configs[0], 1)
+            converted_vocals_list.append(converted_1)
+            del vocals_1
+            clear_memory()
+            
+            # Iteratively extract backing voices
+            current_input = inst_minus_1
+            for voice_idx in range(1, voice_count):
+                step += 1
+                pct = int(15 + (65 * voice_idx / voice_count))
+                report_progress(progress_url, pct, f"Extracting voice {voice_idx+1}...", f"separate_v{voice_idx+1}", step, total_steps)
+                if check_cancelled(status_url):
+                    return
+                
+                vocals_n, inst_minus_n = sep_vocals(audio=current_input, sample_rate=44100, model_name="HP5_only_main_vocal", agg=10)
+                vocals_n = ensure_length(vocals_n, target_length_44k)
+                converted_n = convert_vocal_fn(vocals_n, voice_configs[voice_idx], voice_idx + 1)
+                converted_vocals_list.append(converted_n)
+                del vocals_n
+                current_input = inst_minus_n
+                clear_memory()
+            
+            # Clean instrumental with HP3
+            step += 1
+            report_progress(progress_url, 80, "Creating clean instrumental...", "final_separate", step, total_steps)
+            if check_cancelled(status_url):
+                return
+            _, instrumental_clean = sep_vocals(audio=audio_for_hp3, sample_rate=sr, model_name="HP3_all_vocals", agg=10)
+            instrumental_clean = ensure_length(instrumental_clean, target_length_44k)
+            clear_memory()
+            
+            # Mix all voices
+            step += 1
+            report_progress(progress_url, 90, "Mixing all voices...", "mix", step, total_steps)
+            output = instrumental_clean
+            for cv in converted_vocals_list:
+                cv = ensure_length(cv, target_length_44k)
+                output = output + cv
+        
+        # Apply global pitch shift if needed
+        if pitch_shift_all != 0:
+            output = librosa.effects.pitch_shift(output.astype(np.float32), sr=uvr_output_sr, n_steps=pitch_shift_all)
+        
+        # Peak limit final output
+        peak = np.max(np.abs(output))
+        if peak > 0.95:
+            output = output * (0.95 / peak)
+        
+        # Upload final output
+        output_key = f"user-generations/{user_id}/{job_uuid}.wav"
+        out_path = f"{tmp_dir}/output.wav"
+        sf.write(out_path, np.clip(output, -1.0, 1.0).astype(np.float32), uvr_output_sr)
+        
+        if not upload_file(out_path, output_key):
+            report_failure(complete_url, "Failed to upload output file")
+            return
+        
+        duration = len(output) / uvr_output_sr
+        report_completion(complete_url, output_key, sample_rate=uvr_output_sr, duration=duration)
+        logger.info(f"[Job {job_uuid}] Completed successfully: {duration:.2f}s audio")
+        
+    except Exception as e:
+        logger.exception(f"[Job {job_uuid}] Failed: {e}")
+        try:
+            report_failure(complete_url, str(e)[:500])
+        except Exception:
+            pass
+    finally:
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except OSError:
+            pass
+
+
+@app.post("/audio/process")
 async def process_audio(request: AudioProcessRequest):
     """
     Process audio with various modes:
     - split: Separate vocals from instrumentals using UVR5
     - convert: Apply voice conversion to audio
     - swap: Separate vocals, convert them, and merge back
+    
+    When progress_url is provided, operates in async mode:
+    returns 202 immediately and processes in background.
     """
+    from fastapi.responses import JSONResponse
+    
+    # --- ASYNC MODE: submit to background executor ---
+    if request.progress_url:
+        if runner.is_busy:
+            return JSONResponse(
+                status_code=503,
+                content={"error": "GPU busy", "retry_after": 30}
+            )
+        
+        request_data = request.model_dump()
+        accepted = runner.submit(
+            _process_job_async,
+            request_data, request.progress_url, request.complete_url,
+            request.status_url, request.job_uuid, request.user_id
+        )
+        if not accepted:
+            return JSONResponse(status_code=503, content={"error": "GPU busy"})
+        
+        return JSONResponse(status_code=202, content={"status": "accepted", "job_uuid": request.job_uuid})
+    
+    # --- SYNCHRONOUS MODE (legacy/testing) ---
     # Check if training is active - GPU resources are limited
     is_training, training_msg = check_training_active()
     if is_training:
