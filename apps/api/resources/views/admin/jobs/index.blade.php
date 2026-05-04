@@ -268,7 +268,7 @@
               <td class="px-6 py-4" onclick="event.stopPropagation()">
                 @if(in_array($job->status, ['pending', 'queued', 'processing']))
                   <button 
-                    onclick="forceCancel('{{ $job->id }}')"
+                    onclick="forceCancel('{{ $job->uuid }}')"
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-red-500/20 hover:bg-red-500/30 text-red-400 hover:text-red-300 rounded-lg text-xs font-medium transition-colors"
                     title="Force cancel this job"
                   >
@@ -277,7 +277,7 @@
                   </button>
                 @elseif($job->status === 'failed' && $job->type === 'training')
                   <button 
-                    onclick="forceCancel('{{ $job->id }}')"
+                    onclick="forceCancel('{{ $job->uuid }}')"
                     class="inline-flex items-center gap-1.5 px-3 py-1.5 bg-yellow-500/20 hover:bg-yellow-500/30 text-yellow-400 hover:text-yellow-300 rounded-lg text-xs font-medium transition-colors"
                     title="Reset stuck training - allows user to retry"
                   >

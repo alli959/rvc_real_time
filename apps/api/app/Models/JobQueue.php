@@ -29,6 +29,9 @@ class JobQueue extends Model
         'error_message',
         'error_details',
         'worker_id',
+        'step_number',
+        'total_steps',
+        'saved',
     ];
 
     protected $casts = [
@@ -36,7 +39,13 @@ class JobQueue extends Model
         'error_details' => 'array',
         'started_at' => 'datetime',
         'completed_at' => 'datetime',
+        'saved' => 'boolean',
     ];
+
+    public function getRouteKeyName(): string
+    {
+        return 'uuid';
+    }
 
     protected static function boot()
     {
@@ -93,6 +102,24 @@ class JobQueue extends Model
         return $query->where('user_id', $userId);
     }
 
+    public function scopeActive($query)
+    {
+        return $query->whereIn('status', [self::STATUS_QUEUED, self::STATUS_PROCESSING]);
+    }
+
+    public function scopeStale($query, int $processingMinutes = 15, int $queuedMinutes = 5)
+    {
+        return $query->where(function ($q) use ($processingMinutes, $queuedMinutes) {
+            $q->where(function ($sub) use ($processingMinutes) {
+                $sub->where('status', self::STATUS_PROCESSING)
+                    ->where('updated_at', '<', now()->subMinutes($processingMinutes));
+            })->orWhere(function ($sub) use ($queuedMinutes) {
+                $sub->where('status', self::STATUS_QUEUED)
+                    ->where('created_at', '<', now()->subMinutes($queuedMinutes));
+            });
+        });
+    }
+
     // Status helpers
     public function isPending(): bool
     {
@@ -120,6 +147,15 @@ class JobQueue extends Model
             self::STATUS_COMPLETED,
             self::STATUS_FAILED,
             self::STATUS_CANCELLED
+        ]);
+    }
+
+    public function isTerminal(): bool
+    {
+        return in_array($this->status, [
+            self::STATUS_COMPLETED,
+            self::STATUS_FAILED,
+            self::STATUS_CANCELLED,
         ]);
     }
 
