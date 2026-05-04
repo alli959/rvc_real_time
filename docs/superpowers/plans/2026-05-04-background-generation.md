@@ -114,7 +114,14 @@ public function getRouteKeyName(): string
 {
     return 'uuid';
 }
+
+public function isCompleted(): bool
+{
+    return $this->status === self::STATUS_COMPLETED;
+}
 ```
+
+**⚠️ Route key impact**: Changing `getRouteKeyName()` to `'uuid'` means ALL `{job}` route model bindings resolve via the UUID column. The admin route in `web.php` (`/jobs/{job}/force-cancel`) also uses `{job}` — verify that admin views link using UUIDs (not integer IDs). If admin Blade templates use `$job->id` in URLs, update them to `$job->uuid`.
 
 Add to `$fillable` array: `'step_number'`, `'total_steps'`, `'saved'`
 
@@ -715,7 +722,7 @@ class CleanupJobFiles extends Command
                 }
             }
 
-            $job->update(['output_path' => null, 'parameters' => array_diff_key($job->parameters ?? [], ['output_paths' => ''])]);
+            $job->update(['output_path' => null]);
         }
 
         if ($count > 0) {
@@ -821,9 +828,9 @@ def report_completion(complete_url: str, output_path: str, sample_rate: int = No
                       duration: float = None, output_paths: list = None):
     """Report successful completion to Laravel with retry."""
     payload = {"status": "completed", "output_path": output_path}
-    if sample_rate:
+    if sample_rate is not None:
         payload["sample_rate"] = sample_rate
-    if duration:
+    if duration is not None:
         payload["duration"] = duration
     if output_paths:
         payload["output_paths"] = output_paths
@@ -1114,6 +1121,16 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         import tempfile
         import soundfile as sf
         
+        # Guard: reject if GPU is busy with training
+        if check_training_active():
+            report_failure(complete_url, "GPU is currently busy with model training. Please try again later.")
+            return
+        
+        # Use a job-specific temp directory for all intermediate files
+        import os
+        tmp_dir = f"/tmp/job_{job_uuid}"
+        os.makedirs(tmp_dir, exist_ok=True)
+        
         # Extract params from request_data (mirrors process_audio at line 2377)
         mode = request_data.get('mode', 'swap')
         audio_data = request_data.get('audio', '')
@@ -1145,7 +1162,7 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         if youtube_url:
             # Download from YouTube (uses yt-dlp subprocess)
             import subprocess
-            tmp_path = f"/tmp/{job_uuid}_download.wav"
+            tmp_path = f"{tmp_dir}/{job_uuid}_download.wav"
             result = subprocess.run(
                 ['yt-dlp', '-x', '--audio-format', 'wav', '-o', tmp_path, youtube_url],
                 capture_output=True, timeout=120
@@ -1176,10 +1193,10 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             inst_key = f"user-generations/{user_id}/{job_uuid}_instrumental.wav"
             
             # Write to temp files for upload
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=tmp_dir) as f:
                 sf.write(f.name, vocals, sr)
                 upload_file(f.name, vocals_key)
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=tmp_dir) as f:
                 sf.write(f.name, instrumental, sr)
                 upload_file(f.name, inst_key)
             
@@ -1198,7 +1215,7 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
             converted = convert_vocal(audio, voice_configs[0], 1)
             
             output_key = f"user-generations/{user_id}/{job_uuid}.wav"
-            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=tmp_dir) as f:
                 sf.write(f.name, converted, sr)
                 if not upload_file(f.name, output_key):
                     report_failure(complete_url, "Failed to save output file")
@@ -1281,7 +1298,7 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         
         # --- Upload final output ---
         output_key = f"user-generations/{user_id}/{job_uuid}.wav"
-        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False) as f:
+        with tempfile.NamedTemporaryFile(suffix='.wav', delete=False, dir=tmp_dir) as f:
             sf.write(f.name, output, sr)
             if not upload_file(f.name, output_key):
                 report_failure(complete_url, "Failed to save output file")
@@ -1295,6 +1312,14 @@ def _process_job_async(request_data: dict, progress_url: str, complete_url: str,
         try:
             report_failure(complete_url, str(e)[:500])
         except:
+            pass
+    finally:
+        # Clean up job temp directory to prevent /tmp from filling up
+        import shutil
+        tmp_dir = f"/tmp/job_{job_uuid}"
+        try:
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+        except OSError:
             pass
 ```
 
@@ -1480,17 +1505,20 @@ export function AudioJobProvider({ children }: { children: React.ReactNode }) {
     fetchInitial();
   }, []);
 
-  // Poll active jobs
+  // Poll active jobs — use serialized active IDs as dependency to avoid infinite re-render loop
+  // (If we used [jobs] directly, every poll update triggers a re-render which recreates the interval)
+  const activeIds = jobs.filter(j => j.status === 'queued' || j.status === 'processing').map(j => j.id).join(',');
+
   useEffect(() => {
-    const activeJobIds = jobs.filter(j => j.status === 'queued' || j.status === 'processing').map(j => j.id);
-    
-    if (activeJobIds.length === 0) {
+    if (!activeIds) {
       if (pollRef.current) clearInterval(pollRef.current);
       return;
     }
 
+    const ids = activeIds.split(',');
+
     const poll = async () => {
-      for (const id of activeJobIds) {
+      for (const id of ids) {
         try {
           const updated = await jobsApi.get(id);
           setJobs(prev => prev.map(j => j.id === id ? mapJob(updated) : j));
@@ -1500,19 +1528,19 @@ export function AudioJobProvider({ children }: { children: React.ReactNode }) {
       }
     };
 
-    // First poll at 1s for quick jobs
-    const hasNewJobs = activeJobIds.some(id => isFirstPoll.current[id]);
+    // First poll at 1s for quick jobs (TTS, voice convert)
+    const hasNewJobs = ids.some(id => isFirstPoll.current[id]);
     if (hasNewJobs) {
       const timeout = setTimeout(() => {
         poll();
-        activeJobIds.forEach(id => { isFirstPoll.current[id] = false; });
+        ids.forEach(id => { isFirstPoll.current[id] = false; });
       }, 1000);
       return () => clearTimeout(timeout);
     }
 
     pollRef.current = setInterval(poll, 3000);
     return () => { if (pollRef.current) clearInterval(pollRef.current); };
-  }, [jobs]);
+  }, [activeIds]);
 
   const submitJob = useCallback(async (submitFn: () => Promise<{ job_id: string }>) => {
     const { job_id } = await submitFn();
@@ -1769,12 +1797,36 @@ git commit -m "feat: add FloatingJobsWidget for background job progress"
 import { useAudioJobs } from '@/contexts/audio-job-context';
 ```
 
-- [ ] **Step 2: Replace synchronous processing with async submission**
+- [ ] **Step 2: Replace synchronous processing with async submission (foreground mode)**
 
 In the `handleProcessing` function, replace the current `audioProcessingApi.process()` call and fake progress with:
 
 ```typescript
-const { submitJob } = useAudioJobs();
+const { submitJob, activeJobs } = useAudioJobs();
+
+// In the component, add state for tracking foreground job:
+const [foregroundJobId, setForegroundJobId] = useState<string | null>(null);
+
+// Watch the foreground job from the provider's state (NO separate polling loop):
+const foregroundJob = activeJobs.find(j => j.id === foregroundJobId);
+
+// Use an effect to react to foreground job completion:
+useEffect(() => {
+  if (!foregroundJob) return;
+  
+  setProcessingProgress(foregroundJob.progress);
+  setProcessingStatus(foregroundJob.progressMessage || 'Processing...');
+  
+  if (foregroundJob.status === 'completed') {
+    setIsProcessing(false);
+    setOutputUrl(foregroundJob.outputUrl);
+    setForegroundJobId(null);
+  } else if (foregroundJob.status === 'failed') {
+    setIsProcessing(false);
+    setError(foregroundJob.errorMessage || 'Processing failed');
+    setForegroundJobId(null);
+  }
+}, [foregroundJob]);
 
 // In handleProcessing:
 try {
@@ -1787,29 +1839,8 @@ try {
     return { job_id: response.data.job_id };
   });
 
-  // If foreground mode: poll and show progress inline
-  setProcessingStatus('Processing...');
-  const pollInterval = setInterval(async () => {
-    try {
-      const job = await jobsApi.get(jobId);
-      setProcessingProgress(job.progress);
-      setProcessingStatus(job.progress_message || 'Processing...');
-      
-      if (job.status === 'completed') {
-        clearInterval(pollInterval);
-        setIsProcessing(false);
-        // Set result URL for audio player
-        setOutputUrl(job.output_url);
-      } else if (job.status === 'failed') {
-        clearInterval(pollInterval);
-        setIsProcessing(false);
-        setError(job.error_message || 'Processing failed');
-      }
-    } catch (e) { /* continue polling */ }
-  }, 3000);
-
-  // First poll at 1s
-  setTimeout(async () => { /* same poll logic */ }, 1000);
+  // Just track the job ID — the provider handles polling, the effect above handles UI updates
+  setForegroundJobId(jobId);
 
 } catch (err: any) {
   if (err.response?.status === 429) {
@@ -1820,6 +1851,8 @@ try {
   setIsProcessing(false);
 }
 ```
+
+**Important**: Do NOT create a separate `setInterval` for polling in foreground mode. The `AudioJobProvider` already polls all active jobs. The page just watches `activeJobs` from context for its specific job ID. This avoids double-polling and state sync issues.
 
 - [ ] **Step 3: Add "Run in Background" button**
 
@@ -2018,3 +2051,4 @@ git commit -m "feat: complete background generation integration"
 - **Supervisor restart**: After voice engine changes, restart via `supervisorctl restart voice-engine`
 - **The voice engine `_process_job_async` function** (Task 11 Step 3) contains the full implementation for all modes (split, convert, swap single-voice, swap multi-voice). The implementer should verify it integrates correctly with the existing `separate_vocals()`, `convert_vocal()`, and `ensure_length()` functions already defined in `http_api.py`
 - **TTS mode**: Not included in the initial implementation — add as follow-up once the core pipeline is stable. The type constant `TYPE_TTS` exists but the async pipeline for TTS can be added later.
+- **TODO**: After shipping this, add TTS mode to `_process_job_async` (Task 11). Leave a `# TODO: Add TTS async pipeline` comment in the code where it should go.
