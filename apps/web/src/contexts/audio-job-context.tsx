@@ -63,8 +63,11 @@ export function AudioJobProvider({ children }: { children: React.ReactNode }) {
   const pollRef = useRef<NodeJS.Timeout | null>(null);
   const isFirstPoll = useRef<Record<string, boolean>>({});
 
-  // Fetch initial jobs on mount
+  // Fetch initial jobs on mount (only if authenticated)
   useEffect(() => {
+    const token = typeof window !== 'undefined' ? localStorage.getItem('auth_token') : null;
+    if (!token) return;
+
     const fetchInitial = async () => {
       try {
         const activeResp = await jobsApi.list({ status: 'processing' });
