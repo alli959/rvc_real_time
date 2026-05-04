@@ -4,6 +4,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { useState, useEffect, createContext, useContext } from 'react';
 import { useAuthStore } from '@/lib/store';
 import { authApi } from '@/lib/api';
+import { AudioJobProvider } from '@/contexts/audio-job-context';
 
 // Auth context for managing authentication state
 interface AuthContextType {
@@ -69,7 +70,9 @@ export function Providers({ children }: { children: React.ReactNode }) {
   return (
     <QueryClientProvider client={queryClient}>
       <AuthProvider>
-        {children}
+        <AudioJobProvider>
+          {children}
+        </AudioJobProvider>
       </AuthProvider>
     </QueryClientProvider>
   );
