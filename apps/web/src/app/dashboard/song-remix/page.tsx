@@ -3,6 +3,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { DashboardLayout } from '@/components/dashboard-layout';
 import { audioProcessingApi, youtubeApi, voiceDetectionApi, voiceModelsApi, VoiceModel, YouTubeSearchResult, VoiceModelConfig } from '@/lib/api';
+import { useAudioJobs } from '@/contexts/audio-job-context';
 import { ModelSelector } from '@/components/model-selector';
 import { AudioPlayer } from '@/components/audio-player';
 import { useDropzone } from 'react-dropzone';
@@ -57,6 +58,7 @@ interface ProcessedResult {
 }
 
 export default function SongRemixPage() {
+  const { activeJobs, submitJob } = useAudioJobs();
   const [activeTab, setActiveTab] = useState<Tab>('upload');
   const [processingMode, setProcessingMode] = useState<ProcessingMode>('split');
   
@@ -79,6 +81,7 @@ export default function SongRemixPage() {
   const [processingProgress, setProcessingProgress] = useState(0);
   const [results, setResults] = useState<ProcessedResult[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [foregroundJobId, setForegroundJobId] = useState<string | null>(null);
   
   // Voice model selection (for swap mode)
   const [selectedModelId, setSelectedModelId] = useState<number | null>(null);
@@ -289,6 +292,38 @@ export default function SongRemixPage() {
   //   runDetection();
   // }, [audioFile, youtubeAudio, voiceDetection, isDetectingVoices, detectVoices]);
 
+  // Watch foreground job progress from AudioJobProvider
+  const foregroundJob = activeJobs.find(j => j.id === foregroundJobId);
+  useEffect(() => {
+    if (!foregroundJob) return;
+    
+    setProcessingProgress(foregroundJob.progress);
+    setProcessingStep(foregroundJob.progressMessage || 'Processing...');
+    
+    if (foregroundJob.status === 'completed') {
+      setIsProcessing(false);
+      setForegroundJobId(null);
+      // Build results from stream URL
+      const newResults: ProcessedResult[] = [];
+      if (foregroundJob.outputUrls) {
+        if (foregroundJob.outputUrls.vocals) {
+          newResults.push({ type: 'vocals', url: foregroundJob.outputUrls.vocals, name: 'vocals.wav' });
+        }
+        if (foregroundJob.outputUrls.instrumental) {
+          newResults.push({ type: 'instrumental', url: foregroundJob.outputUrls.instrumental, name: 'instrumental.wav' });
+        }
+      } else if (foregroundJob.outputUrl) {
+        newResults.push({ type: 'swapped', url: foregroundJob.outputUrl, name: 'output.wav' });
+      }
+      setResults(newResults);
+      setProcessingStep('Complete!');
+    } else if (foregroundJob.status === 'failed') {
+      setIsProcessing(false);
+      setForegroundJobId(null);
+      setError(foregroundJob.errorMessage || 'Processing failed');
+    }
+  }, [foregroundJob]);
+
   // Process audio
   const handleProcess = async () => {
     let base64Audio: string;
@@ -326,19 +361,8 @@ export default function SongRemixPage() {
     setProcessingProgress(0);
 
     try {
-      setProcessingStep('Preparing audio...');
-      setProcessingProgress(10);
-
-      const steps = {
-        'split': ['Analyzing frequencies...', 'Separating vocals...', 'Extracting instrumental...'],
-        'swap': voiceCount > 1 
-          ? ['Extracting clean instrumental...', 'Cascading voice extraction...', 'Converting voices...', 'Merging tracks...']
-          : ['Separating vocals...', 'Converting vocals...', 'Merging tracks...'],
-      };
-
-      const currentSteps = steps[processingMode];
-      setProcessingStep(currentSteps[0]);
-      setProcessingProgress(30);
+      setProcessingStep('Submitting...');
+      setProcessingProgress(5);
 
       // Build voice configs for multi-voice swap
       let voiceConfigs: VoiceModelConfig[] | undefined = undefined;
@@ -354,74 +378,36 @@ export default function SongRemixPage() {
         ];
       }
 
-      const response = await audioProcessingApi.process({
-        audio: base64Audio,
-        mode: processingMode,
-        model_id: selectedModelId || undefined,
-        f0_up_key: f0UpKey,
-        index_rate: indexRate,
-        pitch_shift_all: f0UpKey,
-        instrumental_pitch: f0UpKey,
-        // Only apply extract_all_vocals for split mode - swap mode uses default behavior
-        extract_all_vocals: processingMode === 'split' ? removeAllVocals : undefined,
-        // Multi-voice settings
-        voice_count: processingMode === 'swap' ? voiceCount : undefined,
-        voice_configs: voiceConfigs,
+      const jobId = await submitJob(async () => {
+        const response = await audioProcessingApi.process({
+          audio: base64Audio,
+          mode: processingMode,
+          model_id: selectedModelId || undefined,
+          f0_up_key: f0UpKey,
+          index_rate: indexRate,
+          pitch_shift_all: f0UpKey,
+          instrumental_pitch: f0UpKey,
+          extract_all_vocals: processingMode === 'split' ? removeAllVocals : undefined,
+          voice_count: processingMode === 'swap' ? voiceCount : undefined,
+          voice_configs: voiceConfigs,
+        });
+        return { job_id: response.job_id };
       });
 
-      setProcessingStep('Processing complete!');
-      setProcessingProgress(90);
+      // Track the job — the useEffect above watches for completion
+      setForegroundJobId(jobId);
+      setProcessingStep('Processing...');
+      setProcessingProgress(10);
 
-      // Helper to convert base64 to blob URL
-      const base64ToUrl = (base64: string, mimeType: string = 'audio/wav'): string => {
-        const byteCharacters = atob(base64);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const blob = new Blob([byteArray], { type: mimeType });
-        return URL.createObjectURL(blob);
-      };
-
-      // Build results based on mode
-      const newResults: ProcessedResult[] = [];
-      
-      if (processingMode === 'split') {
-        if (response.vocals) {
-          newResults.push({
-            type: 'vocals',
-            url: base64ToUrl(response.vocals),
-            name: `vocals_${audioName.replace(/\.[^/.]+$/, '')}.wav`,
-          });
-        }
-        if (response.instrumental) {
-          newResults.push({
-            type: 'instrumental',
-            url: base64ToUrl(response.instrumental),
-            name: `instrumental_${audioName.replace(/\.[^/.]+$/, '')}.wav`,
-          });
-        }
-      } else if (response.converted) {
-        newResults.push({
-          type: 'swapped',
-          url: base64ToUrl(response.converted),
-          name: `swapped_${audioName.replace(/\.[^/.]+$/, '')}.wav`,
-        });
-      }
-
-      setResults(newResults);
-      setProcessingProgress(100);
-      setProcessingStep('Complete!');
     } catch (err: any) {
-      // Check for training in progress error
       const errData = err.response?.data;
-      if (errData?.code === 'TRAINING_IN_PROGRESS') {
+      if (err.response?.status === 429) {
+        setError('You already have a generation in progress. Wait for it to finish or cancel it.');
+      } else if (errData?.code === 'TRAINING_IN_PROGRESS') {
         setError(`🎓 ${errData.message}`);
       } else {
-        setError(errData?.message || err.message || 'Processing failed');
+        setError(errData?.message || err.message || 'Failed to submit job');
       }
-    } finally {
       setIsProcessing(false);
     }
   };
@@ -876,29 +862,31 @@ export default function SongRemixPage() {
           </div>
         )}
 
-        {/* Process Button */}
-        <button
-          onClick={handleProcess}
-          disabled={isProcessing || !hasAudio || (processingMode === 'swap' && !selectedModelId)}
-          className="w-full py-4 bg-accent-600 text-white rounded-lg hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
-        >
-          {isProcessing ? (
-            <>
-              <Loader2 className="h-5 w-5 animate-spin" />
-              {processingStep} ({processingProgress}%)
-            </>
-          ) : processingMode === 'split' ? (
-            <>
-              <Split className="h-5 w-5" />
-              Split Vocals & Instrumentals
-            </>
-          ) : (
-            <>
-              <Merge className="h-5 w-5" />
-              Swap Vocals
-            </>
-          )}
-        </button>
+        {/* Process Buttons */}
+        <div className="flex gap-3">
+          <button
+            onClick={handleProcess}
+            disabled={isProcessing || !hasAudio || (processingMode === 'swap' && !selectedModelId)}
+            className="flex-1 py-4 bg-accent-600 text-white rounded-lg hover:bg-accent-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 font-medium"
+          >
+            {isProcessing ? (
+              <>
+                <Loader2 className="h-5 w-5 animate-spin" />
+                {processingStep} ({processingProgress}%)
+              </>
+            ) : processingMode === 'split' ? (
+              <>
+                <Split className="h-5 w-5" />
+                Split Vocals & Instrumentals
+              </>
+            ) : (
+              <>
+                <Merge className="h-5 w-5" />
+                Swap Vocals
+              </>
+            )}
+          </button>
+        </div>
 
         {/* Error Display */}
         {error && (

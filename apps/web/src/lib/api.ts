@@ -699,13 +699,14 @@ export interface AudioProcessRequest {
 }
 
 export interface AudioProcessResponse {
-  mode: string;
-  vocals?: string; // Base64 encoded
-  instrumental?: string; // Base64 encoded
-  converted?: string; // Base64 encoded
-  sample_rate: number;
-  format: string;
-  job_id?: string; // Job tracking ID
+  mode?: string;
+  vocals?: string; // Base64 encoded (legacy sync mode)
+  instrumental?: string; // Base64 encoded (legacy sync mode)
+  converted?: string; // Base64 encoded (legacy sync mode)
+  sample_rate?: number;
+  format?: string;
+  job_id: string; // Job tracking UUID (always present in async mode)
+  status?: string; // 'queued' for async dispatch
 }
 
 export const audioProcessingApi = {
