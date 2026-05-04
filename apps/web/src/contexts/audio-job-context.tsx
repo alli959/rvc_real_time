@@ -160,7 +160,7 @@ export function AudioJobProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const dismissJob = useCallback((jobId: string) => {
-    setDismissed(prev => new Set([...prev, jobId]));
+    setDismissed(prev => new Set(Array.from(prev).concat(jobId)));
     setJobs(prev => prev.filter(j => j.id !== jobId));
   }, []);
 
