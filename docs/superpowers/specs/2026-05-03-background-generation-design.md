@@ -41,11 +41,22 @@ Both modes use the same backend (always async). The difference is purely fronten
 
 ### 1. Laravel Backend Changes
 
+**Route key change**: Override `JobQueue::getRouteKeyName()` to return `'uuid'`. All job routes use UUID in URLs (not integer ID). Existing routes (`{job}`) will resolve via UUID after this change.
+
 #### Modified Endpoint: Async Process
 
 Modify `AudioProcessingController::process()` to **always** be async:
-- Create `JobQueue` record with status `queued`
-- POST to voice engine with `callback_url` (Laravel's internal URL) and `job_uuid`
+- Create `JobQueue` record with status `queued` (skip `pending` — job is immediately dispatched)
+- POST to voice engine with `callback_url` and `job_uuid` (see §callback_url below)
+- **callback_url**: Send full webhook URLs in the dispatch payload to avoid path construction issues. Laravel sends:
+  ```json
+  {
+    "progress_url": "http://localhost/api/internal/jobs/{uuid}/progress",
+    "complete_url": "http://localhost/api/internal/jobs/{uuid}/complete",
+    "status_url": "http://localhost/api/internal/jobs/{uuid}/status"
+  }
+  ```
+  Voice engine uses these URLs directly (no path construction). Value of base URL comes from `APP_URL` env var in Laravel.
 - **Check response**: if voice engine returns non-2xx (down, 500, timeout), immediately mark job as `failed` with error "Voice engine unavailable" and return 503 to frontend
 - If voice engine returns 202, return `202 Accepted` with `{ job_id: uuid, status: "queued" }` to frontend
 - Use a short HTTP timeout (5s) for the dispatch call — we're only waiting for the 202 acknowledgment, not processing
@@ -54,11 +65,12 @@ The old synchronous path is removed. All processing is async.
 
 #### Concurrency Guard
 
-Before creating a new job, check if user already has an active job (status in `queued`, `processing`):
+Wrapped in `DB::transaction()`. Before creating a new job, check if user already has an active job (status in `queued`, `processing`):
 - Use `SELECT ... FOR UPDATE` to lock the user's active jobs row, preventing race conditions from double-clicks or frontend retries
 - If yes: return `429 Too Many Requests` with `{ error: "You have an active job in progress", active_job_id: uuid }`
 - Frontend shows this to user and offers to cancel the existing job or wait
 - Admin users bypass this limit
+- The entire check + job creation happens atomically within the transaction
 
 #### New Endpoint: Progress Webhook (internal)
 
@@ -113,7 +125,7 @@ Updates `JobQueue`: status, output_path, completed_at, error_message. Duration a
 
 #### Modified: GET /api/jobs/{uuid}
 
-Already exists. Returns job with progress info. `output_url` is a **signed temporary URL** computed at read time (not stored in DB), generated from `output_path` via `Storage::disk('s3')->temporaryUrl()`:
+Already exists. Returns job with progress info. `output_url` is a **Laravel proxy endpoint** (`/api/jobs/{uuid}/stream`) — only populated when job is completed and file exists:
 
 ```json
 {
@@ -146,6 +158,23 @@ When completed:
 ```
 
 Note: `output_url` is a **Laravel proxy endpoint** (not a direct MinIO presigned URL). MinIO runs on localhost:9000 which is inaccessible to remote users. Laravel streams the file through `GET /api/jobs/{uuid}/stream` which internally fetches from MinIO and pipes to the response. This avoids exposing MinIO to the internet while working through Cloudflare.
+
+#### New Endpoint: Stream Job Output
+
+`GET /api/jobs/{uuid}/stream`
+
+Auth: Job owner or admin. Returns the audio file streamed from MinIO.
+
+- Uses `Storage::disk('s3')->readStream($job->output_path)` piped to `response()->stream()`
+- Response headers:
+  - `Content-Type: audio/wav`
+  - `Content-Length: {file_size_bytes}`
+  - `Content-Disposition: inline; filename="{job_uuid}.wav"` (or `attachment` if `?download=1` query param)
+  - `Accept-Ranges: bytes` (enables browser seeking in audio player)
+- Supports HTTP Range requests for partial content (206) — required for `<audio>` element seeking
+- Memory-safe: streams in chunks (8KB), never loads full file into PHP memory
+- Returns 404 if `output_path` is null or file doesn't exist in MinIO
+- Returns 403 if user doesn't own the job (and isn't admin)
 
 #### New Endpoint: Save/Unsave Job Output
 
@@ -189,6 +218,10 @@ Processing runs in a **`concurrent.futures.ThreadPoolExecutor`** with `max_worke
 
 The main event loop stays free to serve health checks, status endpoints, and accept the next job dispatch.
 
+**Busy rejection**: If the executor already has a job running (or queued internally), reject new submissions with `503 Service Unavailable` + `{ "error": "GPU busy", "retry_after": 30 }`. Laravel receives this and marks the job `failed` with error "Voice engine busy, please try again". This prevents the internal executor queue from growing and avoids stale reaper false-positives on legitimately queued jobs from other users.
+
+Implementation: Track with a simple `AtomicInteger` or `threading.Lock` counter. Before submitting to executor, check count. This gives immediate feedback to Laravel.
+
 #### Async Processing Endpoint
 
 Modify `/audio/process` to accept `callback_url`, `job_uuid`, and `user_id` parameters:
@@ -198,12 +231,12 @@ Modify `/audio/process` to accept `callback_url`, `job_uuid`, and `user_id` para
 
 #### Progress Callback System
 
-At each pipeline step, POST progress to Laravel. Failures are non-fatal (logged but don't stop processing):
+At each pipeline step, POST progress to Laravel using the `progress_url` received in the dispatch payload. Failures are non-fatal (logged but don't stop processing):
 
 ```python
-def report_progress(callback_url, job_uuid, progress, message, step, step_number, total_steps):
+def report_progress(progress_url, progress, message, step, step_number, total_steps):
     try:
-        requests.post(f"{callback_url}/internal/jobs/{job_uuid}/progress", json={
+        requests.post(progress_url, json={
             "progress": progress,
             "message": message,
             "step": step,
@@ -211,7 +244,7 @@ def report_progress(callback_url, job_uuid, progress, message, step, step_number
             "total_steps": total_steps,
         }, headers={"X-Internal-Token": INTERNAL_TOKEN}, timeout=5)
     except Exception:
-        logger.warning(f"Failed to report progress for {job_uuid}, continuing")
+        logger.warning(f"Failed to report progress to {progress_url}, continuing")
 ```
 
 Progress steps for Voice Swap (multi-voice, 2 voices):
@@ -253,9 +286,38 @@ For TTS:
 | 3 | 90% | Finalizing... |
 | 4 | 100% | Complete |
 
+#### Heartbeat for Long-Running Steps
+
+For steps that may exceed 5 minutes (e.g., voice conversion on 10+ minute audio), the processing thread sends a periodic heartbeat every 3 minutes. This re-sends the current progress (same `step_number`) to reset `updated_at` in Laravel and prevent the stale reaper from false-killing the job.
+
+```python
+import threading
+
+class HeartbeatTimer:
+    def __init__(self, interval, callback):
+        self._timer = None
+        self.interval = interval
+        self.callback = callback
+    
+    def start(self):
+        self._timer = threading.Timer(self.interval, self._run)
+        self._timer.daemon = True
+        self._timer.start()
+    
+    def _run(self):
+        self.callback()
+        self.start()  # reschedule
+    
+    def stop(self):
+        if self._timer:
+            self._timer.cancel()
+```
+
+Usage: Start heartbeat before each long step, stop it after. The callback re-calls `report_progress()` with the same values.
+
 #### Output File Saving
 
-On completion, voice engine uploads output to MinIO via `boto3` S3 client:
+On completion, voice engine uploads output to MinIO via `boto3` S3 client (new dependency — add to `requirements.txt`):
 - Bucket: `morphvox`
 - Key: `user-generations/{user_id}/{job_uuid}.wav`
 - Uses same AWS credentials configured in voice engine environment
@@ -267,11 +329,11 @@ On completion, voice engine uploads output to MinIO via `boto3` S3 client:
 
 Voice engine POSTs completion to Laravel with retry:
 - Up to 3 attempts with exponential backoff (2s, 4s, 8s)
-- If all retries fail: log error. File exists in MinIO but job stays `processing` — stale reaper will mark it failed after 10 min. This is acceptable for MVP; the file can be recovered manually by admin if needed.
+- If all retries fail: log error. File exists in MinIO but job stays `processing` — stale reaper will mark it failed after 15 min. This is acceptable for MVP; the file can be recovered manually by admin if needed.
 
 #### Cancellation
 
-Voice engine calls `GET {callback_url}/internal/jobs/{uuid}/status` before each major pipeline step (separation, conversion, mixing). If response returns `status: "cancelled"`, processing stops immediately and temp files are cleaned.
+Voice engine calls `GET {status_url}` (received in dispatch payload) before each major pipeline step (separation, conversion, mixing). If response returns `status: "cancelled"`, processing stops immediately and temp files are cleaned.
 
 **If status check fails** (network error): assume NOT cancelled and continue processing. Better to complete a cancelled job than abort a running one due to transient network issue.
 
@@ -300,7 +362,7 @@ Global context (in layout) that manages all active jobs:
 ```typescript
 interface ActiveJob {
   id: string;
-  type: 'swap' | 'split' | 'convert' | 'tts';
+  type: 'audio_swap' | 'audio_split' | 'audio_convert' | 'tts';  // matches backend JobQueue::TYPE_* constants
   status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled';
   progress: number;
   progressMessage: string;
@@ -377,7 +439,7 @@ Key: user-generations/{user_id}/{job_uuid}.wav
 ### 5. Security
 
 - **Webhook auth**: Voice engine sends `X-Internal-Token` header with a shared secret (≥32 random bytes, set in both Laravel `.env` and voice engine `.env`). Laravel middleware validates token on all `/internal/*` routes.
-- **Internal route isolation**: The nginx config blocks `/internal/*` routes from external access. Only requests from `127.0.0.1` (voice engine on same host) are allowed. Cloudflare tunnel never sees these routes.
+- **Internal route isolation**: **Add** an nginx rule to deny external access to `/internal/*` routes. Only requests from `127.0.0.1` (voice engine on same host) are allowed. Example: `location /api/internal/ { allow 127.0.0.1; deny all; }`. The `X-Internal-Token` header provides a second layer of defense.
 - **XSS prevention**: `progress_message` from webhooks is stored as plain text. Frontend renders it with React's default escaping (no `dangerouslySetInnerHTML`).
 - **File access**: Users never access MinIO directly. Laravel proxies file downloads through `GET /api/jobs/{uuid}/stream`.
 - **Job access**: Users can only poll/cancel their own jobs (existing `user_id` check).
