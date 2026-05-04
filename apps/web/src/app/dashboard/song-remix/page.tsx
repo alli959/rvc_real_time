@@ -111,7 +111,7 @@ export default function SongRemixPage() {
     const loadModels = async () => {
       try {
         const [allModelsRes, myModelsRes] = await Promise.all([
-          voiceModelsApi.list({ per_page: 200 }),
+          voiceModelsApi.list({ per_page: 100 }),
           voiceModelsApi.myModels({ per_page: 100 }).catch(() => ({ data: [] })),
         ]);
         

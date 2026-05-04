@@ -62,7 +62,7 @@ export function ModelSelector({
     try {
       // Load all models (will include user's models if authenticated)
       const [allModelsRes, myModelsRes] = await Promise.all([
-        voiceModelsApi.list({ per_page: 200 }),
+        voiceModelsApi.list({ per_page: 100 }),
         user ? voiceModelsApi.myModels({ per_page: 100 }) : Promise.resolve({ data: [] }),
       ]);
 
