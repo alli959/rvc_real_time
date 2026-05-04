@@ -24,6 +24,7 @@ import { authApi } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
 import { useAuthContext } from './providers';
 import { Footer } from './footer';
+import { FloatingJobsWidget } from './floating-jobs-widget';
 
 interface DashboardLayoutProps {
   children: React.ReactNode;
@@ -264,6 +265,7 @@ export function DashboardLayout({ children }: DashboardLayoutProps) {
 
       {/* Bottom padding for mobile nav */}
       <div className="lg:hidden h-16" />
+      <FloatingJobsWidget />
     </div>
   );
 }
