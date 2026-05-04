@@ -571,43 +571,6 @@ export const ttsApi = {
 // Jobs API
 // =============================================================================
 
-export const jobsApi = {
-  list: async (params?: { page?: number; status?: string }) => {
-    const response = await api.get('/jobs', { params });
-    return response.data;
-  },
-
-  get: async (id: string) => {
-    const response = await api.get(`/jobs/${id}`);
-    return response.data;
-  },
-
-  createInference: async (data: { voice_model_id: string | number; parameters?: object }) => {
-    const response = await api.post('/jobs/inference', data);
-    return response.data;
-  },
-
-  getUploadUrl: async (id: string) => {
-    const response = await api.post(`/jobs/${id}/upload-url`);
-    return response.data;
-  },
-
-  start: async (id: string) => {
-    const response = await api.post(`/jobs/${id}/start`);
-    return response.data;
-  },
-
-  cancel: async (id: string) => {
-    const response = await api.post(`/jobs/${id}/cancel`);
-    return response.data;
-  },
-
-  getOutput: async (id: string) => {
-    const response = await api.get(`/jobs/${id}/output`);
-    return response.data;
-  },
-};
-
 // =============================================================================
 // Role Requests API
 // =============================================================================
@@ -1737,6 +1700,26 @@ export const jobsApi = {
   getStreamUrl: (uuid: string, track?: string): string => {
     const base = `${API_URL}/jobs/${uuid}/stream`;
     return track ? `${base}?track=${track}` : base;
+  },
+
+  getOutput: async (id: string) => {
+    const response = await api.get(`/jobs/${id}/output`);
+    return response.data;
+  },
+
+  createInference: async (data: { voice_model_id: string | number; parameters?: object }) => {
+    const response = await api.post('/jobs/inference', data);
+    return response.data;
+  },
+
+  getUploadUrl: async (id: string) => {
+    const response = await api.post(`/jobs/${id}/upload-url`);
+    return response.data;
+  },
+
+  start: async (id: string) => {
+    const response = await api.post(`/jobs/${id}/start`);
+    return response.data;
   },
 };
 
