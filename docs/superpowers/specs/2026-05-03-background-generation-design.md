@@ -47,6 +47,7 @@ Both modes use the same backend (always async). The difference is purely fronten
 
 Modify `AudioProcessingController::process()` to **always** be async:
 - Create `JobQueue` record with status `queued` (skip `pending` — job is immediately dispatched)
+- Set `type` from request payload (maps to existing `JobQueue::TYPE_AUDIO_SWAP`, `TYPE_AUDIO_SPLIT`, `TYPE_AUDIO_CONVERT`, `TYPE_TTS` constants)
 - POST to voice engine with `callback_url` and `job_uuid` (see §callback_url below)
 - **callback_url**: Send full webhook URLs in the dispatch payload to avoid path construction issues. Laravel sends:
   ```json
@@ -224,6 +225,7 @@ Voice engine polls this before each major pipeline step. If `cancelled`, it stop
 `php artisan jobs:cleanup` (runs hourly via cron/scheduler)
 - Delete files for jobs where `saved=false` AND `completed_at < now() - 24 hours`
 - Delete files for jobs where `status='failed'` AND `output_path IS NOT NULL` AND `updated_at < now() - 24 hours` (handles orphaned files from failed webhook delivery)
+- For multi-output jobs: also deletes paths listed in `parameters.output_paths`
 - Update job status to indicate file removed (keep record for history)
 
 ### 2. Voice Engine Changes
@@ -343,7 +345,7 @@ On completion, voice engine uploads output to MinIO via `boto3` S3 client (new d
 - **Multi-output jobs** (audio_split): Uploads two files:
   - `user-generations/{user_id}/{job_uuid}_vocals.wav`
   - `user-generations/{user_id}/{job_uuid}_instrumental.wav`
-  - `output_path` stored as comma-separated: `"user-generations/1/abc_vocals.wav,user-generations/1/abc_instrumental.wav"`
+  - `output_path` stores the primary path; additional paths stored in `parameters` JSON field as `"output_paths": [...]`
 - Uses same AWS credentials configured in voice engine environment
 - **Retry**: Up to 3 attempts with 2s backoff on upload failure
 - **If upload still fails**: report `failed` status to Laravel with error "Failed to save output file"
@@ -429,7 +431,7 @@ Rendered in the dashboard layout, always visible:
   - "Save" toggle to prevent auto-deletion
   - Dismiss button to remove from list
 - Auto-expands when a new job completes (with subtle animation)
-- Plays a subtle notification sound on completion (optional, can be disabled)
+- Plays a subtle notification sound on completion (preference stored in `localStorage`, disabled by default)
 
 #### Modified: Processing Pages
 
